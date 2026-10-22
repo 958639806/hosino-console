@@ -1,0 +1,27 @@
+#!/usr/bin/python3 -I
+import sys, json, subprocess, time
+if len(sys.argv) != 1:
+    sys.stderr.write("no arguments accepted\n"); sys.exit(2)
+def mask_ep(e):
+    if not e or e == "(none)": return None
+    if e.startswith("["): return "[ipv6]:" + e.rsplit(":",1)[-1]
+    h, _, p = e.rpartition(":")
+    return h.split(".")[0] + ".x.x.x:" + p
+try:
+    out = subprocess.run(["/usr/bin/wg","show","all","dump"], capture_output=True, text=True, timeout=10, env={"PATH":"/usr/bin:/bin"}).stdout
+except Exception:
+    print(json.dumps({"interfaces":[],"ts":int(time.time()),"error":"wg failed"})); sys.exit(1)
+ifs = {}
+order = []
+for line in out.splitlines():
+    f = line.split("\t")
+    if len(f) == 5:  # iface privkey pubkey port fwmark
+        ifs[f[0]] = {"name":f[0], "listenPort": int(f[3]) if f[3].isdigit() else None, "peers":[]}; order.append(f[0])
+    elif len(f) == 9:  # iface pub psk endpoint allowed hs rx tx keepalive
+        i = ifs.setdefault(f[0], {"name":f[0],"listenPort":None,"peers":[]})
+        if f[0] not in order: order.append(f[0])
+        ai = [a for a in f[4].split(",") if a and a != "(none)"]
+        i["peers"].append({"pub6":f[1][:6], "endpoint":mask_ep(f[3]), "allowedIpsCount":len(ai),
+            "latestHandshake":int(f[5]) if f[5].isdigit() else 0,
+            "rxBytes":int(f[6]) if f[6].isdigit() else 0, "txBytes":int(f[7]) if f[7].isdigit() else 0})
+print(json.dumps({"interfaces":[ifs[n] for n in order], "ts":int(time.time())}))

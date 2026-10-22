@@ -1,0 +1,105 @@
+--- server.mjs.v19-v2.10	2026-10-20 19:18:51.854989730 +0800
++++ server.mjs	2026-10-20 19:33:24.216921159 +0800
+@@ -121,7 +121,7 @@
+     }
+     if (m.role === "user" || m.role === "system") newTurn(m);
+     if (!turn) newTurn(null);
+-    const e = { id: o.id, role: m.role, content: m.content, ts: m.timestamp, model: m.model, provider: m.provider, toolName: m.toolName, isError: m.isError, owner: o.senderIsOwner, sender: m.role === "user" ? senderOf(o) : undefined, senderId: o.senderId, senderName: o.senderName, kind: o.kind || m.customType, turnId: turn.id };
++    const e = { id: o.id, ...(m.role === "user" && (o.idempotencyKey || m.idempotencyKey) ? { idempotencyKey: o.idempotencyKey || m.idempotencyKey } : {}), ...(m.role === "user" && o.runId ? { runId: o.runId } : {}), role: m.role, content: m.content, ts: m.timestamp, model: m.model, provider: m.provider, toolName: m.toolName, isError: m.isError, owner: o.senderIsOwner, sender: m.role === "user" ? senderOf(o) : undefined, senderId: o.senderId, senderName: o.senderName, kind: o.kind || m.customType, turnId: turn.id };
+     if (m.role === "assistant" && blocks) {
+       e.content = blocks.filter(b => !isToolBlock(b) && !isResBlock(b));
+       e.tools = [];
+@@ -397,7 +397,7 @@
+   // ===== v2.1 =====
+   "GET /api/features": async () => ({ qqSend: QQ_SEND(), mediaProxy: true, mediaRemoteHosts: [...MEDIA_HOSTS] }),
+   "POST /api/qq/send": async (u, b, req) => {
+-    b = b || {}; const text = typeof b.text === "string" ? b.text : ""; let tg = b.target || b.sessionKey || "";
++    b = b || {}; if (b.attachments != null && !(Array.isArray(b.attachments) && !b.attachments.length)) throw Object.assign(httpErr(400, "QQ 直发不支持附件"), { code: "attachments_unsupported" }); const text = typeof b.text === "string" ? b.text : ""; let tg = b.target || b.sessionKey || "";
+     try {
+       if (!QQ_SEND()) throw httpErr(403, "QQ 直发功能未开启");
+       confirmOk(b);
+@@ -494,8 +494,9 @@
+     const ups = upResolve(b.attachments, "chat"); if (!b.key || (!b.message?.trim() && !ups.length)) throw httpErr(400, "缺少会话或内容");
+     if (ups.some(m => m.session !== b.key)) throw httpErr(403, "附件是为别的会话上传的");
+     const atts = ups.length ? chatAttachments(ups) : undefined; cache.clear();
+-    const r = await call("chat.send", { sessionKey: b.key, message: b.message || "", deliver: !!b.deliver, idempotencyKey: crypto.randomUUID(), ...(atts ? { attachments: atts } : {}) }, ups.length ? 120000 : 30000);
+-    if (ups.length) { opLog(req, "chat.send.attachments", `${b.key} ${ups.map(m => m.id).join(",")}`, true); chatAttIdx.add({ key: b.key, ts: Date.now(), runId: r?.runId || null, text: String(b.message || "").slice(0, 200), ids: ups.map(m => m.id) }); }
++    const idem = crypto.randomUUID();
++    const r = await call("chat.send", { sessionKey: b.key, message: b.message || "", deliver: !!b.deliver, idempotencyKey: idem, ...(atts ? { attachments: atts } : {}) }, ups.length ? 120000 : 30000);
++    if (ups.length) { opLog(req, "chat.send.attachments", `${b.key} ${ups.map(m => m.id).join(",")}`, true); upMarkAttached(ups); chatAttIdx.add({ key: b.key, ts: Date.now(), idem, runId: r?.runId || null, text: String(b.message || ""), ids: ups.map(m => m.id) }); }
+     return ups.length ? { ...r, attachments: ups.map(upPub) } : r;
+   },
+   "POST /api/abort": async (u, b) => call("chat.abort", { sessionKey: b.key }),
+@@ -1016,7 +1017,9 @@
+ }
+ async function cliRun(req, res, id) {
+   const m = cliLoad(id); if (!m) return send(res, 404, { error: "会话不存在" });
+-  const b = await body(req); const prompt = typeof b.prompt === "string" ? b.prompt : "";
++  const b = await body(req); const hasAtt = Array.isArray(b.attachments) && b.attachments.length > 0;
++  if (Array.isArray(b.attachments) && b.attachments.length > UP_MAX_PER_MSG) return send(res, 400, { error: `每条最多 ${UP_MAX_PER_MSG} 个附件`, code: "too_many_attachments" });
++  let prompt = typeof b.prompt === "string" ? b.prompt : ""; if (!prompt.trim() && hasAtt) prompt = "请看看我上传的附件。";
+   if (!prompt.trim()) return send(res, 400, { error: "缺少参数：prompt" });
+   if (strLen(prompt) > CLI_MAX_PROMPT) return send(res, 413, { error: `prompt 最长 ${CLI_MAX_PROMPT} 字` });
+   if (cliRuns.has(id)) return send(res, 409, { error: "这个会话正在运行" });
+@@ -1024,7 +1027,7 @@
+   let ups; try { ups = upResolve(b.attachments, "cli", id); } catch (e) { return send(res, e.http || 400, { error: e.message }); }
+   const t = (await cliTools()).find(x => x.id === m.tool); if (!t?.available) return send(res, 409, { error: t?.reason || `${m.tool} 未安装`, code: "not_installed" }); if (!t.authed) return send(res, 409, { error: t.reason || `${m.tool} 未登录`, code: "not_authed" });
+   const dir = path.join(CLI_ROOT, id); const runId = crypto.randomBytes(6).toString("hex"); const unit = `hs-cli-${runId}`;
+-  const files = ups.map(x => ({ up: x, src: upFile(x), rel: `uploads/${x.id.slice(0, 6)}-${x.name}` }));
++  upMarkAttached(ups); const files = ups.map(x => ({ up: x, src: upFile(x), rel: `uploads/${x.id.slice(0, 6)}-${x.name}` }));
+   const imgs = files.filter(f => f.up.kind === "image");
+   const fullPrompt = files.length ? `${prompt}\n\n[用户上传的附件，已放在当前工作目录下]\n${files.map(f => `- ${f.rel}（${f.up.mime}，${f.up.size} 字节）`).join("\n")}` : prompt;
+   const claudeImgs = m.tool === "claude" ? imgs.filter(f => f.up.size <= 5 * 1024 * 1024) : [];
+@@ -1117,7 +1120,7 @@
+ }
+ const upMeta = id => { if (!isUpId(id)) return null; try { return JSON.parse(fs.readFileSync(path.join(UP_DIR, id, "meta.json"), "utf8")); } catch { return null; } };
+ const upFile = m => path.join(UP_DIR, m.id, "f");
+-const upPub = m => ({ id: m.id, name: m.name, mime: m.mime, kind: m.kind, size: m.size, url: `/api/uploads/${m.id}`, createdAt: m.createdAt });
++const upPub = m => ({ id: m.id, name: m.name, mime: m.mime, kind: m.kind, size: m.size, url: `/api/uploads/${m.id}`, createdAt: m.createdAt, attachedAt: m.attachedAt || null, expiresAt: (m.attachedAt || m.createdAt) + (m.attachedAt ? UP_TTL : UP_TTL_UNATTACHED) });
+ async function upReceive(req, u) {
+   const scope = u.searchParams.get("scope"), session = u.searchParams.get("session") || null;
+   if (scope !== "chat" && scope !== "cli") throw httpErr(400, "scope 只能是 chat / cli");
+@@ -1138,25 +1141,33 @@
+   const m = { id, scope, session, name, mime, kind, size: n, sha256: hash.digest("hex"), createdAt: Date.now() };
+   atomicWrite(path.join(dir, "meta.json"), JSON.stringify(m)); return upPub(m);
+ }
+-setInterval(() => { try { const now = Date.now(); for (const d of fs.readdirSync(UP_DIR)) { const m = upMeta(d); if (!m || m.createdAt + UP_TTL < now) fs.rmSync(path.join(UP_DIR, d), { recursive: true, force: true }); } } catch {} }, 3600e3).unref();
++const UP_TTL_UNATTACHED = (+process.env.UPLOAD_TTL_UNATTACHED_HOURS || 24) * 3600e3;
++function upMarkAttached(ups) { const t = Date.now(); for (const m of ups) if (!m.attachedAt) { m.attachedAt = t; try { atomicWrite(path.join(UP_DIR, m.id, "meta.json"), JSON.stringify(m)); } catch {} } }
++const upExpired = (m, now) => m.attachedAt ? m.attachedAt + UP_TTL < now : m.createdAt + UP_TTL_UNATTACHED < now;
++const upSweep = () => { try { const now = Date.now(); for (const d of fs.readdirSync(UP_DIR)) { const m = upMeta(d); if (!m || upExpired(m, now)) fs.rmSync(path.join(UP_DIR, d), { recursive: true, force: true }); } } catch {} };
++setTimeout(upSweep, 60e3).unref();
++setInterval(() => { try { const now = Date.now(); for (const d of fs.readdirSync(UP_DIR)) { const m = upMeta(d); if (!m || upExpired(m, now)) fs.rmSync(path.join(UP_DIR, d), { recursive: true, force: true }); } } catch {} }, 3600e3).unref();
+ // 取一组上传，校验归属
+ function upResolve(ids, scope, session) {
+-  if (ids == null) return []; if (!Array.isArray(ids) || ids.length > UP_MAX_PER_MSG) throw httpErr(400, `attachments 需为最多 ${UP_MAX_PER_MSG} 个上传 id 的数组`);
+-  return ids.map(id => { const m = upMeta(id); if (!m || !fs.existsSync(upFile(m))) throw httpErr(404, "上传不存在或已过期：" + id); if (m.scope !== scope || (scope === "cli" ? m.session !== session : false)) throw httpErr(403, "这个上传不属于当前会话"); return m; });
++  if (ids == null) return []; if (!Array.isArray(ids)) throw httpErr(400, "attachments 需为上传 id 数组"); if (ids.length > UP_MAX_PER_MSG) throw Object.assign(httpErr(400, `每条最多 ${UP_MAX_PER_MSG} 个附件`), { code: "too_many_attachments" });
++  return ids.map(id => { const m = upMeta(id); if (!m || !fs.existsSync(upFile(m)) || upExpired(m, Date.now())) throw httpErr(404, "上传不存在或已过期：" + id); if (m.scope !== scope || (scope === "cli" ? m.session !== session : false)) throw httpErr(403, "这个上传不属于当前会话"); return m; });
+ }
+ // 控制台发出的附件索引：网关 chat.history 的用户消息里不带附件信息，这里按 会话+时间+文本 合并回去
+ const CHAT_ATT_IDX = path.join(ROOT, "data", "chat-attachments.jsonl");
+ const chatAttIdx = {
+   add(rec) { try { fs.mkdirSync(path.dirname(CHAT_ATT_IDX), { recursive: true, mode: 0o700 }); fs.appendFileSync(CHAT_ATT_IDX, JSON.stringify(rec) + "\n", { mode: 0o600 }); } catch {} },
+   load(key) { try { return fs.readFileSync(CHAT_ATT_IDX, "utf8").split("\n").filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(x => x && x.key === key); } catch { return []; } },
++  // 1) 稳定 id：用户消息上的 idempotencyKey / runId（网关已提交的消息带 __openclaw.idempotencyKey/runId）
++  // 2) 兜底（仅限没有 idempotencyKey 的消息）：一对一匹配——文本完全相同、时间差 ≤ 5 秒、取时间最接近的记录，每条记录最多用一次
+   merge(key, msgs) {
+-    const recs = this.load(key); if (!recs.length) return msgs; const used = new Set();
+-    return msgs.map(m => {
+-      if (m.role !== "user") return m; const txt = typeof m.content === "string" ? m.content : Array.isArray(m.content) ? m.content.map(c => c?.text || "").join("") : "";
+-      const rec = recs.find((x, i) => !used.has(i) && Math.abs((m.ts || 0) - x.ts) < 120e3 && txt.trim().startsWith(x.text.trim().slice(0, 100)) && used.add(i));
+-      if (!rec) return m; const atts = rec.ids.map(upMeta).map((um, i) => um ? upPub(um) : { id: rec.ids[i], expired: true });
+-      return { ...m, attachments: atts };
+-    });
++    const recs = this.load(key); if (!recs.length) return msgs; const usedRec = new Set(), usedMsg = new Set(); const hit = new Map();
++    const byIdem = new Map(), byRun = new Map(); recs.forEach((x, i) => { if (x.idem) byIdem.set(x.idem, i); if (x.runId) byRun.set(x.runId, i); });
++    msgs.forEach((m, j) => { if (m.role !== "user") return; const ik = String(m.idempotencyKey || "").replace(/:user$/, ""); const i = byIdem.get(ik) ?? byRun.get(m.runId) ?? byRun.get(ik); if (i != null && !usedRec.has(i)) { usedRec.add(i); usedMsg.add(j); hit.set(j, recs[i]); } });
++    const norm = m => (typeof m.content === "string" ? m.content : Array.isArray(m.content) ? m.content.filter(c => c?.type === "text").map(c => c.text || "").join("") : "").trim();
++    msgs.forEach((m, j) => { if (m.role !== "user" || usedMsg.has(j) || m.idempotencyKey) return; const t = norm(m); let best = -1, bd = 5e3 + 1; recs.forEach((x, i) => { const d = Math.abs((m.ts || 0) - x.ts); if (!usedRec.has(i) && d < bd && String(x.text || "").trim() === t) { best = i; bd = d; } }); if (best >= 0) { usedRec.add(best); usedMsg.add(j); hit.set(j, recs[best]); } });
++    // 3) 网关把“忙时排队”的多条消息合并成一条 followup-collect 用户消息：把文本出现在其中、且在它之前 120 秒内发出的未匹配记录全部挂上
++    msgs.forEach((m, j) => { if (m.role !== "user" || usedMsg.has(j) || !/^followup-collect:/.test(String(m.idempotencyKey || ""))) return; const t = norm(m); const xs = recs.filter((x, i) => !usedRec.has(i) && x.ts <= (m.ts || 0) + 5e3 && x.ts >= (m.ts || 0) - 120e3 && x.text.trim() && t.includes(x.text.trim()) && (usedRec.add(i), true)); if (xs.length) { usedMsg.add(j); hit.set(j, { ids: xs.flatMap(x => x.ids) }); } });
++    return msgs.map((m, j) => { const rec = hit.get(j); if (!rec) return m; return { ...m, attachments: rec.ids.map(id => { const um = upMeta(id); return um ? upPub(um) : { id, expired: true }; }) }; });
+   },
+ };
+ // 聊天：按网关原生方式随 chat.send 发送（图片内联，其他文件由网关存入媒体库并在消息里附 [media attached: …]）

@@ -1,0 +1,21 @@
+--- server.mjs.v11-pre-xray	2026-10-20 16:19:40.640413650 +0800
++++ server.mjs	2026-10-20 16:19:40.656413608 +0800
+@@ -177,13 +177,15 @@
+ const vpnStatus = () => cached("vpn", 30e3, async () => {
+   const errors = [], now = Math.floor(Date.now() / 1000);
+   const services = await Promise.all(VPN_UNITS.map(async name => { const x = await runX("systemctl", ["show", name, "-p", "ActiveState,SubState,ActiveEnterTimestamp"]); const kv = Object.fromEntries(x.o.trim().split("\n").filter(Boolean).map(l => [l.slice(0, l.indexOf("=")), l.slice(l.indexOf("=") + 1)])); if (x.e) errors.push(name + ": " + x.e); const since = kv.ActiveEnterTimestamp ? Date.parse(kv.ActiveEnterTimestamp.replace(/ [A-Z]+$/, "")) || null : null; return { name, active: kv.ActiveState === "active", state: kv.ActiveState || null, sub: kv.SubState || null, since: kv.ActiveEnterTimestamp || null, sinceMs: since }; }));
+-  let wireguard = null; const w = await runX("sudo", ["-n", "/usr/local/sbin/hosino-wg-status"]);
+-  if (w.e) errors.push("wg: " + w.e); else try { const j = JSON.parse(w.o); const ifs = (j.interfaces || []).map(i => ({ ...i, peers: (i.peers || []).map(p => ({ ...p, online: !!p.latestHandshake && now - p.latestHandshake < 180, handshakeAgoSec: p.latestHandshake ? now - p.latestHandshake : null })) })); wireguard = { interfaces: ifs, onlinePeers: ifs.reduce((a, i) => a + i.peers.filter(p => p.online).length, 0), totalPeers: ifs.reduce((a, i) => a + i.peers.length, 0) }; } catch (e) { errors.push("wg parse: " + e.message); }
++  let wireguard = null, wgJson = null; const w = await runX("sudo", ["-n", "/usr/local/sbin/hosino-wg-status"]);
++  if (w.e) errors.push("wg: " + w.e); else try { const j = JSON.parse(w.o); wgJson = j; const ifs = (j.interfaces || []).map(i => ({ ...i, peers: (i.peers || []).map(p => ({ ...p, online: !!p.latestHandshake && now - p.latestHandshake < 180, handshakeAgoSec: p.latestHandshake ? now - p.latestHandshake : null })) })); wireguard = { interfaces: ifs, onlinePeers: ifs.reduce((a, i) => a + i.peers.filter(p => p.online).length, 0), totalPeers: ifs.reduce((a, i) => a + i.peers.length, 0) }; } catch (e) { errors.push("wg parse: " + e.message); }
+   const l = await runX("ss", ["-Hltnu"]); if (l.e) errors.push("ss -l: " + l.e);
+   const listening = [...new Set(l.o.split("\n").map(x => x.trim().split(/\s+/)).filter(a => a.length > 4).map(a => a[0] + ":" + a[4].split(":").pop()))].filter(x => /:(8443|51820|51821)$/.test(x));
+   const c = await runX("ss", ["-Htn", "state", "established", "( sport = :8443 )"]); if (c.e) errors.push("ss est: " + c.e);
+   const xs = services.find(s => s.name === "openclaw-xray-reality");
+-  return { services, listening, wireguard, xray: { active: !!xs?.active, since: xs?.since || null, port: 8443, connections: c.e ? null : c.o.split("\n").filter(x => x.trim()).length, note: "连接数含探测/回落，不等于用户数" }, error: errors.length ? errors.join("; ") : null, ts: Date.now() };
++  const wgOnline = n => { const svc = services.find(s => s.name === n); const i = (wireguard?.interfaces || []).find(i => i.name === n.replace("openclaw-wireguard-", "wg-")); return { name: i?.name || n, unit: n, port: n.endsWith("-la") ? 51820 : 51821, online: !!svc?.active && !!i, peerOnline: i ? i.peers.some(p => p.online) : false }; };
++  const hx = wgJson?.xray || null;
++  return { services, listening, wireguard, wg: [wgOnline("openclaw-wireguard-la"), wgOnline("openclaw-wireguard-phone")], xray: { active: !!xs?.active, since: xs?.since || null, port: 8443, connections: c.e ? null : c.o.split("\n").filter(x => x.trim()).length, ...(hx ? { sub: hx.sub, uptimeSec: hx.uptimeSec, restarts: hx.restarts, memoryBytes: hx.memoryBytes, cpuSec: hx.cpuSec, uniqueClients: hx.uniqueClients, listening: hx.listening, version: hx.version, config: hx.config } : {}), note: "连接数含探测/回落，不等于用户数" }, error: errors.length ? errors.join("; ") : null, ts: Date.now() };
+ });
+ const memAll = () => cached("memall", 10 * 60e3, async () => {
+   const out = []; let off = null;

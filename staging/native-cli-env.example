@@ -1,0 +1,5 @@
+# 可选，追加到 /etc/hosino-console.env
+CLI_TIMEOUT_MS=600000
+CLI_MAX_RUNS=1
+CLI_MAX_PROMPT=32000
+CLI_ROOT=/home/ubuntu/cli-sandbox

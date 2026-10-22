@@ -1,0 +1,158 @@
+--- server.mjs.v16-v2.8.2	2026-10-20 18:41:20.757387906 +0800
++++ server.mjs	2026-10-20 18:47:47.011408929 +0800
+@@ -901,6 +901,147 @@
+   "GET /api/mem/backups": async () => { let fsx = []; try { fsx = fs.readdirSync(MEM_BK).filter(f => f.endsWith(".json")); } catch {} return { retention: { days: MEM_BK_DAYS, maxFiles: MEM_BK_MAX }, backups: fsx.map(f => { try { const r = JSON.parse(fs.readFileSync(path.join(MEM_BK, f), "utf8")); return { file: f, id: r.id, backedUpAt: r.backedUpAt, restoredAt: r.restoredAt || null, reason: r.reason, entities: (r.entities || []).length, preview: String(r.payload?.data || "").slice(0, 80), user_id: r.payload?.user_id ?? null, source_session_key: r.payload?.source_session_key ?? null }; } catch { return { file: f, error: "损坏" }; } }).sort((a, b) => (b.backedUpAt || 0) - (a.backedUpAt || 0)) }; },
+ });
+ 
++// ---------- v2.9：原生 CLI（Claude Code / Codex / Gemini），无记忆无人设，完整权限 ----------
++// 子进程通过 `sudo -n systemd-run` 启动为独立的瞬态单元（hs-cli-<runId>），跳出控制台自身的 systemd 沙箱，
++// 因此权限与 ubuntu 终端一致（可写家目录、可 sudo），控制台本身的 ProtectSystem 加固保持不变。
++// CLI_LAUNCH=direct 时直接 spawn（需要 staging/30-native-cli.conf 放开写权限）。
++const CLI_HOME = "/home/ubuntu";
++const CLI_ROOT = process.env.CLI_ROOT || path.join(CLI_HOME, "cli-sandbox");
++const CLI_DATA = path.join(ROOT, "data", "cli");
++const CLI_AUDIT = path.join(ROOT, "logs", "cli-audit.log");
++const CLI_TIMEOUT = +process.env.CLI_TIMEOUT_MS || 10 * 60e3;
++const CLI_MAX_RUNS = +process.env.CLI_MAX_RUNS || 1;
++const CLI_MAX_PROMPT = +process.env.CLI_MAX_PROMPT || 32000;
++const CLI_LAUNCH = process.env.CLI_LAUNCH || "systemd-run";
++const CLI_PATH = `${CLI_HOME}/.npm-global/bin:${CLI_HOME}/.local/bin:/usr/local/bin:/usr/bin:/bin`;
++const CLI_TOOLS = {
++  claude: { name: "Claude Code", bin: `${CLI_HOME}/.local/bin/claude` },
++  codex: { name: "Codex", bin: `${CLI_HOME}/.npm-global/bin/codex` },
++  gemini: { name: "Gemini CLI", bin: `${CLI_HOME}/.npm-global/bin/gemini` },
++};
++const { spawn } = await import("node:child_process");
++const cliRuns = new Map(); // sessionId -> { child, unit, runId, started, cancel }
++const isCliId = s => /^[a-f0-9]{16}$/.test(s || "");
++const cliMetaFile = id => path.join(CLI_DATA, id + ".json");
++const cliMsgFile = id => path.join(CLI_DATA, id + ".jsonl");
++function cliAudit(req, o) { try { fs.mkdirSync(path.dirname(CLI_AUDIT), { recursive: true, mode: 0o700 }); fs.appendFileSync(CLI_AUDIT, JSON.stringify({ t: new Date().toISOString(), ip: req ? ipOf(req) : "", ...o }) + "\n", { mode: 0o600 }); } catch {} }
++const cliLoad = id => { try { return JSON.parse(fs.readFileSync(cliMetaFile(id), "utf8")); } catch { return null; } };
++const cliSave = m => atomicWrite(cliMetaFile(m.id), JSON.stringify(m));
++const cliPush = (id, msg) => { fs.mkdirSync(CLI_DATA, { recursive: true, mode: 0o700 }); fs.appendFileSync(cliMsgFile(id), JSON.stringify(msg) + "\n", { mode: 0o600 }); };
++const cliPub = m => ({ id: m.id, tool: m.tool, title: m.title, createdAt: m.createdAt, updatedAt: m.updatedAt, running: cliRuns.has(m.id) });
++// 干净的环境：不继承控制台的 LOGIN_HASH / MiMo 密钥 / OPENCLAW_* 等
++const cliEnv = () => ({ HOME: CLI_HOME, USER: "ubuntu", LOGNAME: "ubuntu", SHELL: "/bin/bash", PATH: CLI_PATH, LANG: "C.UTF-8", TERM: "dumb", NO_COLOR: "1", GEMINI_CLI_TRUST_WORKSPACE: "true" });
++const run1 = (cmd, args, ms = 8000) => new Promise(r => execFile(cmd, args, { timeout: ms, env: cliEnv(), cwd: "/tmp" }, (e, so, se) => r({ ok: !e, out: String(so || "") + String(se || "") })));
++let cliToolsCache = null;
++async function cliTools(force) {
++  if (!force && cliToolsCache && cliToolsCache.at > Date.now() - 60e3) return cliToolsCache.v;
++  const v = await Promise.all(Object.entries(CLI_TOOLS).map(async ([id, t]) => {
++    const available = fs.existsSync(t.bin); if (!available) return { id, name: t.name, version: null, available: false, authed: false, reason: "未安装" };
++    const ver = await run1(t.bin, ["--version"]); const version = (ver.out.match(/\d+\.\d+\.\d+[\w.-]*/) || [null])[0];
++    let authed = false, reason = null;
++    if (id === "claude") { authed = fs.existsSync(`${CLI_HOME}/.claude/.credentials.json`) || fs.existsSync(`${CLI_HOME}/.claude.json`); reason = authed ? null : "未登录（在服务器上运行 claude 登录）"; }
++    if (id === "codex") { const s = await run1(t.bin, ["login", "status"]); authed = s.ok && !/not logged in/i.test(s.out); reason = authed ? null : "未登录（在服务器上运行 codex login）"; }
++    if (id === "gemini") { authed = false; reason = "Google 拒绝登录：IneligibleTierError（免费版 Code Assist 个人 OAuth 已不再支持，需改用 API Key 或付费账号）"; if (process.env.GEMINI_API_KEY_FILE && fs.existsSync(process.env.GEMINI_API_KEY_FILE)) { authed = true; reason = null; } }
++    return { id, name: t.name, version, available, authed, reason };
++  }));
++  cliToolsCache = { at: Date.now(), v }; return v;
++}
++function cliArgs(m, prompt) {
++  if (m.tool === "claude") return ["-p", prompt, "--output-format", "stream-json", "--verbose", "--dangerously-skip-permissions", ...(m.cliSessionId ? ["--resume", m.cliSessionId] : [])];
++  if (m.tool === "codex") return m.cliSessionId ? ["exec", "resume", m.cliSessionId, "--json", "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check", prompt] : ["exec", "--json", "--dangerously-bypass-approvals-and-sandbox", "--skip-git-repo-check", prompt];
++  if (m.tool === "gemini") return ["-p", prompt, "--yolo", "--skip-trust", "--output-format", "stream-json", ...(m.cliSessionId ? ["--resume", "latest"] : [])];
++}
++const txt = c => typeof c === "string" ? c : Array.isArray(c) ? c.map(x => x?.text ?? (typeof x === "string" ? x : "")).join("") : c == null ? "" : JSON.stringify(c);
++// 每行 JSON → 统一事件 [{type:'delta'|'tool'|'session'|'error', ...}]
++function cliParse(tool, o, st) {
++  const ev = [];
++  if (tool === "claude") {
++    if (o.type === "system" && o.subtype === "init" && o.session_id) ev.push({ type: "session", id: o.session_id });
++    if (o.type === "assistant") for (const b of o.message?.content || []) { if (b.type === "text" && b.text) ev.push({ type: "delta", text: b.text }); if (b.type === "tool_use") st.pend.set(b.id, { name: b.name, input: b.input }); }
++    if (o.type === "user") for (const b of o.message?.content || []) if (b.type === "tool_result") { const p = st.pend.get(b.tool_use_id) || { name: "tool", input: null }; st.pend.delete(b.tool_use_id); ev.push({ type: "tool", name: p.name, input: p.input, output: txt(b.content).slice(0, 20000) }); }
++    if (o.type === "result" && o.is_error) ev.push({ type: "error", message: String(o.result || o.subtype || "失败").slice(0, 2000) });
++  } else if (tool === "codex") {
++    if (o.type === "thread.started" && o.thread_id) ev.push({ type: "session", id: o.thread_id });
++    const it = o.item; if (o.type === "item.completed" && it) {
++      if (it.type === "agent_message") ev.push({ type: "delta", text: it.text || "" });
++      else if (it.type === "command_execution") ev.push({ type: "tool", name: "shell", input: it.command, output: String(it.aggregated_output ?? "").slice(0, 20000) });
++      else if (it.type === "file_change") ev.push({ type: "tool", name: "file_change", input: it.changes, output: it.status || "" });
++      else if (it.type === "mcp_tool_call" || it.type === "web_search") ev.push({ type: "tool", name: it.tool || it.type, input: it.arguments || it.query, output: txt(it.result).slice(0, 20000) });
++      else if (it.type === "error" && !/^(Reconnecting|Falling back)/.test(it.message || "")) ev.push({ type: "error", message: it.message });
++    }
++    if ((o.type === "turn.failed" || o.type === "error") && !/^(Reconnecting|Falling back)/.test(o.error?.message || o.message || "")) ev.push({ type: "error", message: String(o.error?.message || o.message || "失败").slice(0, 2000) });
++  } else if (tool === "gemini") {
++    if (o.type === "init" && o.session_id) ev.push({ type: "session", id: o.session_id });
++    if (o.type === "message" && o.role === "assistant" && o.content) ev.push({ type: "delta", text: o.content });
++    if (o.type === "tool_use") st.pend.set(o.tool_id, { name: o.tool_name, input: o.parameters });
++    if (o.type === "tool_result") { const p = st.pend.get(o.tool_id) || { name: "tool", input: null }; st.pend.delete(o.tool_id); ev.push({ type: "tool", name: p.name, input: p.input, output: txt(o.output ?? o.error?.message).slice(0, 20000) }); }
++    if (o.type === "error" || (o.type === "result" && o.status === "error")) ev.push({ type: "error", message: String(o.message || o.error?.message || "失败").slice(0, 2000) });
++  }
++  return ev;
++}
++async function cliRun(req, res, id) {
++  const m = cliLoad(id); if (!m) return send(res, 404, { error: "会话不存在" });
++  const b = await body(req); const prompt = typeof b.prompt === "string" ? b.prompt : "";
++  if (!prompt.trim()) return send(res, 400, { error: "缺少参数：prompt" });
++  if (strLen(prompt) > CLI_MAX_PROMPT) return send(res, 413, { error: `prompt 最长 ${CLI_MAX_PROMPT} 字` });
++  if (cliRuns.has(id)) return send(res, 409, { error: "这个会话正在运行" });
++  if (cliRuns.size >= CLI_MAX_RUNS) return send(res, 429, { error: `同时只能运行 ${CLI_MAX_RUNS} 个` });
++  const t = (await cliTools()).find(x => x.id === m.tool); if (!t?.available) return send(res, 409, { error: `${m.tool} 未安装` }); if (!t.authed) return send(res, 409, { error: t.reason || `${m.tool} 未登录`, code: "not_authed" });
++  const dir = path.join(CLI_ROOT, id); const runId = crypto.randomBytes(6).toString("hex"); const unit = `hs-cli-${runId}`;
++  const args = cliArgs(m, prompt), bin = CLI_TOOLS[m.tool].bin; const started = Date.now();
++  let child;
++  if (CLI_LAUNCH === "direct") { fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); child = spawn(bin, args, { cwd: dir, env: cliEnv(), detached: true, stdio: ["ignore", "pipe", "pipe"] }); }
++  else child = spawn("sudo", ["-n", "/usr/bin/systemd-run", "--quiet", "--collect", "--wait", "--pipe", "--uid=ubuntu", "--gid=ubuntu", `--unit=${unit}`, `-p`, `RuntimeMaxSec=${Math.ceil(CLI_TIMEOUT / 1000) + 30}`, ...Object.entries(cliEnv()).map(([k, v]) => `--setenv=${k}=${v}`), "/bin/bash", "-c", 'mkdir -p -m 700 "$0" && cd "$0" && exec "$@"', dir, bin, ...args], { env: { PATH: CLI_PATH }, detached: true, stdio: ["ignore", "pipe", "pipe"] });
++  const run = { child, unit, runId, started, reason: null }; cliRuns.set(id, run);
++  const kill = why => { if (run.reason) return; run.reason = why; if (CLI_LAUNCH !== "direct") execFile("sudo", ["-n", "/usr/bin/systemctl", "kill", "--signal=SIGKILL", unit], () => {}); try { process.kill(-child.pid, "SIGTERM"); } catch {} setTimeout(() => { try { process.kill(-child.pid, "SIGKILL"); } catch {} }, 3000).unref(); };
++  run.cancel = () => kill("cancelled");
++  const timer = setTimeout(() => kill("timeout"), CLI_TIMEOUT);
++  m.updatedAt = Date.now(); if (m.title === "新会话") m.title = prompt.replace(/\s+/g, " ").slice(0, 40); cliSave(m);
++  cliPush(id, { role: "user", text: prompt, ts: started });
++  cliAudit(req, { ev: "start", session: id, tool: m.tool, runId, prompt: prompt.slice(0, 4000), promptLen: strLen(prompt) });
++  res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-store", "x-accel-buffering": "no", connection: "keep-alive" });
++  let open = true; res.on("close", () => { open = false; }); // 断开不杀进程：结果照样写进会话记录
++  const sse = (event, data) => { if (open) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
++  const ping = setInterval(() => { if (open) res.write(": ping\n\n"); }, 15e3);
++  sse("start", { sessionId: id, runId, tool: m.tool, ts: started });
++  const st = { pend: new Map() }; let answer = "", buf = "", errTail = "";
++  const flushAns = () => { if (answer) { cliPush(id, { role: "assistant", text: answer, ts: Date.now() }); answer = ""; } };
++  const onLine = line => {
++    if (!line.trim()) return; let o; try { o = JSON.parse(line); } catch { errTail = (errTail + line + "\n").slice(-4000); return; }
++    for (const e of cliParse(m.tool, o, st)) {
++      if (e.type === "session") { if (!m.cliSessionId) { m.cliSessionId = e.id; cliSave(m); } }
++      else if (e.type === "delta") { answer += e.text; sse("delta", { text: e.text }); }
++      else if (e.type === "tool") { flushAns(); cliPush(id, { role: "tool", text: `${e.name}: ${typeof e.input === "string" ? e.input : JSON.stringify(e.input)}\n${e.output}`.slice(0, 20000), name: e.name, input: e.input, output: e.output, ts: Date.now() }); sse("tool", { name: e.name, input: e.input, output: e.output }); }
++      else if (e.type === "error") { flushAns(); cliPush(id, { role: "error", text: e.message, ts: Date.now() }); sse("error", { message: e.message }); }
++    }
++  };
++  child.stdout.on("data", d => { buf += d; let i; while ((i = buf.indexOf("\n")) >= 0) { onLine(buf.slice(0, i)); buf = buf.slice(i + 1); } });
++  child.stderr.on("data", d => { errTail = (errTail + d).slice(-4000); });
++  child.on("close", (code, sig) => {
++    clearTimeout(timer); clearInterval(ping); if (buf) onLine(buf); flushAns(); cliRuns.delete(id);
++    const durationMs = Date.now() - started, exitCode = code ?? null;
++    if (run.reason || exitCode !== 0) { const msg = run.reason === "timeout" ? `超时（${CLI_TIMEOUT >= 60e3 ? Math.round(CLI_TIMEOUT / 60e3) + " 分钟" : Math.round(CLI_TIMEOUT / 1000) + " 秒"}）已终止` : run.reason === "cancelled" ? "已取消" : `退出码 ${exitCode}${sig ? " " + sig : ""}${errTail.trim() ? "：" + errTail.trim().slice(-1500) : ""}`; cliPush(id, { role: "error", text: msg, ts: Date.now() }); sse("error", { message: msg }); }
++    m.updatedAt = Date.now(); cliSave(m);
++    cliAudit(req, { ev: "end", session: id, tool: m.tool, runId, exitCode, signal: sig, reason: run.reason, durationMs });
++    sse("done", { exitCode, durationMs, ...(run.reason ? { reason: run.reason } : {}) }); if (open) res.end();
++  });
++  child.on("error", e => { cliPush(id, { role: "error", text: "启动失败：" + e.message, ts: Date.now() }); sse("error", { message: "启动失败：" + e.message }); });
++}
++async function cliRoute(req, res, u) {
++  const p = u.pathname, M = req.method; let mt;
++  if (p === "/api/cli/tools" && M === "GET") return send(res, 200, await cliTools(u.searchParams.get("refresh") === "1"));
++  if (p === "/api/cli/sessions" && M === "GET") { let fsx = []; try { fsx = fs.readdirSync(CLI_DATA).filter(f => /^[a-f0-9]{16}\.json$/.test(f)); } catch {} return send(res, 200, fsx.map(f => cliLoad(f.slice(0, 16))).filter(Boolean).map(cliPub).sort((a, b) => b.updatedAt - a.updatedAt)); }
++  if (p === "/api/cli/sessions" && M === "POST") { const b = await body(req); if (!CLI_TOOLS[b.tool]) return send(res, 400, { error: "tool 只能是 claude / codex / gemini" }); const now = Date.now(); const m = { id: crypto.randomBytes(8).toString("hex"), tool: b.tool, title: typeof b.title === "string" && b.title.trim() ? b.title.trim().slice(0, 60) : "新会话", createdAt: now, updatedAt: now, cliSessionId: null }; cliSave(m); cliAudit(req, { ev: "create", session: m.id, tool: m.tool }); return send(res, 200, cliPub(m)); }
++  if ((mt = /^\/api\/cli\/sessions\/([a-f0-9]{16})(\/run|\/cancel)?$/.exec(p))) {
++    const id = mt[1], act = mt[2];
++    if (!act && M === "GET") { const m = cliLoad(id); if (!m) return send(res, 404, { error: "会话不存在" }); let msgs = []; try { msgs = fs.readFileSync(cliMsgFile(id), "utf8").split("\n").filter(Boolean).map(l => JSON.parse(l)); } catch {} return send(res, 200, { session: cliPub(m), messages: msgs }); }
++    if (!act && M === "DELETE") { const m = cliLoad(id); if (!m) return send(res, 404, { error: "会话不存在" }); cliRuns.get(id)?.cancel(); for (const f of [cliMetaFile(id), cliMsgFile(id)]) fs.rmSync(f, { force: true }); cliAudit(req, { ev: "delete", session: id, tool: m.tool }); return send(res, 200, { ok: true }); }
++    if (act === "/run" && M === "POST") return cliRun(req, res, id);
++    if (act === "/cancel" && M === "POST") { const r = cliRuns.get(id); if (!r) return send(res, 409, { error: "没有在运行" }); r.cancel(); cliAudit(req, { ev: "cancel", session: id, runId: r.runId }); return send(res, 200, { ok: true }); }
++  }
++  return send(res, 404, { error: "接口不存在" });
++}
++
+ function send(res, code, obj, h = {}) { const b = JSON.stringify(obj); res.writeHead(code, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...h }); res.end(b); }
+ const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".webmanifest": "application/manifest+json" };
+ const SEC = { "x-content-type-options": "nosniff", "x-frame-options": "DENY", "referrer-policy": "no-referrer", "strict-transport-security": "max-age=31536000", "content-security-policy": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'" };
+@@ -932,6 +1073,7 @@
+       if (u.pathname === "/api/stickers/import" && req.method === "POST") { if (req.headers["x-hs"] !== "1") return send(res, 403, { error: "拒绝跨站请求" }); const cat = u.searchParams.get("category"); try { const r = await stkImport(req, u); opLog(req, "stickers.import", `${cat} ${r.file}`, true); return send(res, 200, r); } catch (e) { opLog(req, "stickers.import", cat, false, e.message); return send(res, e.http || 500, { error: e.message, code: e.code }); } }
+       if (u.pathname === "/api/stickers/image" && req.method === "GET") { const n = u.searchParams.get("file"); if (!stickerFiles().includes(n)) return send(res, 404, { error: "表情不存在" }); const real = fs.realpathSync(path.join(STICKER_DIR, n)); if (!real.startsWith(fs.realpathSync(STICKER_DIR) + path.sep)) return send(res, 403, { error: "拒绝" }); return serveFile(res, real, MEDIA_MIME[path.extname(n).toLowerCase()] || "application/octet-stream"); }
+       if (req.method === "POST" && req.headers["x-hs"] !== "1") return send(res, 403, { error: "拒绝跨站请求" });
++      if (u.pathname.startsWith("/api/cli/")) { if (req.method === "DELETE" && req.headers["x-hs"] !== "1") return send(res, 403, { error: "拒绝跨站请求" }); return await cliRoute(req, res, u); }
+       const pm = req.method === "GET" && /^\/api\/profiles\/([^/]+)$/.exec(u.pathname); const h = pm ? (u2 => R["GET /api/profiles/:id"](u2, decodeURIComponent(pm[1]))) : R[req.method + " " + u.pathname]; if (!h) return send(res, 404, { error: "接口不存在" });
+       const b = req.method === "POST" ? await body(req) : null;
+       return send(res, 200, await h(u, b, req));

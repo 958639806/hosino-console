@@ -1,0 +1,62 @@
+// Offline harness: evaluates the real patched snippets from the staged copies with stubs. No gateway, no network.
+import fs from "node:fs"; import { createHash } from "node:crypto";
+const [prepF, mcpF, cliF] = process.argv.slice(2);
+let fail = 0; const ok = (c, m) => { console.log((c ? "PASS " : "FAIL ") + m); if (!c) fail++; };
+const H = s => createHash("sha256").update(s).digest("hex");
+// --- mcp-http capture (real code) ---
+const msrc = fs.readFileSync(mcpF, "utf8");
+const cat = new Function("createHash","stableStringify","readMcpLoopbackToolName","normalizeToolPolicyName","console",
+  msrc.slice(msrc.indexOf("const QQ_CLAUDE_DESCRIPTOR_CATALOGS"), msrc.indexOf("const TOOL_CACHE_TTL_MS")) + "\nreturn { resolveQQClaudeDescriptorCatalog };")(createHash, v => JSON.stringify(v), t => t.name, n => String(n).toLowerCase(), { info() {} });
+// --- prepare hash IIFE (real code) ---
+const psrc = fs.readFileSync(prepF, "utf8");
+const a = psrc.indexOf("const promptToolNamesHash = (() => {"), b = psrc.indexOf("})();", a) + 5;
+const logs = [];
+const hashFn = new Function("bundleMcpEnabled","mcpLoopbackRuntime","hashCliSessionText","promptTools","params","console", psrc.slice(a, b) + "\nreturn promptToolNamesHash;");
+const prepHash = (tools, sk) => hashFn(true, {}, H, tools.map(name => ({ name })), { sessionKey: sk }, { info: m => logs.push(m) });
+const SK = "agent:main:qqbot:group:b4ee2a7019c96343c96eeba8cb63d8c5", OTHER = "agent:main:qqbot:group:ffff";
+const OWNER = "4330BBC52465D583F003C0A68650DF70", MEMBER = "FB597EAB1D23BDAAFAKE000000000000";
+const guard = { active: true, unifiedToolsReady: true, readScopesReady: true, isFullCatalogGroup: sk => sk === SK, isCurrentOwner: c => c.requester.senderId === OWNER };
+globalThis[Symbol.for("openclaw.qqGroupOwnerGuard")] = guard;
+const names = n => Array.from({ length: n }, (_, i) => "tool_" + String(i).padStart(2, "0"));
+const mk = l => l.map(name => ({ name, description: "d", parameters: { type: "object" }, execute: async () => ({}) }));
+const sch = t => t.map(x => ({ name: x.name, description: x.description, inputSchema: x.parameters }));
+const ctx = (s, own, i, sk = SK) => ({ qqDescriptorPolicy: {}, modelProvider: "claude-cli", messageProvider: "qqbot", trigger: "user", sessionKey: sk, sessionId: "s1", accountId: "default", runId: "r" + i, currentMessageId: "m" + i, senderIsOwner: own, channelContext: { sender: { id: s } }, nativeCronCreatorToolAllowlist: null });
+const pr = c => ({ context: c, cfg: { x: 1 }, grantToken: "g", isGrantCurrent: () => true });
+const O = names(61), M = names(59);
+const ownerNative = H(JSON.stringify([...O].sort()));
+ok(prepHash(M, SK) === H(JSON.stringify([...M].sort())), "before any owner capture: member keeps native 59-name hash (no change)");
+ok(prepHash(O, SK) === ownerNative, "owner hash unchanged (native)");
+const oc = cat.resolveQQClaudeDescriptorCatalog(pr(ctx(OWNER, true, 1)), "exact", mk(O), sch(mk(O)));
+ok(oc.proof.catalogState === "captured", "owner turn captured");
+ok(prepHash(M, SK) === ownerNative, "after capture: member hash == owner hash (process reusable)");
+ok(prepHash(O, SK) === ownerNative, "after capture: owner hash still == native");
+ok(logs.some(l => l.includes('"own":59') && l.includes('"catalog":61')), "[hosino-toolfp] log emitted for member");
+ok(prepHash([...M, "evil_tool"], SK) === H(JSON.stringify([...M, "evil_tool"].sort())), "member with a tool outside catalog -> native hash (real drift still restarts)");
+ok(prepHash(names(62), SK) !== ownerNative, "owner tool set grows -> hash differs (restart)");
+ok(prepHash(M, OTHER) === H(JSON.stringify([...M].sort())), "non full-catalog session untouched");
+const reg = globalThis[Symbol.for("hosino.toolcatNames")];
+ok(reg.get(SK).names.length === 61 && Object.isFrozen(reg.get(SK)) && !("schema" in reg.get(SK)), "registry holds frozen names only");
+globalThis[Symbol.for("openclaw.qqGroupOwnerGuard")] = { ...guard };
+ok(prepHash(M, SK) === H(JSON.stringify([...M].sort())), "guard object replaced (plugin reload) -> native hash");
+globalThis[Symbol.for("openclaw.qqGroupOwnerGuard")] = { ...guard, active: false };
+ok(prepHash(M, SK) === H(JSON.stringify([...M].sort())), "guard inactive -> native hash");
+globalThis[Symbol.for("openclaw.qqGroupOwnerGuard")] = guard;
+const mc = cat.resolveQQClaudeDescriptorCatalog(pr(ctx(MEMBER, false, 2)), "exact", mk(M), sch(mk(M)));
+const ph = mc.tools.find(t => t.name === "tool_60");
+const r = await ph.execute();
+ok(mc.proof.executableToolCount === 59 && r.isError === true, "member calling owner-only tool via MCP gets placeholder error (no action)");
+ok(!hashFn(false, null, H, [], {}, console), "bundleMcp disabled -> undefined (unchanged)");
+// --- cli.runtime keepalive (real code) ---
+const csrc = fs.readFileSync(cliF, "utf8");
+const cs = csrc.indexOf("const IDLE_TIMEOUT_MS"), ce = csrc.indexOf("const RESULT_HOLDING_TASK_TYPES");
+const ct = csrc.indexOf("function completeTurn("), cte = csrc.indexOf("async function acceptMessage(");
+const timers = [];
+const k = new Function("setTimeout", csrc.slice(cs, ce) + csrc.slice(ct, cte) + "\nreturn { completeTurn, HOSINO_KEEPALIVE_KEYS, HOSINO_KEEPALIVE_MS, IDLE_TIMEOUT_MS };")((fn, ms) => { timers.push(ms); return { unref() {} }; });
+const turn = () => ({ pendingBackgroundTaskIds: new Set(), controller: new AbortController(), events: { end() {} } });
+const sess = pinned => ({ capability: {}, hosinoPinned: pinned, handle: { close() {} } });
+for (const key of ["agent:main:qqbot:group:379363a480715dfc01f13aaf92571111", "agent:main:qqbot:group:b4ee2a7019c96343c96eeba8cb63d8c5", "agent:main:main"]) ok(k.HOSINO_KEEPALIVE_KEYS.has(key), "whitelist has " + key);
+ok(!k.HOSINO_KEEPALIVE_KEYS.has("agent:main:qqbot:direct:7fe244b1202cd602dda2c06b29c62f50"), "other DM not whitelisted");
+k.completeTurn(sess(true), turn()); k.completeTurn(sess(false), turn()); k.completeTurn(sess(undefined), turn());
+ok(timers[0] === 432e5 && timers[1] === 6e5 && timers[2] === 6e5, `idle timers pinned=${timers[0]} other=${timers[1]} unset=${timers[2]}`);
+ok(/const reusable = existing && existing\.fingerprint === capability\?\.fingerprint/.test(csrc) && csrc.includes("await capability.restart();"), "fingerprint-mismatch restart path untouched");
+console.log(fail ? `FAILURES ${fail}` : "ALL PASS"); process.exit(fail ? 1 : 0);

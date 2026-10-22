@@ -1,0 +1,59 @@
+--- orig/index.cjs	2026-10-20 19:49:11.311499020 +0800
++++ patched/index.cjs	2026-10-20 19:56:36.587308787 +0800
+@@ -14012,6 +14012,21 @@
+   if (c.manifest?.categories?.[key]?.enabled === false) return "category-off";
+   return "";
+ }
++/* HOSINO-VOICE-PARAMS v1: send-time backstop for stickers/params.json voice section */
++function __hsVoice(dir) { try { const v = __hsStk(dir).params?.voice; return v && typeof v === "object" ? v : null; } catch { return null; } }
++function __hsVDay(tz) { try { return new Intl.DateTimeFormat("en-CA", { timeZone: tz || "Asia/Singapore" }).format(new Date()); } catch { return ""; } }
++function __hsVoiceBlock(dir, gid, g) {
++  const v = __hsVoice(dir); if (!v) return "";
++  if (v.enabled === false) return "off";
++  const pc = v.perConversation?.["group:" + String(gid).toLowerCase()];
++  if (pc && typeof pc === "object" ? pc.enabled === false : !v.defaultEnabled) return "session-off";
++  const tz = typeof v.tz === "string" && v.tz ? v.tz : "Asia/Singapore";
++  const qh = Array.isArray(v.quietHours) ? v.quietHours : v.quietHours ? [v.quietHours] : [];
++  if (qh.some((q) => q && __hsQuiet({ start: q.start, end: q.end, tz: q.tz || tz }))) return "quiet-hours";
++  const lim = Math.floor(Number(v.dailyLimit ?? 20));
++  if (lim > 0 && g && g.voiceDay === __hsVDay(tz) && (Number(g.voiceDayCount) || 0) >= lim) return "daily-limit";
++  return "";
++}
+ /* HOSINO-STICKER-PATCH v1: auto-generate missing category in background (genEnabled/genDailyCap) */
+ var __hsGenBusy = false;
+ function __hsGenKey(raw) { const k = String(raw || "").normalize("NFKC").replace(/[\s&＆:：\[\]【】]/g, ""); return /^[\p{Script=Han}A-Za-z0-9]{1,8}$/u.test(k) ? k : ""; }
+@@ -14307,6 +14322,7 @@
+ function __qqMtCreate(account, deliverCtx, log4, envelope) {
+   const cfg = __qqMtCfg(account);
+   try { const hp = __hsStk(cfg.stickerDir).params; const v = Math.floor(Number(hp?.cooldownReplies)); if (hp && Number.isFinite(v)) cfg.stickerCooldownReplies = Math.max(0, Math.min(100, v)); } catch {} /* HOSINO-STICKER-PATCH v1 */
++  try { const hv = __hsVoice(cfg.stickerDir); if (hv) { const mc = Math.floor(Number(hv.maxChars)); if (Number.isFinite(mc)) cfg.voiceMaxChars = Math.max(1, Math.min(200, mc)); const cr = Math.floor(Number(hv.cooldownReplies)); if (Number.isFinite(cr)) cfg.voiceCooldownReplies = Math.max(0, Math.min(100, cr)); } } catch {} /* HOSINO-VOICE-PARAMS v1 */
+   if (cfg.enabled === false) return null;
+   let gid = String(envelope?.groupId || "");
+   if (!gid) { try { gid = String(parseTarget2(deliverCtx.qualifiedTarget).targetId || ""); } catch {} }
+@@ -14345,7 +14361,7 @@
+     const g = __qqMtGroup(gid);
+     if (!st.counted) { st.counted = true; g.replies = (g.replies || 0) + 1; }
+     if (flags.sticker) { g.lastStickerReply = g.replies; g.lastStickerFile = flags.stickerFile; g.lastStickerKey = flags.stickerKey; g.lastStickerAt = Date.now(); }
+-    if (flags.voice) { g.lastVoiceReply = g.replies; g.lastVoiceAt = Date.now(); }
++    if (flags.voice) { g.lastVoiceReply = g.replies; g.lastVoiceAt = Date.now(); try { const d = __hsVDay(__hsVoice(cfg.stickerDir)?.tz); if (g.voiceDay !== d) { g.voiceDay = d; g.voiceDayCount = 0; } g.voiceDayCount = (Number(g.voiceDayCount) || 0) + 1; } catch {} /* HOSINO-VOICE-PARAMS v1 */ }
+     g.updatedAt = Date.now();
+     __qqMtSave();
+   };
+@@ -14358,6 +14374,7 @@
+       if (typeof t !== "string" || (t.indexOf("语音") < 0 && !/voice/i.test(t))) return;
+       if (__qqIsStandaloneSilentReply(t)) return;
+       if (!snapshot().voiceOk) return;
++      if (__hsVoiceBlock(cfg.stickerDir, gid, __qqMtGroup(gid))) return; /* HOSINO-VOICE-PARAMS v1: no TTS prestart when params block it */
+       if (/[&＆]{2}[^&＆\n]{1,16}[&＆]{2}/.test(t)) return; // sticker tag present -> voice will become text
+       const m = new RegExp(__QQMT_VOICE_SRC, "i").exec(t);
+       if (!m) return;
+@@ -14408,7 +14425,9 @@
+         const line = p.voice.line;
+         const len = Array.from(line).length;
+         let reason = "";
++        const __hsVWhy = __hsVoiceBlock(cfg.stickerDir, gid, __qqMtGroup(gid)); /* HOSINO-VOICE-PARAMS v1 */
+         if (!cfg.voice) reason = "disabled";
++        else if (__hsVWhy) reason = `params ${__hsVWhy}`;
+         else if (st.voiceUsed) reason = "max 1 per reply";
+         else if (st.stickerUsed || st.otherMedia) reason = "one media per reply";
+         else if (!sn.voiceOk) reason = `cooldown voice gap=${sn.voiceGap} need>=${cfg.voiceCooldownReplies}`;

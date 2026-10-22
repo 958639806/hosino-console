@@ -1,0 +1,69 @@
+--- orig/server.mjs	2026-10-20 19:49:13.947619041 +0800
++++ server.mjs	2026-10-20 19:55:47.002579410 +0800
+@@ -702,11 +702,52 @@
+ const stkGenJobs = new Map();
+ function stkGenState() { const p = stkParams(); const tz = p.quietHours?.tz || "Asia/Singapore"; const day = new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(new Date()); let s = {}; try { s = JSON.parse(fs.readFileSync(path.join(STICKER_DIR, ".gen-state.json"), "utf8")); } catch {} const cap = Number.isFinite(+p.genDailyCap) ? +p.genDailyCap : 10; return { day, count: s.day === day ? s.count || 0 : 0, cap, enabled: p.genEnabled !== false }; }
+ function stkGenBump() { const g = stkGenState(); const f = path.join(STICKER_DIR, ".gen-state.json"), t = f + ".tmp-c"; fs.writeFileSync(t, JSON.stringify({ day: g.day, count: g.count + 1 })); fs.renameSync(t, f); }
++// ---------- v2.11：语音参数（params.json 的 voice 段，HOSINO-VOICE-PARAMS v1） ----------
++const QQ_MT_STATE = path.join(path.dirname(WORKSPACE), "qqbot", "media-tag-state.json");
++const VOICE_DEFAULTS = { enabled: true, probability: 0.12, cooldownReplies: 4, tz: "Asia/Singapore", quietHours: [{ start: "00:00", end: "08:00" }], defaultEnabled: false, perConversation: {}, maxChars: 40, dailyLimit: 20, exclusiveWithSticker: true };
++const isTZ = s => { try { new Intl.DateTimeFormat("en-CA", { timeZone: s }); return true; } catch { return false; } };
++function voiceMerge(cur, v) {
++  if (v === null) return null; // 传 null = 删除 voice 段，回到旧行为（模型自己决定）
++  if (!v || typeof v !== "object" || Array.isArray(v)) throw httpErr(400, "voice 必须是对象或 null");
++  const o = { ...VOICE_DEFAULTS, ...(cur && typeof cur === "object" ? cur : {}) };
++  for (const [k, x] of Object.entries(v)) {
++    if (["enabled", "defaultEnabled", "exclusiveWithSticker"].includes(k)) { if (typeof x !== "boolean") throw httpErr(400, `voice.${k} 必须是布尔值`); o[k] = x; }
++    else if (k === "probability") { if (typeof x !== "number" || !(x >= 0 && x <= 1)) throw httpErr(400, "voice.probability 应在 0–1"); o[k] = x; }
++    else if (k === "cooldownReplies") { if (!Number.isInteger(x) || x < 0 || x > 100) throw httpErr(400, "voice.cooldownReplies 应为 0–100 的整数"); o[k] = x; }
++    else if (k === "maxChars") { if (!Number.isInteger(x) || x < 1 || x > 200) throw httpErr(400, "voice.maxChars 应为 1–200 的整数"); o[k] = x; }
++    else if (k === "dailyLimit") { if (!Number.isInteger(x) || x < 0 || x > 1000) throw httpErr(400, "voice.dailyLimit 应为 0–1000 的整数（0=不限）"); o[k] = x; }
++    else if (k === "tz") { if (typeof x !== "string" || !isTZ(x)) throw httpErr(400, "voice.tz 不是有效时区"); o[k] = x; }
++    else if (k === "quietHours") {
++      if (x === null) { o.quietHours = []; continue; }
++      if (!Array.isArray(x) || x.length > 6) throw httpErr(400, "voice.quietHours 应为最多 6 段的数组 [{start,end}]，或 null");
++      o.quietHours = x.map((q, i) => { if (!isHM(q?.start) || !isHM(q?.end)) throw httpErr(400, `voice.quietHours[${i}] 需要 start/end（HH:MM）`); return { start: q.start, end: q.end }; });
++    } else if (k === "perConversation") {
++      if (!x || typeof x !== "object" || Array.isArray(x)) throw httpErr(400, "voice.perConversation 必须是对象"); const pc = { ...(o.perConversation || {}) };
++      for (const [ck, cv] of Object.entries(x)) {
++        if (!/^group:[0-9a-f]{32}$/.test(ck)) throw httpErr(400, `会话键应为 group:<32位小写hex>（私聊第二期）：${ck}`);
++        if (cv === null) { delete pc[ck]; continue; }
++        if (typeof cv?.enabled !== "boolean") throw httpErr(400, `${ck}.enabled 必须是布尔值`); const e = { enabled: cv.enabled };
++        if (cv.probability != null) { if (typeof cv.probability !== "number" || !(cv.probability >= 0 && cv.probability <= 1)) throw httpErr(400, `${ck}.probability 应在 0–1`); e.probability = cv.probability; }
++        pc[ck] = e;
++      }
++      o.perConversation = pc;
++    } else throw httpErr(400, "不支持的语音参数：" + k);
++  }
++  return o;
++}
++function voiceToday(p) {
++  const v = p?.voice; if (!v || typeof v !== "object") return { configured: false };
++  const tz = v.tz || "Asia/Singapore"; const day = new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(new Date());
++  let groups = {}; try { groups = JSON.parse(fs.readFileSync(QQ_MT_STATE, "utf8"))?.groups || {}; } catch {}
++  const limit = Number.isFinite(+v.dailyLimit) ? +v.dailyLimit : 20; const per = {};
++  for (const [gid, g] of Object.entries(groups)) per["group:" + gid.toLowerCase()] = { count: g.voiceDay === day ? g.voiceDayCount || 0 : 0, lastVoiceAt: g.lastVoiceAt || null, repliesSinceVoice: g.lastVoiceReply == null ? null : (g.replies || 0) - g.lastVoiceReply };
++  return { configured: true, day, tz, limit, perConversation: per };
++}
+ const STK_PARAM_KEYS = { enabled: "bool", attachProbability: "prob", cooldownReplies: "int", defaultEnabled: "bool", genEnabled: "bool", genDailyCap: "int" };
+ 
+ Object.assign(R, {
+   "GET /api/stickers/manifest": async () => ({ manifest: stkManifest(), genToday: stkGenState() }),
+-  "GET /api/stickers/params": async () => ({ params: stkParams(), genToday: stkGenState() }),
++  "GET /api/stickers/params": async () => { const p = stkParams(); return { params: p, genToday: stkGenState(), voiceToday: voiceToday(p), voiceDefaults: VOICE_DEFAULTS }; },
+   "POST /api/stickers/params/set": W("stickers.params.set", b => Object.keys(b.params || {}).join(","), async b => {
+     const inP = b.params; if (!inP || typeof inP !== "object") throw httpErr(400, "需要 params 对象");
+     const p = { ...stkParams() };
+@@ -720,9 +761,10 @@
+         if (!v || typeof v !== "object") throw httpErr(400, "sessions 必须是对象"); const ss = { ...(p.sessions || {}) };
+         for (const [sk, sv] of Object.entries(v)) { if (!/^(group|c2c):[0-9a-f]{32}$/.test(sk)) throw httpErr(400, `会话键应为 group:<32位小写hex> 或 c2c:<openid>：${sk}`); if (sv === null) { delete ss[sk]; continue; } if (typeof sv?.enabled !== "boolean") throw httpErr(400, `${sk}.enabled 必须是布尔值`); const e = { enabled: sv.enabled }; if (sv.probability != null) { if (typeof sv.probability !== "number" || sv.probability < 0 || sv.probability > 1) throw httpErr(400, `${sk}.probability 应在 0–1`); e.probability = sv.probability; } ss[sk] = e; }
+         p.sessions = ss;
+-      } else throw httpErr(400, "不支持的参数：" + k);
++      } else if (k === "voice") { const nv = voiceMerge(p.voice, v); if (nv === null) delete p.voice; else p.voice = nv; } /* v2.11 */
++      else throw httpErr(400, "不支持的参数：" + k);
+     }
+-    stkWriteJ("params.json", p); return { ok: true, params: p };
++    stkWriteJ("params.json", p); return { ok: true, params: p, voiceToday: voiceToday(p) };
+   }, { confirm: true }),
+   "POST /api/stickers/manifest/set": W("stickers.manifest.set", b => `look=${b.look != null} style=${b.style != null} cats=${Object.keys(b.categories || {}).join(",")}`, async b => {
+     const m = stkManifest();

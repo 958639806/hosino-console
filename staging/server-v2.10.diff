@@ -1,0 +1,169 @@
+--- server.mjs.v18-v2.9.1	2026-10-20 18:59:10.806918800 +0800
++++ server.mjs	2026-10-20 19:17:39.643381219 +0800
+@@ -487,10 +487,17 @@
+     let sess = null; try { sess = (await cached("hist-sess", 30e3, () => call("sessions.list", { limit: 500 }))).sessions?.find(x => x.key === key); } catch {}
+     const h = buildHistory(raw, sess); const all = h.messages; let end = all.length;
+     if (bf != null && bf !== "") { const ix = all.findIndex(m => m.id === bf); if (ix >= 0) end = ix; else if (/^\d+$/.test(bf)) end = Math.min(all.length, +bf); else throw httpErr(400, "before 无效（消息 id 或序号）"); }
+-    const start = Math.max(0, end - limit); const page = all.slice(start, end).map((m, k) => ({ ...m, index: start + k }));
++    const start = Math.max(0, end - limit); const page = chatAttIdx.merge(key, all.slice(start, end).map((m, k) => ({ ...m, index: start + k })));
+     return { ...h, messages: page, windowCount: all.length, gatewayHasMore: !!raw.hasMore, hasMore: start > 0 || !!raw.hasMore, nextBefore: start > 0 ? (all[start].id ?? String(start)) : null };
+   },
+-  "POST /api/send": async (u, b) => { if (!b.key || !b.message?.trim()) throw new Error("缺少会话或内容"); cache.clear(); return call("chat.send", { sessionKey: b.key, message: b.message, deliver: !!b.deliver, idempotencyKey: crypto.randomUUID() }, 30000); },
++  "POST /api/send": async (u, b, req) => {
++    const ups = upResolve(b.attachments, "chat"); if (!b.key || (!b.message?.trim() && !ups.length)) throw httpErr(400, "缺少会话或内容");
++    if (ups.some(m => m.session !== b.key)) throw httpErr(403, "附件是为别的会话上传的");
++    const atts = ups.length ? chatAttachments(ups) : undefined; cache.clear();
++    const r = await call("chat.send", { sessionKey: b.key, message: b.message || "", deliver: !!b.deliver, idempotencyKey: crypto.randomUUID(), ...(atts ? { attachments: atts } : {}) }, ups.length ? 120000 : 30000);
++    if (ups.length) { opLog(req, "chat.send.attachments", `${b.key} ${ups.map(m => m.id).join(",")}`, true); chatAttIdx.add({ key: b.key, ts: Date.now(), runId: r?.runId || null, text: String(b.message || "").slice(0, 200), ids: ups.map(m => m.id) }); }
++    return ups.length ? { ...r, attachments: ups.map(upPub) } : r;
++  },
+   "POST /api/abort": async (u, b) => call("chat.abort", { sessionKey: b.key }),
+   "POST /api/patch": async (u, b) => { const p = { key: b.key }; for (const k of ["model", "agentRuntime", "thinkingLevel", "label", "pinned", "fastMode"]) if (k in b) p[k] = b[k]; cache.clear(); return call("sessions.patch", p); },
+   "GET /api/models": async () => cached("models", 60e3, async () => { const r = await call("models.list"); return { models: r.models.map(m => ({ id: m.id, name: m.name, alias: m.alias, provider: m.provider, contextWindow: m.contextWindow, reasoning: m.reasoning, tags: m.tags, available: m.available, runtime: m.agentRuntime?.id, thinkingDefault: m.thinkingDefault })) }; }),
+@@ -1014,19 +1021,31 @@
+   if (strLen(prompt) > CLI_MAX_PROMPT) return send(res, 413, { error: `prompt 最长 ${CLI_MAX_PROMPT} 字` });
+   if (cliRuns.has(id)) return send(res, 409, { error: "这个会话正在运行" });
+   if (cliRuns.size >= CLI_MAX_RUNS) return send(res, 429, { error: `同时只能运行 ${CLI_MAX_RUNS} 个` });
++  let ups; try { ups = upResolve(b.attachments, "cli", id); } catch (e) { return send(res, e.http || 400, { error: e.message }); }
+   const t = (await cliTools()).find(x => x.id === m.tool); if (!t?.available) return send(res, 409, { error: t?.reason || `${m.tool} 未安装`, code: "not_installed" }); if (!t.authed) return send(res, 409, { error: t.reason || `${m.tool} 未登录`, code: "not_authed" });
+   const dir = path.join(CLI_ROOT, id); const runId = crypto.randomBytes(6).toString("hex"); const unit = `hs-cli-${runId}`;
+-  const args = cliArgs(m, prompt), bin = CLI_TOOLS[m.tool].bin; const started = Date.now();
++  const files = ups.map(x => ({ up: x, src: upFile(x), rel: `uploads/${x.id.slice(0, 6)}-${x.name}` }));
++  const imgs = files.filter(f => f.up.kind === "image");
++  const fullPrompt = files.length ? `${prompt}\n\n[用户上传的附件，已放在当前工作目录下]\n${files.map(f => `- ${f.rel}（${f.up.mime}，${f.up.size} 字节）`).join("\n")}` : prompt;
++  const claudeImgs = m.tool === "claude" ? imgs.filter(f => f.up.size <= 5 * 1024 * 1024) : [];
++  let args = cliArgs(m, fullPrompt), stdinData = null; const bin = CLI_TOOLS[m.tool].bin; const started = Date.now();
++  if (claudeImgs.length) { // Claude：stream-json 输入，图片以 base64 内容块直接给模型
++    const i = args.indexOf("-p"); args.splice(i, 2, "-p", "--input-format", "stream-json");
++    stdinData = JSON.stringify({ type: "user", message: { role: "user", content: [...claudeImgs.map(f => ({ type: "image", source: { type: "base64", media_type: f.up.mime, data: fs.readFileSync(f.src).toString("base64") } })), { type: "text", text: fullPrompt }] } }) + "\n";
++  }
++  if (m.tool === "codex" && imgs.length) args.splice(args.length - 1, 0, ...imgs.map(f => `--image=${f.rel}`));
+   let child;
+-  if (CLI_LAUNCH === "direct") { fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); child = spawn(bin, args, { cwd: dir, env: cliEnv(), detached: true, stdio: ["ignore", "pipe", "pipe"] }); }
+-  else child = spawn("sudo", ["-n", "/usr/bin/systemd-run", "--quiet", "--collect", "--wait", "--pipe", "--uid=ubuntu", "--gid=ubuntu", `--unit=${unit}`, `-p`, `RuntimeMaxSec=${Math.ceil(cliTimeout(m.tool) / 1000) + 30}`, ...Object.entries(cliEnv()).map(([k, v]) => `--setenv=${k}=${v}`), "/bin/bash", "-c", 'mkdir -p -m 700 "$0" && cd "$0" && exec "$@"', dir, bin, ...args], { env: { PATH: CLI_PATH }, detached: true, stdio: ["ignore", "pipe", "pipe"] });
++  const stdio = [stdinData ? "pipe" : "ignore", "pipe", "pipe"];
++  if (CLI_LAUNCH === "direct") { fs.mkdirSync(path.join(dir, "uploads"), { recursive: true, mode: 0o700 }); for (const f of files) fs.copyFileSync(f.src, path.join(dir, f.rel)); child = spawn(bin, args, { cwd: dir, env: cliEnv(), detached: true, stdio }); }
++  else child = spawn("sudo", ["-n", "/usr/bin/systemd-run", "--quiet", "--collect", "--wait", "--pipe", "--uid=ubuntu", "--gid=ubuntu", `--unit=${unit}`, `-p`, `RuntimeMaxSec=${Math.ceil(cliTimeout(m.tool) / 1000) + 30}`, ...Object.entries(cliEnv()).map(([k, v]) => `--setenv=${k}=${v}`), "/bin/bash", "-c", 'd=$0; n=$1; shift; mkdir -p -m 700 "$d/uploads" && cd "$d" || exit 97; while [ "$n" -gt 0 ]; do cp -f -- "$1" "$2" || exit 98; shift 2; n=$((n-1)); done; exec "$@"', dir, String(files.length), ...files.flatMap(f => [f.src, f.rel]), bin, ...args], { env: { PATH: CLI_PATH }, detached: true, stdio });
++  if (stdinData) { child.stdin.on("error", () => {}); child.stdin.end(stdinData); }
+   const run = { child, unit, runId, started, reason: null }; cliRuns.set(id, run);
+   const kill = why => { if (run.reason) return; run.reason = why; if (CLI_LAUNCH !== "direct") execFile("sudo", ["-n", "/usr/bin/systemctl", "kill", "--signal=SIGKILL", unit], () => {}); try { process.kill(-child.pid, "SIGTERM"); } catch {} setTimeout(() => { try { process.kill(-child.pid, "SIGKILL"); } catch {} }, 3000).unref(); };
+   run.cancel = () => kill("cancelled");
+   const TMO = cliTimeout(m.tool); const timer = setTimeout(() => kill("timeout"), TMO);
+   m.updatedAt = Date.now(); if (m.title === "新会话") m.title = prompt.replace(/\s+/g, " ").slice(0, 40); cliSave(m);
+-  cliPush(id, { role: "user", text: prompt, ts: started });
+-  cliAudit(req, { ev: "start", session: id, tool: m.tool, model: m.model || null, runId, prompt: prompt.slice(0, 4000), promptLen: strLen(prompt) });
++  cliPush(id, { role: "user", text: prompt, ts: started, ...(files.length ? { attachments: files.map(f => ({ ...upPub(f.up), path: f.rel })) } : {}) });
++  cliAudit(req, { ev: "start", session: id, tool: m.tool, model: m.model || null, runId, prompt: prompt.slice(0, 4000), promptLen: strLen(prompt), ...(files.length ? { attachments: files.map(f => `${f.up.id} ${f.up.name} ${f.up.size}B ${f.up.mime}`) } : {}) });
+   res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-store", "x-accel-buffering": "no", connection: "keep-alive" });
+   let open = true; res.on("close", () => { open = false; }); // 断开不杀进程：结果照样写进会话记录
+   const sse = (event, data) => { if (open) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
+@@ -1067,13 +1086,100 @@
+   if ((mt = /^\/api\/cli\/sessions\/([a-f0-9]{16})(\/run|\/cancel)?$/.exec(p))) {
+     const id = mt[1], act = mt[2];
+     if (!act && M === "GET") { const m = cliLoad(id); if (!m) return send(res, 404, { error: "会话不存在" }); let msgs = []; try { msgs = fs.readFileSync(cliMsgFile(id), "utf8").split("\n").filter(Boolean).map(l => JSON.parse(l)); } catch {} return send(res, 200, { session: cliPub(m), messages: msgs }); }
+-    if (!act && M === "DELETE") { req.resume(); const m = cliLoad(id); if (!m) return send(res, 404, { error: "会话不存在" }); cliDeleted.add(id); cliRuns.get(id)?.cancel(); for (const f of [cliMetaFile(id), cliMsgFile(id)]) fs.rmSync(f, { force: true }); cliAudit(req, { ev: "delete", session: id, tool: m.tool }); return send(res, 200, { ok: true }); }
++    if (!act && M === "DELETE") { req.resume(); const m = cliLoad(id); if (!m) return send(res, 404, { error: "会话不存在" }); cliDeleted.add(id); cliRuns.get(id)?.cancel(); for (const f of [cliMetaFile(id), cliMsgFile(id)]) fs.rmSync(f, { force: true }); try { for (const d of fs.readdirSync(UP_DIR)) { const um = upMeta(d); if (um?.scope === "cli" && um.session === id) fs.rmSync(path.join(UP_DIR, d), { recursive: true, force: true }); } } catch {} cliAudit(req, { ev: "delete", session: id, tool: m.tool }); return send(res, 200, { ok: true }); }
+     if (act === "/run" && M === "POST") return cliRun(req, res, id);
+     if (act === "/cancel" && M === "POST") { const r = cliRuns.get(id); if (!r) return send(res, 409, { error: "没有在运行" }); r.cancel(); cliAudit(req, { ev: "cancel", session: id, runId: r.runId }); return send(res, 200, { ok: true }); }
+   }
+   return send(res, 404, { error: "接口不存在" });
+ }
+ 
++// ---------- v2.10：上传文件 / 图片（聊天页 + 原生 CLI 页） ----------
++// 原始请求体流式写盘（不走 JSON/base64）；文件存在 data/uploads/<id>/，meta.json 记录类型与归属。
++const UP_DIR = path.join(ROOT, "data", "uploads");
++const UP_MAX = +process.env.UPLOAD_MAX_BYTES || 20 * 1024 * 1024;
++const UP_TTL = (+process.env.UPLOAD_TTL_DAYS || 30) * 864e5;
++const UP_MAX_PER_MSG = 10;
++const CHAT_IMG_MAX = 6 * 1024 * 1024; // 网关 agent-hydration 上限
++const isUpId = s => /^[a-f0-9]{24}$/.test(s || "");
++const safeName = n => { let s = String(n || "").split(/[\\/]/).pop().normalize("NFC").replace(/[\u0000-\u001f\u007f"'`$<>|:*?\\]/g, "").replace(/\s+/g, " ").trim().replace(/^\.+/, ""); if (!s) s = "file"; if ([...s].length > 100) { const e = path.extname(s).slice(0, 12); s = [...s].slice(0, 100 - e.length).join("") + e; } return s; };
++const UP_EXT_MIME = { ".txt": "text/plain", ".md": "text/markdown", ".csv": "text/csv", ".json": "application/json", ".log": "text/plain", ".py": "text/x-python", ".js": "text/javascript", ".ts": "text/plain", ".html": "text/html", ".xml": "application/xml", ".yaml": "text/yaml", ".yml": "text/yaml", ".sh": "text/x-shellscript" };
++function upSniff(buf, name) {
++  const img = sniff(buf); if (img) return { mime: img === "jpg" ? "image/jpeg" : "image/" + img, kind: "image" };
++  const h = buf.toString("latin1", 0, 8);
++  if (h.startsWith("%PDF-")) return { mime: "application/pdf", kind: "file" };
++  if (h.startsWith("PK\u0003\u0004")) { const e = path.extname(name).toLowerCase(); return { mime: { ".docx": "application/vnd.openxmlformats-officedocument.wordprocessingml.document", ".xlsx": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet", ".pptx": "application/vnd.openxmlformats-officedocument.presentationml.presentation" }[e] || "application/zip", kind: "file" }; }
++  if (h.startsWith("\u001f\u008b")) return { mime: "application/gzip", kind: "file" };
++  if (/^(ID3|OggS|fLaC)/.test(h) || h.startsWith("RIFF") && buf.toString("latin1", 8, 12) === "WAVE") return { mime: h.startsWith("ID3") ? "audio/mpeg" : h.startsWith("OggS") ? "audio/ogg" : h.startsWith("fLaC") ? "audio/flac" : "audio/wav", kind: "file" };
++  if (buf.toString("latin1", 4, 8) === "ftyp") return { mime: "video/mp4", kind: "file" };
++  const head = buf.subarray(0, 64 * 1024); let text = !head.includes(0); if (text) try { new TextDecoder("utf-8", { fatal: true }).decode(head.subarray(0, head.length - 4 > 0 ? head.length - 4 : head.length)); } catch { text = false; }
++  if (text) return { mime: UP_EXT_MIME[path.extname(name).toLowerCase()] || "text/plain", kind: "file" };
++  return { mime: "application/octet-stream", kind: "file" };
++}
++const upMeta = id => { if (!isUpId(id)) return null; try { return JSON.parse(fs.readFileSync(path.join(UP_DIR, id, "meta.json"), "utf8")); } catch { return null; } };
++const upFile = m => path.join(UP_DIR, m.id, "f");
++const upPub = m => ({ id: m.id, name: m.name, mime: m.mime, kind: m.kind, size: m.size, url: `/api/uploads/${m.id}`, createdAt: m.createdAt });
++async function upReceive(req, u) {
++  const scope = u.searchParams.get("scope"), session = u.searchParams.get("session") || null;
++  if (scope !== "chat" && scope !== "cli") throw httpErr(400, "scope 只能是 chat / cli");
++  if (scope === "cli" && (!isCliId(session) || !cliLoad(session))) throw httpErr(404, "CLI 会话不存在");
++  if (scope === "chat" && (!session || session.length > 300)) throw httpErr(400, "缺少参数：session（会话 key）");
++  const name = safeName(u.searchParams.get("name") || req.headers["x-filename"] && decodeURIComponent(String(req.headers["x-filename"])));
++  const len = +req.headers["content-length"]; if (len > UP_MAX) { req.resume(); throw httpErr(413, `文件不能超过 ${Math.round(UP_MAX / 1048576)}MB`); }
++  const id = crypto.randomBytes(12).toString("hex"), dir = path.join(UP_DIR, id); fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
++  const f = path.join(dir, "f"), out = fs.createWriteStream(f, { mode: 0o600 }); const hash = crypto.createHash("sha256"); let n = 0, head = [];
++  try {
++    await new Promise((r, j) => {
++      req.on("data", c => { n += c.length; if (n > UP_MAX) { j(httpErr(413, `文件不能超过 ${Math.round(UP_MAX / 1048576)}MB`)); req.destroy(); return; } hash.update(c); if (head.reduce((a, b) => a + b.length, 0) < 65536) head.push(c); if (!out.write(c)) { req.pause(); out.once("drain", () => req.resume()); } });
++      req.on("end", () => out.end(r)); req.on("error", j); req.on("aborted", () => j(httpErr(400, "上传中断")));
++    });
++    if (!n) throw httpErr(400, "空文件");
++  } catch (e) { out.destroy(); fs.rmSync(dir, { recursive: true, force: true }); throw e; }
++  const { mime, kind } = upSniff(Buffer.concat(head), name);
++  const m = { id, scope, session, name, mime, kind, size: n, sha256: hash.digest("hex"), createdAt: Date.now() };
++  atomicWrite(path.join(dir, "meta.json"), JSON.stringify(m)); return upPub(m);
++}
++setInterval(() => { try { const now = Date.now(); for (const d of fs.readdirSync(UP_DIR)) { const m = upMeta(d); if (!m || m.createdAt + UP_TTL < now) fs.rmSync(path.join(UP_DIR, d), { recursive: true, force: true }); } } catch {} }, 3600e3).unref();
++// 取一组上传，校验归属
++function upResolve(ids, scope, session) {
++  if (ids == null) return []; if (!Array.isArray(ids) || ids.length > UP_MAX_PER_MSG) throw httpErr(400, `attachments 需为最多 ${UP_MAX_PER_MSG} 个上传 id 的数组`);
++  return ids.map(id => { const m = upMeta(id); if (!m || !fs.existsSync(upFile(m))) throw httpErr(404, "上传不存在或已过期：" + id); if (m.scope !== scope || (scope === "cli" ? m.session !== session : false)) throw httpErr(403, "这个上传不属于当前会话"); return m; });
++}
++// 控制台发出的附件索引：网关 chat.history 的用户消息里不带附件信息，这里按 会话+时间+文本 合并回去
++const CHAT_ATT_IDX = path.join(ROOT, "data", "chat-attachments.jsonl");
++const chatAttIdx = {
++  add(rec) { try { fs.mkdirSync(path.dirname(CHAT_ATT_IDX), { recursive: true, mode: 0o700 }); fs.appendFileSync(CHAT_ATT_IDX, JSON.stringify(rec) + "\n", { mode: 0o600 }); } catch {} },
++  load(key) { try { return fs.readFileSync(CHAT_ATT_IDX, "utf8").split("\n").filter(Boolean).map(l => { try { return JSON.parse(l); } catch { return null; } }).filter(x => x && x.key === key); } catch { return []; } },
++  merge(key, msgs) {
++    const recs = this.load(key); if (!recs.length) return msgs; const used = new Set();
++    return msgs.map(m => {
++      if (m.role !== "user") return m; const txt = typeof m.content === "string" ? m.content : Array.isArray(m.content) ? m.content.map(c => c?.text || "").join("") : "";
++      const rec = recs.find((x, i) => !used.has(i) && Math.abs((m.ts || 0) - x.ts) < 120e3 && txt.trim().startsWith(x.text.trim().slice(0, 100)) && used.add(i));
++      if (!rec) return m; const atts = rec.ids.map(upMeta).map((um, i) => um ? upPub(um) : { id: rec.ids[i], expired: true });
++      return { ...m, attachments: atts };
++    });
++  },
++};
++// 聊天：按网关原生方式随 chat.send 发送（图片内联，其他文件由网关存入媒体库并在消息里附 [media attached: …]）
++function chatAttachments(ups) {
++  const maxPayload = +gwHello?.policy?.maxPayload || 25 * 1024 * 1024, maxBytes = +gwHello?.policy?.attachments?.maxBytes || 20 * 1024 * 1024, maxImg = +gwHello?.policy?.attachments?.maxImageBytes || CHAT_IMG_MAX;
++  let total = 0; const out = ups.map(m => {
++    if (m.kind === "image" && m.size > maxImg) throw httpErr(413, `图片 ${m.name} 超过网关上限 ${Math.round(maxImg / 1048576)}MB`);
++    if (m.size > maxBytes) throw httpErr(413, `文件 ${m.name} 超过网关上限 ${Math.round(maxBytes / 1048576)}MB`);
++    const content = fs.readFileSync(upFile(m)).toString("base64"); total += content.length + 512;
++    return { type: m.kind === "image" ? "image" : "file", mimeType: m.mime, fileName: m.name, origin: "file", sizeBytes: m.size, content };
++  });
++  if (total > maxPayload - 256 * 1024) throw httpErr(413, `附件合计太大（base64 后约 ${Math.round(total / 1048576)}MB，网关单帧上限 ${Math.round(maxPayload / 1048576)}MB）`);
++  return out;
++}
++async function upRoute(req, res, u) {
++  if (u.pathname === "/api/uploads" && req.method === "POST") { try { const r = await upReceive(req, u); opLog(req, "uploads.put", `${r.id} ${u.searchParams.get("scope")}:${u.searchParams.get("session")} ${r.name} ${r.size}B ${r.mime}`, true); return send(res, 200, r); } catch (e) { opLog(req, "uploads.put", `${u.searchParams.get("scope")}:${u.searchParams.get("session")} ${u.searchParams.get("name")}`, false, e.message); return send(res, e.http || 500, { error: e.message, code: e.http === 413 ? "too_large" : undefined }); } }
++  if (u.pathname === "/api/uploads/limits" && req.method === "GET") { try { await connect(); } catch {} const p = gwHello?.policy || {}; return send(res, 200, { maxBytes: UP_MAX, maxPerMessage: UP_MAX_PER_MSG, ttlDays: UP_TTL / 864e5, chat: { maxBytes: Math.min(UP_MAX, +p.attachments?.maxBytes || 20971520), maxImageBytes: +p.attachments?.maxImageBytes || CHAT_IMG_MAX, maxPayload: +p.maxPayload || 26214400, fromGateway: !!p.attachments }, cli: { maxBytes: UP_MAX, claudeInlineImageMax: 5242880 } }); }
++  const mt = /^\/api\/uploads\/([a-f0-9]{24})$/.exec(u.pathname); const m = mt && upMeta(mt[1]); if (!m) return send(res, 404, { error: "上传不存在或已过期" });
++  if (req.method === "GET") { const f = upFile(m); const inl = u.searchParams.get("download") !== "1"; return fs.createReadStream(f).on("error", () => send(res, 404, {})).once("open", function () { res.writeHead(200, mediaHeaders(inl ? m.mime : "application/octet-stream", m.name, m.size)); this.pipe(res); }); }
++  if (req.method === "DELETE") { req.resume(); fs.rmSync(path.join(UP_DIR, m.id), { recursive: true, force: true }); opLog(req, "uploads.delete", m.id, true); return send(res, 200, { ok: true }); }
++  return send(res, 404, { error: "接口不存在" });
++}
++
+ function send(res, code, obj, h = {}) { const b = JSON.stringify(obj); res.writeHead(code, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...h }); res.end(b); }
+ const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".webmanifest": "application/manifest+json" };
+ const SEC = { "x-content-type-options": "nosniff", "x-frame-options": "DENY", "referrer-policy": "no-referrer", "strict-transport-security": "max-age=31536000", "content-security-policy": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'" };
+@@ -1106,6 +1212,7 @@
+       if (u.pathname === "/api/stickers/import" && req.method === "POST") { if (req.headers["x-hs"] !== "1") return send(res, 403, { error: "拒绝跨站请求" }); const cat = u.searchParams.get("category"); try { const r = await stkImport(req, u); opLog(req, "stickers.import", `${cat} ${r.file}`, true); return send(res, 200, r); } catch (e) { opLog(req, "stickers.import", cat, false, e.message); return send(res, e.http || 500, { error: e.message, code: e.code }); } }
+       if (u.pathname === "/api/stickers/image" && req.method === "GET") { const n = u.searchParams.get("file"); if (!stickerFiles().includes(n)) return send(res, 404, { error: "表情不存在" }); const real = fs.realpathSync(path.join(STICKER_DIR, n)); if (!real.startsWith(fs.realpathSync(STICKER_DIR) + path.sep)) return send(res, 403, { error: "拒绝" }); return serveFile(res, real, MEDIA_MIME[path.extname(n).toLowerCase()] || "application/octet-stream"); }
+       if (req.method === "POST" && req.headers["x-hs"] !== "1") return send(res, 403, { error: "拒绝跨站请求" });
++      if (u.pathname === "/api/uploads" || u.pathname.startsWith("/api/uploads/")) { if (req.method === "DELETE" && req.headers["x-hs"] !== "1") return send(res, 403, { error: "拒绝跨站请求" }); return await upRoute(req, res, u); }
+       if (u.pathname.startsWith("/api/cli/")) { if (req.method === "DELETE" && req.headers["x-hs"] !== "1") return send(res, 403, { error: "拒绝跨站请求" }); return await cliRoute(req, res, u); }
+       const pm = req.method === "GET" && /^\/api\/profiles\/([^/]+)$/.exec(u.pathname); const h = pm ? (u2 => R["GET /api/profiles/:id"](u2, decodeURIComponent(pm[1]))) : R[req.method + " " + u.pathname]; if (!h) return send(res, 404, { error: "接口不存在" });
+       const b = req.method === "POST" ? await body(req) : null;

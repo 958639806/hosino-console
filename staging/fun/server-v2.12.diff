@@ -1,0 +1,256 @@
+--- orig/server.mjs	2026-10-20 21:14:24.668424812 +0800
++++ patched/server.mjs	2026-10-20 21:55:28.295029871 +0800
+@@ -1233,6 +1233,253 @@
+   return send(res, 404, { error: "接口不存在" });
+ }
+ 
++// ---------- v2.12：小脾气参数（记仇小本本 / 群梗回旋镖 / 吃醋；写 workspace/fun：params.json / grudges.json / gags.json / .trash/；需要单元 drop-in 40-fun-rw.conf） ----------
++// 注意：消费这些参数的技能、脚本和 gate 补丁还没做；在它们上线前，这里只负责存设置，不改变星野的行为。
++const FUN_DIR = process.env.HS_FUN_DIR || path.join(WORKSPACE, "fun");
++const FUN_TRASH = path.join(FUN_DIR, ".trash");
++const FUN_GK = /^group:[0-9a-f]{32}$/;
++const FUN_PID = /^[0-9A-F]{32}$/;
++const FUN_FEATS = ["grudge", "gag", "jealousy", "lexicon"];
++const FUN_DEFAULTS = {
++  enabled: false, killPhrase: "星野正经点", killOwnerOnly: true, optOutAllPhrase: "别整我", optOut: {},
++  grudge: { enabled: false, defaultEnabled: false, perGroup: {}, recallProbability: 0.10, recallCooldownDays: 7, maxEntriesPerPerson: 20, maxQuoteChars: 40, optOutPhrase: "别记我仇", clearPhrase: "撕本本" },
++  gag: { enabled: false, defaultEnabled: false, perGroup: {}, minScore: 4, minDistinctPeople: 2, windowMin: 3, requireApproval: true, cooldownDays: 3, maxUses: 5, perGroupDailyCap: 2, optOutPhrase: "别拿我的话玩梗", deletePhrase: "这梗删了" },
++  jealousy: { enabled: false, tierA: true, tierB: false, defaultEnabled: false, perGroup: {}, otherBots: [{ id: "A6902CCDF6FD63D47AC7B9A6BD44E201", name: "芙宁娜" }], perPersonDailyCap: 1, personCooldownMin: 30, groupCooldownMin: 120, optOutPhrase: "星野别吃醋" },
++  lexicon: { enabled: false, defaultEnabled: false, perGroup: {}, maxSlang: 3, maxNames: 3, includeDerogatory: false },
++};
++// 类型：b=布尔 p=0–1 i:min:max=整数 s:max=非空短文本
++const FUN_SPEC = {
++  grudge: { enabled: "b", defaultEnabled: "b", recallProbability: "p", recallCooldownDays: "i:1:365", maxEntriesPerPerson: "i:1:200", maxQuoteChars: "i:10:200", optOutPhrase: "s:20", clearPhrase: "s:20" },
++  gag: { enabled: "b", defaultEnabled: "b", minScore: "i:1:50", minDistinctPeople: "i:1:20", windowMin: "i:1:60", requireApproval: "b", cooldownDays: "i:0:365", maxUses: "i:1:100", perGroupDailyCap: "i:0:50", optOutPhrase: "s:20", deletePhrase: "s:20" },
++  jealousy: { enabled: "b", tierA: "b", tierB: "b", defaultEnabled: "b", perPersonDailyCap: "i:0:20", personCooldownMin: "i:0:1440", groupCooldownMin: "i:0:1440", optOutPhrase: "s:20" },
++  lexicon: { enabled: "b", defaultEnabled: "b", maxSlang: "i:0:10", maxNames: "i:0:10", includeDerogatory: "b" },
++};
++// 按群覆盖允许改的字段（enabled 必填）
++const FUN_GROUP_KEYS = { grudge: ["recallProbability", "recallCooldownDays"], gag: ["minScore", "minDistinctPeople", "requireApproval", "perGroupDailyCap"], jealousy: ["tierA", "tierB", "groupCooldownMin"], lexicon: ["maxSlang", "maxNames"] };
++function funVal(where, t, x) {
++  const [k, a, b] = t.split(":");
++  if (k === "b") { if (typeof x !== "boolean") throw httpErr(400, `${where} 必须是布尔值`); return x; }
++  if (k === "p") { if (typeof x !== "number" || !(x >= 0 && x <= 1)) throw httpErr(400, `${where} 应在 0–1`); return x; }
++  if (k === "i") { if (!Number.isInteger(x) || x < +a || x > +b) throw httpErr(400, `${where} 应为 ${a}–${b} 的整数`); return x; }
++  if (k === "s") { if (typeof x !== "string" || !x.trim() || x.length > +a || /[\r\n]/.test(x)) throw httpErr(400, `${where} 应为 1–${a} 字的单行文本`); return x.trim(); }
++  throw httpErr(500, "spec 错误");
++}
++function funReadJ(name, init) { try { return JSON.parse(fs.readFileSync(path.join(FUN_DIR, name), "utf8")); } catch (e) { if (e.code === "ENOENT") return init(); throw httpErr(500, name + " 读取失败：" + e.message); } }
++function funTrashCopy(name, tag) { const f = path.join(FUN_DIR, name); if (!fs.existsSync(f)) return null; fs.mkdirSync(FUN_TRASH, { recursive: true, mode: 0o755 }); const ts = new Date().toISOString().replace(/[:.]/g, "-"); for (let n = 0; ; n++) { const dst = path.join(FUN_TRASH, `${ts}${n ? "-" + n : ""}-${tag ? tag + "-" : ""}${name}`); try { fs.copyFileSync(f, dst, fs.constants.COPYFILE_EXCL); return path.basename(dst); } catch (e) { if (e.code !== "EEXIST" || n >= 50) throw e; } } }
++function funWriteJ(name, obj, tag) {
++  fs.mkdirSync(FUN_DIR, { recursive: true, mode: 0o755 });
++  const backup = funTrashCopy(name, tag); // 先备份，备份失败直接报错，不写
++  obj.updatedAt = Date.now(); const f = path.join(FUN_DIR, name), tmp = path.join(FUN_DIR, `.${name}.tmp-${process.pid}`);
++  fs.writeFileSync(tmp, JSON.stringify(obj, null, 1), { mode: 0o644 }); fs.renameSync(tmp, f); return backup;
++}
++const funStored = () => funReadJ("params.json", () => ({ version: 1 }));
++function funEffective(s) {
++  const o = { ...FUN_DEFAULTS, ...s, optOut: { ...(s.optOut || {}) } };
++  for (const f of FUN_FEATS) o[f] = { ...FUN_DEFAULTS[f], ...(s[f] && typeof s[f] === "object" ? s[f] : {}) };
++  delete o.updatedAt; return o;
++}
++function funMergeFeat(f, cur, v) {
++  if (v === null) return undefined; // null = 删除整段，回到默认（默认关闭）
++  if (!v || typeof v !== "object" || Array.isArray(v)) throw httpErr(400, `${f} 必须是对象或 null`);
++  const o = { ...(cur && typeof cur === "object" ? cur : {}) };
++  for (const [k, x] of Object.entries(v)) {
++    if (k === "perGroup") {
++      if (!x || typeof x !== "object" || Array.isArray(x)) throw httpErr(400, `${f}.perGroup 必须是对象`); const pg = { ...(o.perGroup || {}) };
++      for (const [gk, gv] of Object.entries(x)) {
++        if (!FUN_GK.test(gk)) throw httpErr(400, `群键应为 group:<32位小写hex>：${gk}`);
++        if (gv === null) { delete pg[gk]; continue; }
++        if (!gv || typeof gv !== "object" || typeof gv.enabled !== "boolean") throw httpErr(400, `${f}.perGroup.${gk}.enabled 必须是布尔值`);
++        const e = { enabled: gv.enabled };
++        for (const [gk2, gx] of Object.entries(gv)) { if (gk2 === "enabled" || gx == null) continue; if (!FUN_GROUP_KEYS[f].includes(gk2)) throw httpErr(400, `${f} 的按群覆盖不支持：${gk2}`); e[gk2] = funVal(`${f}.perGroup.${gk}.${gk2}`, FUN_SPEC[f][gk2], gx); }
++        pg[gk] = e;
++      }
++      o.perGroup = pg;
++    } else if (f === "jealousy" && k === "otherBots") {
++      if (x === null) { delete o.otherBots; continue; } // 回到默认（芙宁娜）
++      if (!Array.isArray(x) || x.length > 20) throw httpErr(400, "jealousy.otherBots 应为最多 20 项的数组 [{id,name}]，或 null");
++      const seen = new Set(); o.otherBots = x.map((b, i) => { const id = String(b?.id || "").toUpperCase(); if (!FUN_PID.test(id)) throw httpErr(400, `jealousy.otherBots[${i}].id 应为 32 位 QQ openid`); if (seen.has(id)) throw httpErr(400, `jealousy.otherBots 里 id 重复：${id}`); seen.add(id); return { id, name: funVal(`jealousy.otherBots[${i}].name`, "s:20", b?.name) }; });
++    } else if (FUN_SPEC[f][k]) { if (x === null) delete o[k]; else o[k] = funVal(`${f}.${k}`, FUN_SPEC[f][k], x); }
++    else throw httpErr(400, `不支持的 ${f} 参数：${k}`);
++  }
++  return o;
++}
++function funMerge(stored, inP) {
++  if (!inP || typeof inP !== "object" || Array.isArray(inP)) throw httpErr(400, "需要 params 对象");
++  const s = { ...stored };
++  for (const [k, v] of Object.entries(inP)) {
++    if (FUN_FEATS.includes(k)) { const m = funMergeFeat(k, s[k], v); if (m === undefined) delete s[k]; else s[k] = m; }
++    else if (k === "enabled" || k === "killOwnerOnly") { if (v === null) delete s[k]; else s[k] = funVal(k, "b", v); }
++    else if (k === "killPhrase" || k === "optOutAllPhrase") { if (v === null) delete s[k]; else s[k] = funVal(k, "s:20", v); }
++    else if (k === "optOut") {
++      if (!v || typeof v !== "object" || Array.isArray(v)) throw httpErr(400, "optOut 必须是对象 {<openid>: [\"all\"|\"grudge\"|\"gag\"|\"jealousy\"] | null}");
++      const oo = { ...(s.optOut || {}) };
++      for (const [pid0, list] of Object.entries(v)) {
++        const pid = pid0.toUpperCase(); if (!FUN_PID.test(pid)) throw httpErr(400, `optOut 的键应为 32 位 QQ openid：${pid0}`);
++        if (list === null) { delete oo[pid]; continue; }
++        if (!Array.isArray(list) || !list.length || list.some(x => !["all", ...FUN_FEATS].includes(x))) throw httpErr(400, `optOut.${pid} 应为非空数组，元素取 all/grudge/gag/jealousy/lexicon`);
++        oo[pid] = list.includes("all") ? ["all"] : [...new Set(list)];
++      }
++      s.optOut = oo;
++    } else throw httpErr(400, "不支持的参数：" + k);
++  }
++  // 交叉检查：同一功能里的各口令不能重复
++  const e = funEffective(s); const ph = [e.killPhrase, e.optOutAllPhrase, e.grudge.optOutPhrase, e.grudge.clearPhrase, e.gag.optOutPhrase, e.gag.deletePhrase, e.jealousy.optOutPhrase];
++  const phn = ph.map(x => String(x).replace(/\s+/g, "").toLowerCase()); if (new Set(phn).size !== phn.length) throw httpErr(400, "各口令不能重复");
++  return s;
++}
++const funGrudges = () => funReadJ("grudges.json", () => ({ version: 1, people: {} }));
++const funGags = () => funReadJ("gags.json", () => ({ version: 1, groups: {} }));
++// gate 补丁已装（fun-context.mjs 存在且 index.js 带标记）→ consumers:true；网关重启后才真正生效
++function funConsumers() { try { const d = path.join(WORKSPACE, "..", "plugins", "qq-group-followup-gate"); return fs.existsSync(path.join(d, "fun-context.mjs")) && fs.readFileSync(path.join(d, "index.js"), "utf8").includes("HOSINO-FUN-CONTEXT v1"); } catch { return false; } }
++const FUN_REQUIRES = {
++  "jealousy.tierB": "B 档（没叫她时主动插嘴吃醋）gate 补丁 HOSINO-FUN-CONTEXT v1 没有实现，这个开关只存不生效；目前只有 A 档（被叫到时才酸一句）",
++  "gag": "梗的候选统计（ref-index 扫描）还没做，gags.json 暂时没有来源；回旋镖只对已有条目生效",
++  "lexicon": "黑话词典/称呼表的候选统计和确认页还没做；gate 只读 /opt/hosino-console/data/lexicon/<群hex>.json（存在才注入）",
++};
++function funPidArg(b) { const p = String(b?.person || "").toUpperCase(); if (!FUN_PID.test(p)) throw httpErr(400, "person 应为 32 位 QQ openid"); return p; }
++
++Object.assign(R, {
++  "GET /api/fun/params": async () => { const s = funStored(); return { params: funEffective(s), stored: s, defaults: FUN_DEFAULTS, requires: FUN_REQUIRES, ...(funConsumers() ? { consumers: true, note: "gate 补丁 HOSINO-FUN-CONTEXT v1 已安装；改参数约 5 秒内生效（安装后需重启过一次网关）" } : { consumers: false, note: "技能、脚本和 gate 补丁还没上线，这里的设置暂时只存不生效" }) }; },
++  "POST /api/fun/params/set": W("fun.params.set", b => Object.keys(b.params || {}).join(","), async b => {
++    const s = funMerge(funStored(), b.params); s.version = 1; const backup = funWriteJ("params.json", s);
++    return { ok: true, params: funEffective(s), requires: FUN_REQUIRES, backup };
++  }, { confirm: true }),
++  "GET /api/fun/grudges": async () => {
++    const g = funGrudges(), oo = funEffective(funStored()).optOut;
++    return { people: Object.entries(g.people || {}).map(([id, p]) => ({ id, name: p.name || null, entries: (p.entries || []).map(e => ({ id: e.id, group: e.group, quote: e.quote, at: e.at, count: e.count || 1 })), lastRecallAt: p.lastRecallAt || null, optOut: !!(oo[id] && (oo[id].includes("all") || oo[id].includes("grudge"))) })), updatedAt: g.updatedAt || null };
++  },
++  "POST /api/fun/grudges/delete": W("fun.grudges.delete", b => `${b.person} ${b.entryId}`, async b => {
++    const pid = funPidArg(b); if (typeof b.entryId !== "string" || !b.entryId) throw httpErr(400, "需要 entryId");
++    const g = funGrudges(); const p = g.people?.[pid]; const i = (p?.entries || []).findIndex(e => e.id === b.entryId); if (i < 0) throw httpErr(404, "条目不存在");
++    p.entries.splice(i, 1); if (!p.entries.length) delete g.people[pid]; const backup = funWriteJ("grudges.json", g, "delete");
++    return { ok: true, backup };
++  }, { confirm: true }),
++  // 撕本本：清空某人的全部条目
++  "POST /api/fun/grudges/clear": W("fun.grudges.clear", b => String(b.person), async b => {
++    const pid = funPidArg(b); const g = funGrudges(); const n = g.people?.[pid]?.entries?.length || 0; if (!g.people?.[pid]) throw httpErr(404, "这个人的本本是空的");
++    delete g.people[pid]; const backup = funWriteJ("grudges.json", g, "clear"); return { ok: true, removed: n, backup };
++  }, { confirm: true }),
++  "GET /api/fun/gags": async u => {
++    const grp = u.searchParams.get("group"); if (grp && !FUN_GK.test(grp)) throw httpErr(400, "group 应为 group:<32位小写hex>");
++    const gg = funGags().groups || {}; const keys = grp ? [grp] : Object.keys(gg);
++    return { groups: keys.map(k => ({ group: k, items: (gg[k]?.items || []).map(x => ({ id: x.id, quote: x.quote, context: x.context, keywords: x.keywords || [], score: x.score, addedAt: x.addedAt, uses: x.uses || 0, lastUsedAt: x.lastUsedAt || null, retired: !!x.retired, promotedToSlang: !!x.promotedToSlang })) })) };
++  },
++  "POST /api/fun/gags/delete": W("fun.gags.delete", b => `${b.group} ${b.id}`, async b => {
++    if (!FUN_GK.test(String(b.group || ""))) throw httpErr(400, "group 应为 group:<32位小写hex>"); if (typeof b.id !== "string" || !b.id) throw httpErr(400, "需要 id");
++    const g = funGags(); const arr = g.groups?.[b.group]?.items || []; const i = arr.findIndex(x => x.id === b.id); if (i < 0) throw httpErr(404, "梗不存在");
++    arr.splice(i, 1); const backup = funWriteJ("gags.json", g, "delete"); return { ok: true, backup };
++  }, { confirm: true }),
++  "GET /api/fun/trash": async () => { let fs_ = []; try { fs_ = fs.readdirSync(FUN_TRASH).filter(f => !f.startsWith(".")).sort().reverse(); } catch {} return { items: fs_.map(f => { let s = null; try { s = fs.statSync(path.join(FUN_TRASH, f)); } catch {} return { file: f, size: s?.size ?? null, mtime: s?.mtimeMs ?? null }; }) }; },
++});
++
++// ---------- v2.12：拟人化参数（写 workspace/fun/humanlike.json；和小脾气共用 .trash/ 与 40-fun-rw.conf） ----------
++const HL_FEATS = ["techMode", "followup", "opinion", "dontKnow", "proactive", "quirk", "mood", "sensitive", "protect", "morning", "robotBit", "mbti"];
++const HL_QUIRK_SUGGESTIONS = ["嗯……怎么说呢", "算了不说了", "就那种感觉你懂吧"];
++const HL_DEFAULTS = {
++  enabled: false, optOutPhrase: "别拟人", optOut: {}, perGroup: {},
++  techMode: { enabled: true, stickyMin: 10, keywords: ["报错", "error", "Traceback", "日志", "ssh", "systemctl", "npm", "```"], ownerPhraseOn: "技术模式", ownerPhraseOff: "聊天模式", allowPersonaLine: true },
++  followup: { enabled: false, perPersonDailyCap: 1, onceOnly: true, minWaitHours: 12, maxAgeDays: 14 },
++  opinion: { enabled: false, strength: "gentle", yieldWhenCares: true, techDisagree: true },
++  dontKnow: { enabled: false, maxHedgePerReply: 1, inTechMode: true },
++  proactive: { mode: "off", quietThresholdMin: 180, triggerProbability: 0.2, minIntervalMin: 180, perGroupDailyCap: 2, requireReason: true, backoffAfterIgnored: 2, quietHoursStart: 1, quietHoursEnd: 8, heartbeatIntervalMin: 60 },
++  quirk: { enabled: false, probability: 0.067, phrases: [], selfCorrect: false, trailOff: false },
++  mood: { enabled: false, perPersonDailyCap: 1, deviation: 0.6, minBaselineMsgs: 30 },
++  sensitive: { mode: "never", topics: ["医疗", "生病", "分手", "去世", "裁员", "考试挂科"] },
++  protect: { enabled: false, roastWindowMin: 5, roastMinHits: 3, roastMinPeople: 1, probability: 0.5, perGroupDailyCap: 2, perTargetDailyCap: 1, mediateRealFights: true, roastKeywords: ["菜", "笨", "丑", "胖", "废物", "滚"], fightKeywords: ["闭嘴", "有病", "拉黑", "真生气了", "别说了"] },
++  morning: { enabled: false, mode: "passive", greetingKeywords: ["早", "早安", "早上好", "早啊", "morning"], windowStartHour: 5, windowEndHour: 11, habitWindowDays: 14, habitMinDays: 4, perGroupDailyCap: 1, heartbeatHour: 7 },
++  robotBit: { enabled: false, keywords: ["人机", "机器人吧", "你是AI吧", "bot吧"], sincereKeywords: ["你是真人吗", "说真的你是不是AI", "认真问", "你到底是不是人"], segmentGapMin: 30, perGroupDailyCap: 3 },
++  mbti: { enabled: false, includeZodiac: false, minPublicMsgs: 20, perPersonDailyCap: 1, perGroupDailyCap: 5, forbiddenTopics: ["健康", "疾病", "性取向", "宗教", "政治", "家庭", "收入"] },
++};
++// 类型：b p i:min:max s:max e:a|b l:最多条数:每条最长（字符串数组，去重忽略空白/大小写）
++const HL_SPEC = {
++  techMode: { enabled: "b", stickyMin: "i:0:240", keywords: "l:50:40", ownerPhraseOn: "s:20", ownerPhraseOff: "s:20", allowPersonaLine: "b" },
++  followup: { enabled: "b", perPersonDailyCap: "i:0:5", onceOnly: "b", minWaitHours: "i:0:168", maxAgeDays: "i:1:90" },
++  opinion: { enabled: "b", strength: "e:gentle|firm", yieldWhenCares: "b", techDisagree: "b" },
++  dontKnow: { enabled: "b", maxHedgePerReply: "i:1:3", inTechMode: "b" },
++  proactive: { mode: "e:off|passive|heartbeat", quietThresholdMin: "i:10:4320", triggerProbability: "p", minIntervalMin: "i:10:4320", perGroupDailyCap: "i:0:10", requireReason: "b", backoffAfterIgnored: "i:0:10", quietHoursStart: "i:0:23", quietHoursEnd: "i:0:23", heartbeatIntervalMin: "i:10:1440" },
++  quirk: { enabled: "b", probability: "p", phrases: "l:10:20", selfCorrect: "b", trailOff: "b" },
++  mood: { enabled: "b", perPersonDailyCap: "i:0:3", deviation: "p", minBaselineMsgs: "i:5:500" },
++  sensitive: { mode: "e:never|dmOnly|always", topics: "l:50:20" },
++  protect: { enabled: "b", roastWindowMin: "i:1:60", roastMinHits: "i:1:20", roastMinPeople: "i:1:10", probability: "p", perGroupDailyCap: "i:0:10", perTargetDailyCap: "i:0:5", mediateRealFights: "b", roastKeywords: "l:50:20", fightKeywords: "l:50:20" },
++  morning: { enabled: "b", mode: "e:passive|heartbeat", greetingKeywords: "l:20:20", windowStartHour: "i:0:23", windowEndHour: "i:1:24", habitWindowDays: "i:3:60", habitMinDays: "i:1:60", perGroupDailyCap: "i:0:1", heartbeatHour: "i:0:23" },
++  robotBit: { enabled: "b", keywords: "l:30:20", sincereKeywords: "l:30:30", segmentGapMin: "i:5:720", perGroupDailyCap: "i:0:20" },
++  mbti: { enabled: "b", includeZodiac: "b", minPublicMsgs: "i:0:500", perPersonDailyCap: "i:0:5", perGroupDailyCap: "i:0:20", forbiddenTopics: "l:30:20" },
++};
++const HL_GROUP_KEYS = ["followup", "opinion", "dontKnow", "proactive", "quirk", "mood", "protect", "morning", "robotBit", "mbti"];
++const hlNorm = x => String(x).replace(/\s+/g, "").toLowerCase();
++function hlVal(where, t, x) {
++  const [k, a, b] = t.split(":");
++  if (k === "e") { const opts = a.split("|"); if (!opts.includes(x)) throw httpErr(400, `${where} 只能取 ${opts.join("/")}`); return x; }
++  if (k === "l") {
++    if (!Array.isArray(x) || x.length > +a) throw httpErr(400, `${where} 应为最多 ${a} 条的数组`);
++    const out = x.map((y, i) => funVal(`${where}[${i}]`, "s:" + b, y)); const n = out.map(hlNorm);
++    if (new Set(n).size !== n.length) throw httpErr(400, `${where} 有重复项（忽略空白和大小写）`); return out;
++  }
++  return funVal(where, t, x);
++}
++function hlEffective(s) {
++  const o = { ...HL_DEFAULTS, ...s, optOut: { ...(s.optOut || {}) }, perGroup: { ...(s.perGroup || {}) } };
++  for (const f of HL_FEATS) o[f] = { ...HL_DEFAULTS[f], ...(s[f] && typeof s[f] === "object" ? s[f] : {}) };
++  return o;
++}
++const hlStored = () => funReadJ("humanlike.json", () => ({ version: 1 }));
++function hlMerge(stored, inP) {
++  if (!inP || typeof inP !== "object" || Array.isArray(inP)) throw httpErr(400, "需要 params 对象");
++  const s = { ...stored };
++  for (const [k, v] of Object.entries(inP)) {
++    if (HL_FEATS.includes(k)) {
++      if (v === null) { delete s[k]; continue; }
++      if (typeof v !== "object" || Array.isArray(v)) throw httpErr(400, `${k} 必须是对象或 null`);
++      const o = { ...(s[k] || {}) };
++      for (const [kk, x] of Object.entries(v)) { if (!HL_SPEC[k][kk]) throw httpErr(400, `${k} 不支持的参数：${kk}`); if (x === null) delete o[kk]; else o[kk] = hlVal(`${k}.${kk}`, HL_SPEC[k][kk], x); }
++      if (Object.keys(o).length) s[k] = o; else delete s[k];
++    } else if (k === "enabled") { if (v === null) delete s[k]; else s[k] = funVal(k, "b", v); }
++    else if (k === "optOutPhrase") { if (v === null) delete s[k]; else s[k] = funVal(k, "s:20", v); }
++    else if (k === "perGroup") {
++      if (!v || typeof v !== "object" || Array.isArray(v)) throw httpErr(400, "perGroup 必须是对象 {group:<hex>: {enabled, 各功能开关} | null}");
++      const pg = { ...(s.perGroup || {}) };
++      for (const [gk, gv] of Object.entries(v)) {
++        if (!FUN_GK.test(gk)) throw httpErr(400, `群键应为 group:<32位小写hex>：${gk}`);
++        if (gv === null) { delete pg[gk]; continue; }
++        if (!gv || typeof gv.enabled !== "boolean") throw httpErr(400, `perGroup.${gk}.enabled 必填（布尔）`);
++        const e = { enabled: gv.enabled };
++        for (const [f, x] of Object.entries(gv)) { if (f === "enabled" || x == null) continue; if (!HL_GROUP_KEYS.includes(f)) throw httpErr(400, `按群覆盖不支持：${f}`); e[f] = funVal(`perGroup.${gk}.${f}`, "b", x); }
++        pg[gk] = e;
++      }
++      s.perGroup = pg;
++    } else if (k === "optOut") {
++      if (!v || typeof v !== "object" || Array.isArray(v)) throw httpErr(400, "optOut 必须是对象 {<openid>: [\"all\"|功能名] | null}");
++      const oo = { ...(s.optOut || {}) };
++      for (const [pid0, list] of Object.entries(v)) {
++        const pid = pid0.toUpperCase(); if (!FUN_PID.test(pid)) throw httpErr(400, `optOut 的键应为 32 位 QQ openid：${pid0}`);
++        if (list === null) { delete oo[pid]; continue; }
++        if (!Array.isArray(list) || !list.length || list.some(x => !["all", ...HL_GROUP_KEYS].includes(x))) throw httpErr(400, `optOut.${pid} 应为非空数组，元素取 all/${HL_GROUP_KEYS.join("/")}`);
++        oo[pid] = list.includes("all") ? ["all"] : [...new Set(list)];
++      }
++      s.optOut = oo;
++    } else throw httpErr(400, "不支持的参数：" + k);
++  }
++  const e = hlEffective(s);
++  if (e.proactive.quietHoursStart === e.proactive.quietHoursEnd && s.proactive && ("quietHoursStart" in s.proactive || "quietHoursEnd" in s.proactive)) throw httpErr(400, "proactive.quietHoursStart 和 quietHoursEnd 不能相同");
++  if (e.morning.windowStartHour >= e.morning.windowEndHour) throw httpErr(400, "morning.windowStartHour 必须小于 windowEndHour");
++  if (e.morning.habitMinDays > e.morning.habitWindowDays) throw httpErr(400, "morning.habitMinDays 不能大于 habitWindowDays");
++  { const a = e.robotBit.keywords.map(hlNorm), b2 = e.robotBit.sincereKeywords.map(hlNorm); if (a.some(x => b2.includes(x))) throw httpErr(400, "robotBit.keywords 和 sincereKeywords 不能有相同项"); }
++  const ph = [e.optOutPhrase, e.techMode.ownerPhraseOn, e.techMode.ownerPhraseOff].map(hlNorm);
++  if (new Set(ph).size !== ph.length) throw httpErr(400, "各口令不能重复（忽略空白和大小写）");
++  try { const fp = funEffective(funStored()); const others = [fp.killPhrase, fp.optOutAllPhrase, fp.grudge.optOutPhrase, fp.grudge.clearPhrase, fp.gag.optOutPhrase, fp.gag.deletePhrase, fp.jealousy.optOutPhrase].map(hlNorm); if (ph.some(p => others.includes(p))) throw httpErr(400, "拟人化口令不能和小脾气口令重复"); } catch (err) { if (err.http === 400) throw err; }
++  return s;
++}
++const HL_REQUIRES = { "proactive.mode=heartbeat": "需要另行批准的 heartbeat 配置改动（HEARTBEAT.md 现在为空，gate 在 heartbeat 轮直接跳过）；批准前这个值只存不生效", "proactive.mode=passive": "需要 gate 补丁 HOSINO-FUN-CONTEXT（网关重启一次）", "morning.mode=heartbeat": "抢在所有人前面说早需要另行批准的 heartbeat 配置改动；批准前按 passive 处理", "robotBit": "需要 gate 补丁 HOSINO-FUN-CONTEXT（每段对话一次在代码里判断）；认真问是不是真人时一律如实回答，不受开关影响", "mbti": "纯技能即可；上限由技能脚本执行", "protect": "需要 gate 补丁 HOSINO-FUN-CONTEXT（损度计数在代码里）" };
++function hlView(s) { return { params: hlEffective(s), stored: s, defaults: HL_DEFAULTS, suggestions: { quirkPhrases: HL_QUIRK_SUGGESTIONS }, requires: HL_REQUIRES, ...(funConsumers() ? { consumers: true, note: "gate 补丁已安装；改参数约 5 秒内生效。heartbeat 取值仍按 passive 处理；不提供任何延迟类设置" } : { consumers: false, note: "技能和 gate 补丁还没上线，这里的设置暂时只存不生效；不提供任何延迟类设置" }) }; }
++Object.assign(R, {
++  "GET /api/fun/humanlike": async () => hlView(hlStored()),
++  "POST /api/fun/humanlike/set": W("fun.humanlike.set", b => Object.keys(b.params || {}).join(","), async b => {
++    const s = hlMerge(hlStored(), b.params); s.version = 1; const backup = funWriteJ("humanlike.json", s);
++    return { ok: true, ...hlView(s), backup };
++  }, { confirm: true }),
++  "GET /api/fun/humanlike/followups": async () => { const d = funReadJ("followups.json", () => ({ version: 1, items: [] })); return { items: Array.isArray(d.items) ? d.items : [], updatedAt: d.updatedAt ?? null }; },
++});
++
+ function send(res, code, obj, h = {}) { const b = JSON.stringify(obj); res.writeHead(code, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...h }); res.end(b); }
+ const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".webmanifest": "application/manifest+json" };
+ const SEC = { "x-content-type-options": "nosniff", "x-frame-options": "DENY", "referrer-policy": "no-referrer", "strict-transport-security": "max-age=31536000", "content-security-policy": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'" };

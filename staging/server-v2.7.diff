@@ -1,0 +1,147 @@
+--- server.mjs.v12-v2.6	2026-10-20 17:04:55.829319451 +0800
++++ server.mjs	2026-10-20 17:05:07.729375022 +0800
+@@ -581,7 +581,7 @@
+ // 表情库（只读 workspace/stickers）+ 控制台自己从现在开始累计的使用排行
+ const STICKER_DIR = path.join(WORKSPACE, "stickers");
+ const stickerStats = jsonStore("sticker-stats.json", () => ({ since: Date.now(), counts: {}, seen: [], lastScan: null }));
+-const stickerFiles = () => { try { return fs.readdirSync(STICKER_DIR).filter(f => /\.(png|jpe?g|gif|webp)$/i.test(f)).sort(); } catch { return []; } };
++const stickerFiles = () => { try { return fs.readdirSync(STICKER_DIR).filter(f => !f.startsWith(".") && /\.(png|jpe?g|gif|webp)$/i.test(f)).sort(); } catch { return []; } };
+ const stickerMeta = f => { const b = f.replace(/\.[^.]+$/, ""); const i = b.indexOf("-"); return { file: f, emotion: i > 0 ? b.slice(0, i) : b, source: i > 0 ? b.slice(i + 1) : null }; };
+ async function scanStickers() {
+   const st = stickerStats.load(); const files = stickerFiles(); const byEmo = new Map(files.map(f => [stickerMeta(f).emotion, f]));
+@@ -655,6 +655,127 @@
+   }),
+ });
+ 
++// ---------- v2.7：表情库管理（写 workspace/stickers：manifest.json / params.json / .trash/；需要单元 drop-in 放开该目录） ----------
++const STK_TRASH = path.join(STICKER_DIR, ".trash");
++const STK_MANUAL = "手动入库";
++const STK_EXT = { png: "png", jpg: "jpg", webp: "webp", gif: "gif" };
++const isCat = s => /^[\p{Script=Han}A-Za-z0-9]{1,16}$/u.test(String(s || ""));
++const sniff = b => b.length > 12 && b[0] === 0x89 && b.toString("latin1", 1, 4) === "PNG" ? "png" : b.length > 3 && b[0] === 0xff && b[1] === 0xd8 && b[2] === 0xff ? "jpg" : b.toString("latin1", 0, 4) === "GIF8" ? "gif" : b.toString("latin1", 0, 4) === "RIFF" && b.toString("latin1", 8, 12) === "WEBP" ? "webp" : null;
++const sha256f = f => crypto.createHash("sha256").update(fs.readFileSync(f)).digest("hex");
++const stkCatOf = f => f.replace(/\.[^.]+$/, "").split("-")[0];
++function stkReadJ(name, init) { try { return JSON.parse(fs.readFileSync(path.join(STICKER_DIR, name), "utf8")); } catch (e) { if (e.code === "ENOENT") return init(); throw httpErr(500, name + " 读取失败：" + e.message); } }
++function stkTrashCopy(f, tag) { fs.mkdirSync(STK_TRASH, { recursive: true, mode: 0o755 }); const ts = new Date().toISOString().replace(/[:.]/g, "-"); const dst = path.join(STK_TRASH, `${ts}-${tag || ""}${path.basename(f)}`); fs.copyFileSync(f, dst, fs.constants.COPYFILE_EXCL); return path.basename(dst); }
++function stkWriteJ(name, obj) {
++  const f = path.join(STICKER_DIR, name); try { if (fs.existsSync(f)) stkTrashCopy(f); } catch {}
++  obj.updatedAt = Date.now(); const tmp = path.join(STICKER_DIR, `.${name}.tmp-${process.pid}`);
++  fs.writeFileSync(tmp, JSON.stringify(obj, null, 1), { mode: 0o644 }); fs.renameSync(tmp, f);
++}
++const stkManifest = () => stkReadJ("manifest.json", () => ({ version: 1, categories: {}, files: {} }));
++const stkParams = () => stkReadJ("params.json", () => ({ version: 1 }));
++function stkFreeName(cat, ext) { const used = new Set(stickerFiles().map(f => f.replace(/\.[^.]+$/, ""))); for (let n = 1; n < 1000; n++) { const stem = n === 1 ? `${cat}-${STK_MANUAL}` : `${cat}-${STK_MANUAL}${n}`; if (!used.has(stem)) return `${stem}.${ext}`; } throw httpErr(409, "序号用完了"); }
++function stkDup(hash) { const m = stkManifest(); for (const [f, v] of Object.entries(m.files || {})) if (v.sha256 === hash && fs.existsSync(path.join(STICKER_DIR, f))) return f; for (const f of stickerFiles()) if (!m.files?.[f]) { try { if (sha256f(path.join(STICKER_DIR, f)) === hash) return f; } catch {} } return null; }
++async function stkImport(req, u) {
++  const cat = u.searchParams.get("category"); if (!isCat(cat)) throw httpErr(400, "category 需为 1–16 个中文/字母/数字（不能含 -）");
++  if (u.searchParams.get("confirm") !== "1") throw httpErr(400, "需要 confirm=1 确认");
++  const chunks = []; let n = 0;
++  await new Promise((r, j) => { req.on("data", c => { n += c.length; if (n > 5 * 1024 * 1024) { j(httpErr(413, "图片不能超过 5MB")); req.destroy(); } else chunks.push(c); }); req.on("end", r); req.on("error", j); });
++  const buf = Buffer.concat(chunks); if (!buf.length) throw httpErr(400, "空文件");
++  const ext = sniff(buf); if (!ext) throw httpErr(415, "只支持 png / jpg / webp / gif（按文件内容判断）");
++  const hash = crypto.createHash("sha256").update(buf).digest("hex"); const dup = stkDup(hash);
++  if (dup) throw Object.assign(httpErr(409, `和已有表情重复：${dup}`), { code: "DUPLICATE" });
++  const name = stkFreeName(cat, STK_EXT[ext]); const f = path.join(STICKER_DIR, name);
++  const tmp = path.join(STICKER_DIR, `.import-${process.pid}-${Date.now()}.${ext}`); fs.writeFileSync(tmp, buf, { mode: 0o664 });
++  try { fs.linkSync(tmp, f); } finally { try { fs.unlinkSync(tmp); } catch {} }
++  const m = stkManifest(); m.categories ||= {}; m.files ||= {}; const isNewCat = !m.categories[cat];
++  if (!m.categories[cat]) m.categories[cat] = { desc: "", scene: "", synonyms: [], enabled: true };
++  m.files[name] = { category: cat, sha256: hash, size: buf.length, source: "manual", addedAt: Date.now() }; stkWriteJ("manifest.json", m);
++  return { ok: true, file: name, category: cat, sha256: hash, size: buf.length, format: ext, newCategory: isNewCat };
++}
++const stkGenJobs = new Map();
++function stkGenState() { const p = stkParams(); const tz = p.quietHours?.tz || "Asia/Singapore"; const day = new Intl.DateTimeFormat("en-CA", { timeZone: tz }).format(new Date()); let s = {}; try { s = JSON.parse(fs.readFileSync(path.join(STICKER_DIR, ".gen-state.json"), "utf8")); } catch {} const cap = Number.isFinite(+p.genDailyCap) ? +p.genDailyCap : 10; return { day, count: s.day === day ? s.count || 0 : 0, cap, enabled: p.genEnabled !== false }; }
++function stkGenBump() { const g = stkGenState(); const f = path.join(STICKER_DIR, ".gen-state.json"), t = f + ".tmp-c"; fs.writeFileSync(t, JSON.stringify({ day: g.day, count: g.count + 1 })); fs.renameSync(t, f); }
++const STK_PARAM_KEYS = { enabled: "bool", attachProbability: "prob", cooldownReplies: "int", defaultEnabled: "bool", genEnabled: "bool", genDailyCap: "int" };
++
++Object.assign(R, {
++  "GET /api/stickers/manifest": async () => ({ manifest: stkManifest(), genToday: stkGenState() }),
++  "GET /api/stickers/params": async () => ({ params: stkParams(), genToday: stkGenState() }),
++  "POST /api/stickers/params/set": W("stickers.params.set", b => Object.keys(b.params || {}).join(","), async b => {
++    const inP = b.params; if (!inP || typeof inP !== "object") throw httpErr(400, "需要 params 对象");
++    const p = { ...stkParams() };
++    for (const [k, v] of Object.entries(inP)) {
++      const t = STK_PARAM_KEYS[k];
++      if (t === "bool") { if (typeof v !== "boolean") throw httpErr(400, `${k} 必须是布尔值`); p[k] = v; }
++      else if (t === "prob") { if (typeof v !== "number" || v < 0 || v > 1) throw httpErr(400, `${k} 应在 0–1`); p[k] = v; }
++      else if (t === "int") { if (!Number.isInteger(v) || v < 0 || v > 1000) throw httpErr(400, `${k} 应为 0–1000 的整数`); p[k] = v; }
++      else if (k === "quietHours") { if (v === null) p.quietHours = null; else { if (!isHM(v?.start) || !isHM(v?.end)) throw httpErr(400, "quietHours 需要 start/end（HH:MM）"); p.quietHours = { start: v.start, end: v.end, tz: typeof v.tz === "string" && v.tz ? v.tz : "Asia/Singapore" }; } }
++      else if (k === "sessions") {
++        if (!v || typeof v !== "object") throw httpErr(400, "sessions 必须是对象"); const ss = { ...(p.sessions || {}) };
++        for (const [sk, sv] of Object.entries(v)) { if (!/^(group|c2c):[0-9a-f]{32}$/.test(sk)) throw httpErr(400, `会话键应为 group:<32位小写hex> 或 c2c:<openid>：${sk}`); if (sv === null) { delete ss[sk]; continue; } if (typeof sv?.enabled !== "boolean") throw httpErr(400, `${sk}.enabled 必须是布尔值`); const e = { enabled: sv.enabled }; if (sv.probability != null) { if (typeof sv.probability !== "number" || sv.probability < 0 || sv.probability > 1) throw httpErr(400, `${sk}.probability 应在 0–1`); e.probability = sv.probability; } ss[sk] = e; }
++        p.sessions = ss;
++      } else throw httpErr(400, "不支持的参数：" + k);
++    }
++    stkWriteJ("params.json", p); return { ok: true, params: p };
++  }, { confirm: true }),
++  "POST /api/stickers/manifest/set": W("stickers.manifest.set", b => `look=${b.look != null} style=${b.style != null} cats=${Object.keys(b.categories || {}).join(",")}`, async b => {
++    const m = stkManifest();
++    if (b.look != null) { if (typeof b.look !== "string" || strLen(b.look) > 2000) throw httpErr(400, "look 最长 2000 字"); m.look = b.look; }
++    if (b.style != null) { if (typeof b.style !== "string" || strLen(b.style) > 1000) throw httpErr(400, "style 最长 1000 字"); m.style = b.style; }
++    if (b.categories != null) {
++      if (typeof b.categories !== "object") throw httpErr(400, "categories 必须是对象"); m.categories ||= {};
++      for (const [c, v] of Object.entries(b.categories)) {
++        if (!isCat(c)) throw httpErr(400, "分类名无效：" + c);
++        if (v === null) { if (stickerFiles().some(f => stkCatOf(f) === c)) throw httpErr(409, `分类 ${c} 下还有图片，不能删除分类`); delete m.categories[c]; continue; }
++        const cur = { desc: "", scene: "", synonyms: [], enabled: true, ...(m.categories[c] || {}) };
++        if (v.desc != null) { if (typeof v.desc !== "string" || strLen(v.desc) > 40) throw httpErr(400, "desc 最长 40 字"); cur.desc = v.desc; }
++        if (v.scene != null) { if (typeof v.scene !== "string" || strLen(v.scene) > 40) throw httpErr(400, "scene 最长 40 字"); cur.scene = v.scene; }
++        if (v.synonyms != null) { if (!Array.isArray(v.synonyms) || v.synonyms.length > 40 || v.synonyms.some(x => typeof x !== "string" || !x.trim() || strLen(x) > 16)) throw httpErr(400, "synonyms 最多 40 个、每个 ≤16 字"); cur.synonyms = [...new Set(v.synonyms.map(x => x.trim()))]; }
++        if (v.enabled != null) { if (typeof v.enabled !== "boolean") throw httpErr(400, "enabled 必须是布尔值"); cur.enabled = v.enabled; }
++        m.categories[c] = cur;
++      }
++    }
++    stkWriteJ("manifest.json", m); return { ok: true, manifest: m };
++  }, { confirm: true }),
++  "POST /api/stickers/rename": W("stickers.rename", b => `${b.file} -> ${b.category}`, async b => {
++    need(b, "file", "category"); if (!stickerFiles().includes(b.file)) throw httpErr(404, "表情不存在"); if (!isCat(b.category)) throw httpErr(400, "category 无效");
++    const old = b.file, oldCat = stkCatOf(old); if (oldCat === b.category) throw httpErr(400, "分类没变");
++    const ext = old.split(".").pop().toLowerCase(); const rest = old.slice(oldCat.length + 1).replace(/\.[^.]+$/, "");
++    let nn;
++    if (rest.startsWith(STK_MANUAL)) nn = stkFreeName(b.category, ext);
++    else { const used = new Set(stickerFiles()); nn = `${b.category}-${rest.replace(/-v\d+$/, "")}.${ext}`; for (let i = 2; used.has(nn); i++) nn = `${b.category}-${rest.replace(/-v\d+$/, "")}-v${i}.${ext}`; }
++    const backup = stkTrashCopy(path.join(STICKER_DIR, old), "rename-");
++    fs.linkSync(path.join(STICKER_DIR, old), path.join(STICKER_DIR, nn)); fs.unlinkSync(path.join(STICKER_DIR, old));
++    const m = stkManifest(); m.files ||= {}; m.categories ||= {}; const e = m.files[old] || { sha256: sha256f(path.join(STICKER_DIR, nn)), source: rest.startsWith(STK_MANUAL) ? "manual" : "generated:" + rest };
++    delete m.files[old]; m.files[nn] = { ...e, category: b.category, renamedFrom: old, renamedAt: Date.now() };
++    if (!m.categories[b.category]) m.categories[b.category] = { desc: "", scene: "", synonyms: [], enabled: true };
++    stkWriteJ("manifest.json", m); return { ok: true, from: old, to: nn, backup };
++  }, { confirm: true }),
++  "POST /api/stickers/delete": W("stickers.delete", b => b.file, async b => {
++    need(b, "file"); if (!stickerFiles().includes(b.file)) throw httpErr(404, "表情不存在");
++    fs.mkdirSync(STK_TRASH, { recursive: true, mode: 0o755 }); const ts = new Date().toISOString().replace(/[:.]/g, "-"); const dst = `${ts}-deleted-${b.file}`;
++    fs.renameSync(path.join(STICKER_DIR, b.file), path.join(STK_TRASH, dst));
++    const m = stkManifest(); if (m.files?.[b.file]) { delete m.files[b.file]; stkWriteJ("manifest.json", m); }
++    return { ok: true, movedTo: ".trash/" + dst };
++  }, { confirm: true }),
++  "GET /api/stickers/trash": async () => { let fs_ = []; try { fs_ = fs.readdirSync(STK_TRASH).filter(f => !f.startsWith(".")).sort().reverse(); } catch {} return { items: fs_.map(f => { let s = null; try { s = fs.statSync(path.join(STK_TRASH, f)); } catch {} return { file: f, size: s?.size ?? null, mtime: s?.mtimeMs ?? null }; }) }; },
++  // 生成：不弹确认（李的要求），只要 X-HS；受 genEnabled / genDailyCap 约束（与群聊自动生图共用当天计数 .gen-state.json）
++  "POST /api/stickers/generate": W("stickers.generate", b => b.category, async b => {
++    if (!isCat(b.category)) throw httpErr(400, "category 无效"); const g = stkGenState();
++    if (!g.enabled) throw httpErr(403, "params.genEnabled 已关闭");
++    if (g.count >= g.cap) throw httpErr(429, `今天已生成 ${g.count}/${g.cap} 张（genDailyCap）`);
++    if ([...stkGenJobs.values()].some(j => j.status === "running")) throw httpErr(409, "已有一张正在生成");
++    stkGenBump(); const id = crypto.randomBytes(6).toString("hex"); const job = { id, category: b.category, status: "running", startedAt: Date.now() }; stkGenJobs.set(id, job);
++    execFile("python3", [path.join(WORKSPACE, "scripts", "sticker_manager.py"), "get", b.category, "--new"], { cwd: WORKSPACE, timeout: 300e3, maxBuffer: 1 << 20 }, (e, o, er) => {
++      let j = null; try { j = JSON.parse(String(o || "").trim().split("\n").pop()); } catch {}
++      Object.assign(job, { finishedAt: Date.now(), durationMs: Date.now() - job.startedAt });
++      if (e || j?.status !== "ok") Object.assign(job, { status: "error", error: String(j?.error || er || e?.message || "失败").slice(-400), attempts: j?.attempts });
++      else Object.assign(job, { status: "ok", file: path.basename(j.path), model: j.model, source: j.source });
++      if (stkGenJobs.size > 50) stkGenJobs.delete(stkGenJobs.keys().next().value);
++    });
++    return { ok: true, jobId: id, genToday: { ...g, count: g.count + 1 } };
++  }),
++  "GET /api/stickers/generate/status": async u => { const id = u.searchParams.get("id"); if (id) { const j = stkGenJobs.get(id); if (!j) throw httpErr(404, "任务不存在（控制台重启会清空）"); return j; } return { jobs: [...stkGenJobs.values()].reverse(), genToday: stkGenState() }; },
++});
++
+ function send(res, code, obj, h = {}) { const b = JSON.stringify(obj); res.writeHead(code, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...h }); res.end(b); }
+ const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".webmanifest": "application/manifest+json" };
+ const SEC = { "x-content-type-options": "nosniff", "x-frame-options": "DENY", "referrer-policy": "no-referrer", "strict-transport-security": "max-age=31536000", "content-security-policy": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'" };
+@@ -683,6 +804,7 @@
+       if (!authed(req)) return send(res, 401, { error: "请先登录" });
+       if (u.pathname === "/api/media" && req.method === "GET") return await serveMedia(req, res, u);
+       if (u.pathname === "/api/digests/image" && req.method === "GET") { const id = u.searchParams.get("id"); if (!isDigestId(id)) return send(res, 400, { error: "id 无效" }); const f = path.join(DIGEST_DIR, id + ".png"); if (!fs.existsSync(f)) return send(res, 404, { error: "没有图片" }); return serveFile(res, f, "image/png"); }
++      if (u.pathname === "/api/stickers/import" && req.method === "POST") { if (req.headers["x-hs"] !== "1") return send(res, 403, { error: "拒绝跨站请求" }); const cat = u.searchParams.get("category"); try { const r = await stkImport(req, u); opLog(req, "stickers.import", `${cat} ${r.file}`, true); return send(res, 200, r); } catch (e) { opLog(req, "stickers.import", cat, false, e.message); return send(res, e.http || 500, { error: e.message, code: e.code }); } }
+       if (u.pathname === "/api/stickers/image" && req.method === "GET") { const n = u.searchParams.get("file"); if (!stickerFiles().includes(n)) return send(res, 404, { error: "表情不存在" }); const real = fs.realpathSync(path.join(STICKER_DIR, n)); if (!real.startsWith(fs.realpathSync(STICKER_DIR) + path.sep)) return send(res, 403, { error: "拒绝" }); return serveFile(res, real, MEDIA_MIME[path.extname(n).toLowerCase()] || "application/octet-stream"); }
+       if (req.method === "POST" && req.headers["x-hs"] !== "1") return send(res, 403, { error: "拒绝跨站请求" });
+       const pm = req.method === "GET" && /^\/api\/profiles\/([^/]+)$/.exec(u.pathname); const h = pm ? (u2 => R["GET /api/profiles/:id"](u2, decodeURIComponent(pm[1]))) : R[req.method + " " + u.pathname]; if (!h) return send(res, 404, { error: "接口不存在" });

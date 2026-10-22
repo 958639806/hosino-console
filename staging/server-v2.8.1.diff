@@ -1,0 +1,11 @@
+--- server.mjs.v14-v2.8	2026-10-20 17:28:40.879741206 +0800
++++ server.mjs	2026-10-20 17:28:40.883741203 +0800
+@@ -826,7 +826,7 @@
+   const ents = (await qx("POST", `/collections/${MEM_ENT}/points/scroll`, { limit: 1000, with_vector: true, with_payload: true, filter: { must: [{ key: "linkedMemoryIds", match: { any: [String(id)] } }] } }).catch(e => { if (/404/.test(e.message)) return { points: [] }; throw e; })).points || [];
+   const rec = { v: 1, collection: MEMCOL, entitiesCollection: MEM_ENT, id: pt.id, vector: pt.vector, payload: pt.payload, entities: ents.map(e => ({ id: e.id, vector: e.vector, payload: e.payload })), backedUpAt: Date.now(), reason: String(reason || "").slice(0, 300), vectorDims: pt.vector.length };
+   const body = JSON.stringify(rec); const hash = crypto.createHash("sha256").update(body).digest("hex");
+-  if (dryRun) return { ok: true, dryRun: true, id: pt.id, entities: ents.length, backupBytes: body.length, vectorDims: pt.vector.length };
++  if (dryRun) return { ok: true, dryRun: true, id: pt.id, backup: path.basename(bkFile(pt.id)), backupExists: fs.existsSync(bkFile(pt.id)), entities: ents.length, backupBytes: body.length, vectorDims: pt.vector.length };
+   fs.mkdirSync(MEM_BK, { recursive: true, mode: 0o700 }); const f = bkFile(pt.id);
+   if (fs.existsSync(f)) fs.renameSync(f, f.replace(/\.json$/, `.prev-${Date.now()}.json`));
+   atomicWrite(f, body);

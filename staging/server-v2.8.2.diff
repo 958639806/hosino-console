@@ -1,0 +1,92 @@
+--- server.mjs.v15-v2.8.1	2026-10-20 17:39:40.102264943 +0800
++++ server.mjs	2026-10-20 17:40:13.846161573 +0800
+@@ -784,34 +784,50 @@
+ const memFlags = jsonStore("memory-flags.json", () => ({}));
+ async function qx(method, p, body) { const r = await fetch(QDRANT + p, { method, headers: { "content-type": "application/json" }, body: body ? JSON.stringify(body) : undefined, signal: AbortSignal.timeout(30000) }); const j = await r.json().catch(() => ({})); if (!r.ok || j.status && j.status !== "ok" && typeof j.status !== "object") throw httpErr(502, `Qdrant ${r.status} ${JSON.stringify(j.status || "").slice(0, 200)}`); return j.result; }
+ const isPointId = s => /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(String(s || "")) || /^\d{1,19}$/.test(String(s || ""));
+-const MEM_IDX_FIELDS = ["user_id", "source_session_key", "source_openid_or_peer", "channel", "createdAt", "attributedTo"];
++const MEM_IDX_FIELDS = ["user_id", "source_session_key", "source_openid_or_peer", "channel", "createdAt", "attributedTo", "data"];
++// v2.8.2: mem0 插件配置里的 userId（如“凛”）是整个共享库的桶名，不是某个人
++const MEM_BUCKET_DEFAULT = process.env.MEM0_USER_ID || "凛";
++const memBucketId = () => cached("mem0uid", 10 * 60e3, async () => { try { const r = await call("config.get"); let c = r.config || r.parsed; if (!c && r.raw) c = JSON.parse(r.raw); const u = c?.plugins?.entries?.["openclaw-mem0"]?.config?.userId; return typeof u === "string" && u.trim() ? u.trim() : MEM_BUCKET_DEFAULT; } catch { return MEM_BUCKET_DEFAULT; } });
++const MEM_PREFIX_RE = /^\[\s*(?:([^\]\(\)]{0,40}?)\s*\(\s*)?([0-9a-f]{32})\s*\)?\s*\]/i;
++const memPrefix = d => { const m = MEM_PREFIX_RE.exec(String(d || "")); return m ? { id: m[2].toLowerCase(), name: (m[1] || "").trim() || null } : null; };
++const MEM_UNATTR = "unattributed";
+ const memIndex = () => cached("memidx", 5 * 60e3, async () => {
+   const out = []; let off = null;
+-  do { const r = await qx("POST", `/collections/${MEMCOL}/points/scroll`, { limit: 1000, offset: off, with_vector: false, with_payload: MEM_IDX_FIELDS }); for (const p of r.points) out.push({ id: p.id, ...p.payload }); off = r.next_page_offset; } while (off);
++  do { const r = await qx("POST", `/collections/${MEMCOL}/points/scroll`, { limit: 1000, offset: off, with_vector: false, with_payload: MEM_IDX_FIELDS }); for (const p of r.points) { const { data, ...rest } = p.payload || {}; const pf = memPrefix(data); out.push({ id: p.id, ...rest, _prefix: pf }); } off = r.next_page_offset; } while (off);
+   return out;
+ });
+ function memNameToId() { const m = new Map(); for (const [k, v] of Object.entries(loadAliases())) if (isOpenId(k) && v) m.set(String(v).trim(), k.toLowerCase()); for (const [k, v] of Object.entries(profiles.load())) if (v?.name) m.set(String(v.name).trim(), k.toLowerCase()); for (const [k, v] of seenNames) if (v && !m.has(v)) m.set(v, k); return m; }
+-// 一条记忆可以同时属于“人”（user_id / 私聊来源）和“群”（群来源 / peer:group:）
+-function memSubjects(p, n2i) {
+-  const s = new Set(); const uid = String(p.user_id || ""), sk = String(p.source_session_key || ""), src = String(p.source_openid_or_peer || "");
+-  let m;
++// 归属：会话/来源字段（source）给出群和私聊对象；非共享库桶的 user_id（peer:/openid）给出说话人；
++// 都没有“人”时，才用正文开头 [名字 (OPENID)] 推断（prefix）；什么都没有 → 未归属（共享库）。
++// attrSrc 表示“人”是怎么定的：user_id | source | prefix | group（只知道群）| none
++function memAttr(p, n2i, bucket) {
++  const s = new Set(); const uid = String(p.user_id || "").trim(), sk = String(p.source_session_key || ""), src = String(p.source_openid_or_peer || "");
++  let m, attrSrc = null, inferredName;
+   if ((m = /:group:([0-9a-f]{32})$/i.exec(sk))) s.add("group:" + m[1].toLowerCase());
+   if ((m = /:direct:([0-9a-f]{32})$/i.exec(sk))) s.add("person:" + m[1].toLowerCase());
+   if (isOpenId(src)) s.add((p.channel === "group" && !/:direct:/.test(sk) ? "group:" : "person:") + src.toLowerCase());
+-  if ((m = /^peer:group:([0-9a-f]+)$/i.exec(uid))) s.add("group:" + m[1].toLowerCase());
+-  else if ((m = /^peer:(.+)$/i.exec(uid))) { const v = m[1].trim(); if (isOpenId(v)) s.add("person:" + v.toLowerCase()); else if (n2i.get(v)) s.add("person:" + n2i.get(v)); else s.add("name:" + v); }
+-  else if (isOpenId(uid)) s.add("person:" + uid.toLowerCase());
+-  else if (uid) { const id = n2i.get(uid); s.add(id ? "person:" + id : "name:" + uid); }
+-  if (!s.size) s.add("unknown");
+-  return [...s];
++  const srcPerson = [...s].some(k => k.startsWith("person:"));
++  if (uid && uid !== bucket) {
++    const n = s.size;
++    if ((m = /^peer:group:([0-9a-f]+)$/i.exec(uid))) s.add("group:" + m[1].toLowerCase());
++    else if ((m = /^peer:(.+)$/i.exec(uid))) { const v = m[1].trim(); if (isOpenId(v)) s.add("person:" + v.toLowerCase()); else if (n2i.get(v)) s.add("person:" + n2i.get(v)); else s.add("name:" + v); attrSrc = "user_id"; }
++    else if (isOpenId(uid)) { s.add("person:" + uid.toLowerCase()); attrSrc = "user_id"; }
++    else { s.add("name:" + uid); attrSrc = "user_id"; } // 裸 user_id 不按别名映射
++  }
++  if (!attrSrc && srcPerson) attrSrc = "source";
++  if (!attrSrc) { const pf = p._prefix !== undefined ? p._prefix : memPrefix(p.data); if (pf) { s.add("person:" + pf.id); attrSrc = "prefix"; inferredName = pf.name; } }
++  if (!attrSrc) attrSrc = s.size ? "group" : "none";
++  if (!s.size) s.add(MEM_UNATTR);
++  return { keys: [...s], attrSrc, inferredName };
+ }
++const memSubjects = (p, n2i, bucket) => memAttr(p, n2i, bucket).keys;
+ async function memSubjectMap() {
+-  const idx = await memIndex(), n2i = memNameToId(); const map = new Map();
+-  for (const p of idx) for (const k of memSubjects(p, n2i)) { let e = map.get(k); if (!e) map.set(k, e = { key: k, count: 0, lastAt: null, raw: { user_id: new Map(), source_session_key: new Map(), source_openid_or_peer: new Map() }, ids: [] }); e.count++; e.ids.push({ id: p.id, createdAt: p.createdAt || "" }); if ((p.createdAt || "") > (e.lastAt || "")) e.lastAt = p.createdAt; for (const f of ["user_id", "source_session_key", "source_openid_or_peer"]) if (p[f] != null) { const v = String(p[f]); e.raw[f].set(v, (e.raw[f].get(v) || 0) + 1); } }
++  const idx = await memIndex(), n2i = memNameToId(), bucket = await memBucketId(); const map = new Map();
++  for (const p of idx) { const a = memAttr(p, n2i, bucket); for (const k of a.keys) { let e = map.get(k); if (!e) map.set(k, e = { key: k, count: 0, lastAt: null, attr: { user_id: 0, source: 0, prefix: 0, group: 0, none: 0 }, raw: { user_id: new Map(), source_session_key: new Map(), source_openid_or_peer: new Map() }, ids: [] }); e.count++; e.attr[a.attrSrc]++; e.ids.push({ id: p.id, createdAt: p.createdAt || "" }); if ((p.createdAt || "") > (e.lastAt || "")) e.lastAt = p.createdAt; for (const f of ["user_id", "source_session_key", "source_openid_or_peer"]) if (p[f] != null) { const v = String(p[f]); e.raw[f].set(v, (e.raw[f].get(v) || 0) + 1); } } }
+   return map;
+ }
+-function memSubjectName(k) { const [t, v] = [k.slice(0, k.indexOf(":")), k.slice(k.indexOf(":") + 1)]; if (t === "person" || t === "group") return loadAliases()[v] || profiles.load()[v]?.name || seenNames.get(v) || null; if (t === "name") return v; return null; }
+-const memPublic = (pt) => { const p = pt.payload || {}; const { textLemmatized, ...rest } = p; return { id: pt.id, ...rest, flag: memFlags.load()[String(pt.id)] || null }; };
++function memSubjectName(k) { const [t, v] = [k.slice(0, k.indexOf(":")), k.slice(k.indexOf(":") + 1)]; if (t === "person" || t === "group") return loadAliases()[v] || profiles.load()[v]?.name || seenNames.get(v) || null; if (t === "name") return v; if (k === MEM_UNATTR) return "未归属（共享库）"; return null; }
++const memPublic = (pt, ctx) => { const p = pt.payload || {}; const { textLemmatized, ...rest } = p; const o = { id: pt.id, ...rest, flag: memFlags.load()[String(pt.id)] || null }; if (ctx) { const a = memAttr(p, ctx.n2i, ctx.bucket); o.subjects = a.keys; o.attrSrc = a.attrSrc; o.attrInferred = a.attrSrc === "prefix"; if (a.inferredName) o.inferredName = a.inferredName; } return o; };
+ async function memGetPoints(col, ids, withVector) { if (!ids.length) return []; return await qx("POST", `/collections/${col}/points`, { ids, with_payload: true, with_vector: !!withVector }); }
+ const bkFile = id => path.join(MEM_BK, `${MEMCOL}__${String(id).replace(/[^0-9a-zA-Z-]/g, "")}.json`);
+ function memPruneBackups() {
+@@ -859,7 +875,7 @@
+ Object.assign(R, {
+   "GET /api/mem/subjects": async () => {
+     const map = await memSubjectMap(); const flags = memFlags.load();
+-    return { collection: MEMCOL, subjects: [...map.values()].map(e => ({ key: e.key, type: e.key.split(":")[0], name: memSubjectName(e.key), count: e.count, lastAt: e.lastAt, flagged: e.ids.filter(x => flags[String(x.id)]).length, raw: Object.fromEntries(Object.entries(e.raw).map(([f, m]) => [f, [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20).map(([value, count]) => ({ value, count }))])) })).sort((a, b) => b.count - a.count), note: "一条记忆可能同时出现在“人”和“群”下；raw 是原始字段值（最多 20 个）" };
++    return { collection: MEMCOL, bucket: await memBucketId(), subjects: [...map.values()].map(e => ({ key: e.key, type: e.key.split(":")[0], name: memSubjectName(e.key), count: e.count, attr: e.attr, lastAt: e.lastAt, flagged: e.ids.filter(x => flags[String(x.id)]).length, raw: Object.fromEntries(Object.entries(e.raw).map(([f, m]) => [f, [...m.entries()].sort((a, b) => b[1] - a[1]).slice(0, 20).map(([value, count]) => ({ value, count }))])) })).sort((a, b) => b.count - a.count), note: "一条记忆可能同时出现在“人”和“群”下；raw 是原始字段值（最多 20 个）；attr 是各归属来源的条数；unattributed = 未归属（共享库）" };
+   },
+   "GET /api/mem/list": async u => {
+     const key = u.searchParams.get("subject"); need({ subject: key }, "subject"); const map = await memSubjectMap(); const e = map.get(key); if (!e) return { subject: key, total: 0, items: [] };
+@@ -868,10 +884,10 @@
+     if (onlyFlagged) { const fl = memFlags.load(); ids = ids.filter(i => fl[String(i)]); }
+     const off = Math.max(0, +u.searchParams.get("offset") || 0), lim = qi(u, "limit", 50, 200);
+     if (qs) { const all = await memAll(); const hit = new Set(all.filter(m => String(m.data || "").toLowerCase().includes(qs)).map(m => String(m.id))); ids = ids.filter(i => hit.has(String(i))); }
+-    const page = ids.slice(off, off + lim); const pts = await memGetPoints(MEMCOL, page, false); const byId = new Map(pts.map(p => [String(p.id), p]));
+-    return { subject: key, name: memSubjectName(key), total: ids.length, offset: off, items: page.map(i => byId.get(String(i))).filter(Boolean).map(memPublic) };
++    const page = ids.slice(off, off + lim); const ctx = { n2i: memNameToId(), bucket: await memBucketId() }; const pts = await memGetPoints(MEMCOL, page, false); const byId = new Map(pts.map(p => [String(p.id), p]));
++    return { subject: key, name: memSubjectName(key), total: ids.length, offset: off, items: page.map(i => byId.get(String(i))).filter(Boolean).map(pt => memPublic(pt, ctx)) };
+   },
+-  "GET /api/mem/get": async u => { const id = u.searchParams.get("id"); if (!isPointId(id)) throw httpErr(400, "id 无效"); const [pt] = await memGetPoints(MEMCOL, [id], false); if (!pt) throw httpErr(404, "记忆不存在"); const n2i = memNameToId(); return { ...memPublic(pt), subjects: memSubjects(pt.payload || {}, n2i) }; },
++  "GET /api/mem/get": async u => { const id = u.searchParams.get("id"); if (!isPointId(id)) throw httpErr(400, "id 无效"); const [pt] = await memGetPoints(MEMCOL, [id], false); if (!pt) throw httpErr(404, "记忆不存在"); return memPublic(pt, { n2i: memNameToId(), bucket: await memBucketId() }); },
+   "GET /api/mem/files": async () => { const out = []; const walk = (d, rel) => { let es = []; try { es = fs.readdirSync(d, { withFileTypes: true }); } catch { return; } for (const x of es) { if (x.name.startsWith(".")) continue; const p = path.join(d, x.name), r = rel ? rel + "/" + x.name : x.name; if (x.isDirectory()) walk(p, r); else if (x.isFile() && x.name.endsWith(".md")) { const st = fs.statSync(p); out.push({ file: r, size: st.size, mtime: st.mtimeMs }); } } }; walk(MEM_FILES, ""); return { root: "workspace/memory", files: out.sort((a, b) => b.mtime - a.mtime) }; },
+   "GET /api/mem/file": async u => { const f = u.searchParams.get("file") || ""; if (!/^[\w./-]+\.md$/.test(f) || f.split("/").some(s => s === ".." || s.startsWith("."))) throw httpErr(400, "文件名无效"); const p = path.join(MEM_FILES, f); let real; try { real = fs.realpathSync(p); } catch { throw httpErr(404, "文件不存在"); } if (!real.startsWith(fs.realpathSync(MEM_FILES) + path.sep)) throw httpErr(403, "拒绝"); const st = fs.statSync(real); if (st.size > 512 * 1024) throw httpErr(413, "文件过大"); return { file: f, size: st.size, mtime: st.mtimeMs, content: fs.readFileSync(real, "utf8") }; },
+   "GET /api/mem/flags": async () => ({ flags: memFlags.load() }),

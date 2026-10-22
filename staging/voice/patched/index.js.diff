@@ -1,0 +1,74 @@
+--- orig/index.js	2026-10-20 19:49:09.708002320 +0800
++++ patched/index.js	2026-10-20 19:56:36.587308787 +0800
+@@ -223,6 +223,31 @@
+ }
+ function hsHm(tz) { try { const p = Object.fromEntries(new Intl.DateTimeFormat("en-GB", { timeZone: tz || "Asia/Singapore", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(new Date()).map((x) => [x.type, x.value])); return `${p.hour}:${p.minute}`; } catch { return ""; } }
+ function hsQuiet(q) { if (!q || !q.start || !q.end || q.start === q.end) return false; const n = hsHm(q.tz); if (!n) return false; return q.start < q.end ? n >= q.start && n < q.end : n >= q.start || n < q.end; }
++/* HOSINO-VOICE-PARAMS v1: voice section of stickers/params.json (code decides per turn) */
++function hsDay(tz) { try { return new Intl.DateTimeFormat("en-CA", { timeZone: tz || "Asia/Singapore" }).format(new Date()); } catch { return ""; } }
++function hsVoiceCfg(HP) {
++  const v = HP && HP.voice; if (!v || typeof v !== "object") return null;
++  const num = (x, d, lo, hi, int) => { let n = Number(x); if (!Number.isFinite(n)) return d; if (int) n = Math.floor(n); return Math.max(lo, Math.min(hi, n)); };
++  const tz = typeof v.tz === "string" && v.tz ? v.tz : "Asia/Singapore";
++  const qh = (Array.isArray(v.quietHours) ? v.quietHours : v.quietHours ? [v.quietHours] : []).filter((q) => q && q.start && q.end).map((q) => ({ start: q.start, end: q.end, tz: q.tz || tz }));
++  return { enabled: v.enabled !== false, probability: num(v.probability, 0.12, 0, 1), cooldownReplies: num(v.cooldownReplies, 4, 0, 100, true),
++    quietHours: qh, tz, perConversation: v.perConversation && typeof v.perConversation === "object" ? v.perConversation : {},
++    defaultEnabled: !!v.defaultEnabled, maxChars: num(v.maxChars, 40, 1, 200, true), dailyLimit: num(v.dailyLimit, 20, 0, 1000, true),
++    exclusiveWithSticker: v.exclusiveWithSticker !== false };
++}
++/* returns {hit, why, max}; why in off|session-off|quiet-hours|daily-limit|cooldown|roll-miss|hit */
++function hsVoiceDecide(V, conv, g, rnd) {
++  if (!V.enabled) return { hit: false, why: "off" };
++  const pc = V.perConversation[conv]; const pco = pc && typeof pc === "object" ? pc : null;
++  if (!(pco ? pco.enabled !== false : V.defaultEnabled)) return { hit: false, why: "session-off" };
++  if (V.quietHours.some((q) => hsQuiet(q))) return { hit: false, why: "quiet-hours" };
++  const today = hsDay(V.tz);
++  if (V.dailyLimit > 0 && g && g.voiceDay === today && (Number(g.voiceDayCount) || 0) >= V.dailyLimit) return { hit: false, why: "daily-limit" };
++  const vGap = g && g.lastVoiceReply != null ? (Number(g.replies) || 0) - g.lastVoiceReply : null;
++  if (vGap != null && vGap < V.cooldownReplies) return { hit: false, why: "cooldown" };
++  const p = pco && Number.isFinite(Number(pco.probability)) && pco.probability !== null ? Math.max(0, Math.min(1, Number(pco.probability))) : V.probability;
++  return (rnd || Math.random)() < p ? { hit: true, why: "hit", max: V.maxChars } : { hit: false, why: "roll-miss" };
++}
+ function hsSess(p, id) { const e = p?.sessions?.[id]; return e && typeof e === "object" ? e : null; }
+ let stickerKeyCache = { at: 0, dir: "", keys: [] };
+ function stickerKeys(dir) {
+@@ -263,6 +288,9 @@
+   const parts = [];
+   const keys = cfg.stickers === false ? [] : stickerKeys(cfg.stickerDir).filter((k) => !MENU_HIDDEN_KEYS.has(k));
+   const hsS = hsStk(cfg.stickerDir); const HP = hsS.params; let hsAttach = false;
++  const hsV = hsVoiceCfg(HP); const hsVD = hsV ? hsVoiceDecide(hsV, "group:" + gid.toLowerCase(), g, mediaHint.rnd) : null; /* HOSINO-VOICE-PARAMS v1 */
++  const hsVBlockSticker = !!(hsVD && hsVD.hit && hsV.exclusiveWithSticker);
++  try { mediaHint.last = hsVD ? { voice: hsVD.why } : null; } catch {}
+   if (keys.length && HP) {
+     /* HOSINO-STICKER-PATCH v1: code decides per turn; model only picks the category */
+     const cats = hsS.manifest?.categories || {};
+@@ -271,7 +299,8 @@
+     const on = HP.enabled !== false && (se ? se.enabled !== false : !!HP.defaultEnabled);
+     const cool = Number.isFinite(Number(HP.cooldownReplies)) ? Number(HP.cooldownReplies) : Number(cfg.stickerCooldownReplies);
+     const prob = Number.isFinite(Number(se?.probability)) ? Number(se.probability) : Number(HP.attachProbability ?? 0);
+-    if (!on || hsQuiet(HP.quietHours) || !ok.length) parts.push("这轮不发表情包，不要写 && 标签");
++    if (hsVBlockSticker) parts.push("这轮不发表情包，不要写 && 标签"); /* HOSINO-VOICE-PARAMS v1: this turn is a voice turn */
++    else if (!on || hsQuiet(HP.quietHours) || !ok.length) parts.push("这轮不发表情包，不要写 && 标签");
+     else if (sGap != null && sGap < cool) parts.push("刚发过表情包，这轮不发，不要写 && 标签");
+     else if (Math.random() < prob) {
+       hsAttach = true;
+@@ -286,7 +315,10 @@
+       parts.push(s);
+     }
+   }
+-  if (cfg.voice !== false) {
++  if (hsVD && cfg.voice !== false) { /* HOSINO-VOICE-PARAMS v1 */
++    if (hsVD.hit) parts.push(`这一轮请发一句语音：把回复里最适合用声音说的一句（不超过 ${hsVD.max} 字，口语、带语气）写成 <语音>台词</语音>，只写一句，其余照常写文字；如果这轮保持沉默，或者内容是报错、隐私、长篇说明，就不带`);
++    else parts.push("这轮不发语音，不要写 <语音> 标签");
++  } else if (cfg.voice !== false) {
+     if (vGap != null && vGap < Number(cfg.voiceCooldownReplies)) parts.push("刚发过语音，这轮不用语音");
+     else {
+       let v = "语音比表情包更少用：只在打招呼/安慰/撒娇这类语气特别重要的时刻，才把一句≤20字的短话写成 <语音>台词</语音>";
+@@ -295,6 +327,7 @@
+     }
+   }
+   if (!parts.length) return "";
++  if (hsVD) return `【表情/语音】一条回复最多一个标记，表情包和语音不同时用。${parts.join("；")}。保持沉默时不要加；绝不提及或解释这些标记。`; /* HOSINO-VOICE-PARAMS v1 */
+   if (hsAttach) return `【表情/语音】一条回复最多一个：表情包和语音二选一，绝不同时用。${parts.join("；")}。保持沉默时不要加；绝不提及或解释这些标记。`;
+   return `【表情/语音·少用】大多数回复不带任何标记，只有明显能加分时才用；一条回复最多一个：表情包和语音二选一，绝不同时用。${parts.join("；")}。保持沉默时不要加；绝不提及或解释这些标记。`;
+ }

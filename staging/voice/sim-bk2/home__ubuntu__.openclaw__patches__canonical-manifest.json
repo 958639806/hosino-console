@@ -1,0 +1,2627 @@
+{
+  "schema": "openclaw-canonical-installed-v1",
+  "versions": [
+    {
+      "package": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/package.json",
+      "version": "2026.9.8"
+    },
+    {
+      "package": "/home/ubuntu/.openclaw/npm/projects/tencent-connect-openclaw-qqbot-a7ec020d86__openclaw-generation__g-b97d26bd0d7f19d9/node_modules/@tencent-connect/openclaw-qqbot/package.json",
+      "version": "2.0.4"
+    },
+    {
+      "package": "/home/ubuntu/.openclaw/npm/projects/mem0-openclaw-mem0-09729737ad/node_modules/@mem0/openclaw-mem0/package.json",
+      "version": "1.2.1"
+    },
+    {
+      "package": "/home/ubuntu/.openclaw/npm/projects/mem0-openclaw-mem0-09729737ad/node_modules/mem0ai/package.json",
+      "version": "3.0.7"
+    },
+    {
+      "package": "/home/ubuntu/.openclaw/npm/projects/openclaw-codex-8902d781d4__openclaw-generation__g-8b0d230c729a2812/node_modules/@openclaw/codex/package.json",
+      "version": "2026.9.8"
+    },
+    {
+      "package": "/home/ubuntu/.openclaw/npm/projects/mem0-openclaw-mem0-09729737ad/node_modules/better-sqlite3/package.json",
+      "version": "12.11.1"
+    }
+  ],
+  "runtimeVersions": {
+    "node": "v24.21.0"
+  },
+  "files": [
+    {
+      "target": "/home/ubuntu/.config/systemd/user/openclaw-gateway.service.d/90-mem0-no-telemetry.conf",
+      "sha256": "b2d2c86b89c611a7ad6faa2359a91df9159981a9bd4e6d0cc5cb9099a37ae62c",
+      "snapshot": "resources/remediation-s0-installed/snapshot-0",
+      "recognizedBefore": [
+        null
+      ],
+      "syntax": "text",
+      "mode": 420
+    },
+    {
+      "target": "/home/ubuntu/.config/systemd/user/openclaw-gateway.service.d/91-qq-native-queue-safe-fallback.conf",
+      "sha256": "8e8bac4717d00e7c8a68487233fb753282eb3ce16262156cc2961838de208730",
+      "snapshot": "resources/remediation-s0-installed/snapshot-1",
+      "recognizedBefore": [],
+      "syntax": "text",
+      "mode": 420
+    },
+    {
+      "target": "/home/ubuntu/.config/systemd/user/openclaw-gateway.service.d/93-qq-continuation-latency.conf",
+      "sha256": "67fe2d5a3276ae2265bef1ce73342b63dce1d00d78adb4977c1e448d5906832b",
+      "snapshot": "resources/remediation-s0-installed/snapshot-2",
+      "recognizedBefore": [
+        null
+      ],
+      "syntax": "text",
+      "mode": 420
+    },
+    {
+      "target": "/home/ubuntu/.config/systemd/user/openclaw-gateway.service.d/fv.conf",
+      "sha256": "f6b38e5f980269ba61db19e6049ccad7a3f4dc38e21c06e609c0f776110d8c20",
+      "snapshot": "resources/remediation-s0-installed/snapshot-3",
+      "recognizedBefore": [],
+      "syntax": "text",
+      "mode": 420
+    },
+    {
+      "target": "/home/ubuntu/.config/systemd/user/openclaw-gateway.service.d/heap.conf",
+      "sha256": "f3759bf466e83cc05dacdae42a501bc95531dd6cbb31261058868d7a1c679fd8",
+      "snapshot": "resources/hosino-20261020-registered/snapshot-0",
+      "recognizedBefore": [
+        "9c1e6502d10ca798a6a1f089468ada9056400ca7886676e9bc16cc9b4ac2ee83"
+      ],
+      "syntax": "text",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.config/systemd/user/openclaw-gateway.service.d/jm-button.conf",
+      "sha256": "40d9c9eb02d1f122f4bb62fa8fc4a7d7bf310f229b92fafb15f81dd6101d0f85",
+      "snapshot": "resources/remediation-s0-installed/snapshot-5",
+      "recognizedBefore": [],
+      "syntax": "text",
+      "mode": 420
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/agent-tool-definition-adapter-DhVQiLqj.mjs",
+      "sha256": "202d1c98f69c59d55b4496f7afc567f16d0e1da4007cdb54755cd41eb987e7fc",
+      "snapshot": "resources/remediation-s0-installed/snapshot-6",
+      "recognizedBefore": [],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/agent-tools.policy-EL9_7uA2.mjs",
+      "sha256": "071afc8cbab79f939a403de5ee2d1c58b17135b90a80e280d0b754df4d366c0a",
+      "snapshot": "resources/remediation-s0-installed/snapshot-7",
+      "recognizedBefore": [],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/commentary-progress-owner-B_Ulr6Rd.mjs",
+      "sha256": "ff07e8e7f277df6a42b029fd5bfebaff795b9742ca372d7540f1563484bffd9d",
+      "snapshot": "resources/qq-dm-restart-authority-v2/snapshot-3",
+      "recognizedBefore": [
+        "498c621d8b543e3392f20581d823d1ddcf092b074929f09a6c023c8fa3ac810c",
+        "d83eb126c93ff9b2b757a5462ea4b63bf717dbaa335610f8aebfe5567473b67e"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/dispatch-from-config-Dph1dwRJ.mjs",
+      "sha256": "214e9ffba7c93716c1b13d4b67c91bb351ce45c9ae07a16da1cf7f7399f0f3d1",
+      "snapshot": "resources/controlled-media-inspection-compat-v1/0abcd76a-794b-40e2-ba67-ad6dc020bdfd/us-qq-media-stop-20261020-v9-214e9ffba7c93716c1b13d4b67c91bb351ce45c9ae07a16da1cf7f7399f0f3d1-006.mjs",
+      "recognizedBefore": [
+        "01cc5f57b3d428806fca4ac9b9db7177aa5c56bf5469eab662a0b7ed608b9c47",
+        "0ab2475edce29aad0caf43c1f396e8a7e14a8e548b1f19b6da04b5fe84658aa7",
+        "8b3862d00689519e4125a9456154b38b2366612ef9a38f6e0770679de4c11762",
+        "bba28320562880e0c0970c62f75e3bd944fcf57fe72f3f661cbdf7b7173fcb80",
+        "d4c311a2d7452a008082e62177e465b0f23db3f19beca8719b64ca772f80a237"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/get-reply-BV8KEWbF.mjs",
+      "sha256": "42209828d4aa53d5e2463da7af6ca32ad08a0f2dac7604a5765e1b8c6bcbb65d",
+      "snapshot": "resources/controlled-media-inspection-compat-v1/0abcd76a-794b-40e2-ba67-ad6dc020bdfd/us-qq-media-stop-20261020-v9-42209828d4aa53d5e2463da7af6ca32ad08a0f2dac7604a5765e1b8c6bcbb65d-001.mjs",
+      "recognizedBefore": [
+        "43b52af36c4a413db30c9d87d1c5b6e98d66b581c1725ff07ed8fcd67ee83d3d",
+        "c103f50904f618708f61c1aff52d3c152902b3d8ccca926180019b275af08e32",
+        "e5bb48f8474dc4b1a8b952d85b4d83b5ae6638e9c8ac5878b10b2cce6b654c7c",
+        "e6eb41a5c8d8e10b189c2f200c3e8085e022be7123151ebdc79675bbcdf8b7d0",
+        "e6feab47474d2736d45ace142fc84c0a0ca8f5322c95b323c6ced1aa9d997ea4",
+        "d8693fc5c0d8872dfc507531d22113ad70ca3c57fd793bc59149a472716d3fac"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/heartbeat-runner-run-BaD3XIs1.mjs",
+      "sha256": "ed6e84263ac3f2e58050b2f5fa61469001cf44ca5e5814b4958810e85e7301e7",
+      "snapshot": "resources/runtime-scope-media-maintenance-v1/snapshot-4",
+      "recognizedBefore": [
+        "6bf8f5445e264e4cad0fd255d48738e60abd0d09dbbbb834d4092872ffbe7738"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/images-B_8zJlPf.mjs",
+      "sha256": "fe59fa826f93a7eb654ac5d730e078db41a08fa4c7ff6344558a54016b4b2e10",
+      "snapshot": "resources/runtime-scope-media-maintenance-v1/snapshot-5",
+      "recognizedBefore": [
+        "b6f31a4cfc688e998c5d50f9bdf4422e8e68a8797e610a9408044cc14993e233"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/package-update-activation-recovery.mjs",
+      "sha256": "01d490bdc80b3ed60f5c74e86d0106e84a33fc4150fcc7bf58f7dffd61dfa086",
+      "snapshot": "resources/remediation-s0-installed/snapshot-13",
+      "recognizedBefore": [],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/sandbox-tool-policy-DMflEE2E.mjs",
+      "sha256": "f27d818a2492274d336be3c506edda0731f045c66e9f85ccc13a20c4e334907f",
+      "snapshot": "resources/remediation-s0-installed/snapshot-14",
+      "recognizedBefore": [],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/server-restart-sentinel-CzWy_UqH.mjs",
+      "sha256": "cfb2577b3334adab3dec065ee69393a16c5b4c68917c8235b3ba0f256a765ee5",
+      "snapshot": "resources/remediation-s0-installed/snapshot-15",
+      "recognizedBefore": [],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/session-transcript-read-worker-runtime-Ey1OtD_0.mjs",
+      "sha256": "ccecc1f4a44cda07d1f07ba43bb3e646876d562f61c095d23c4708d1a601b8ce",
+      "snapshot": "resources/qq-entry-worker-cache-v4/snapshot-2",
+      "recognizedBefore": [
+        "3e800533ad3196ccabf09f43d92b83db1d4d37664d0f001accc8eee89cb47d0d",
+        "6f0237fdc1d5a1d23a6c4fbd5187052dc937814971cdb080efcfdcc55e6fc025",
+        "ae6f80686350a7a14b15d953f21b4a2be65ca249fab1b51f6622b8506e2e5d23"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/subagent-announce-delivery-CoOIdkBH.mjs",
+      "sha256": "8aad41251d0ee75fafec888734a38f98837f592604c2a558dd976e895e387150",
+      "snapshot": "resources/remediation-s0-installed/snapshot-17",
+      "recognizedBefore": [],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/tool-images-C_eAR31_.mjs",
+      "sha256": "c561505c718567115ea35940dc12710c8558ca59d19313b9a411c8bcae16e4b4",
+      "snapshot": "resources/cache-monitor-xai-v1/snapshot-0",
+      "recognizedBefore": [
+        "13435bed3ee6dbcd593eacf025b0ac1e5258e87359a551aa740b102748f1573a"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/tool-policy-match-COwlx5YS.mjs",
+      "sha256": "546a0a35c37366267eb077fc6d5d354170785cf204702a527440db0892326258",
+      "snapshot": "resources/remediation-s0-installed/snapshot-19",
+      "recognizedBefore": [],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/tools-effective-CvK1OSvA.mjs",
+      "sha256": "df7445685bc1c064d67f70cf7ebf4af0ffee25ce8ff0878be5f4e5edfabc9984",
+      "snapshot": "resources/remediation-s0-installed/snapshot-20",
+      "recognizedBefore": [],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/user-turn-transcript-Cu1ZcrNh.mjs",
+      "sha256": "505eddc22cff92104fdf895d73e540a697b44e60b1a1cba6c72123ce62e9dcff",
+      "snapshot": "resources/remediation-s0-installed/snapshot-21",
+      "recognizedBefore": [],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/user-turn-transcript.metadata-C4MejEIQ.mjs",
+      "sha256": "88f15f2162999cb3704242e0821698698afc044a17cf3116b4ee9e79cd710984",
+      "snapshot": "resources/runtime-prefetch-continuation-v2/snapshot-3",
+      "recognizedBefore": [
+        "33b3ac629c74aa598f590c33d0eebccecb74c447ffcdb8dc1fac7bf71bc1b791"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/worker-task-pool-Cl1KhdJb.mjs",
+      "sha256": "14167a65ca888a0f3d9c532431b22b163820a684d6d5fd233263a6dac59459ae",
+      "snapshot": "resources/remediation-s0-installed/snapshot-23",
+      "recognizedBefore": [
+        "73ff8408c27b180ea55c514506ce15177114585e673749d23653cc9e534496ac"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/package.json",
+      "sha256": "d2e734563bfb126d273beeb1e2cc5d4525b4d59efe00fdfec50a39b427524f56",
+      "snapshot": "resources/remediation-s0-installed/snapshot-24",
+      "recognizedBefore": [],
+      "syntax": "json",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/npm/projects/mem0-openclaw-mem0-09729737ad/node_modules/@mem0/openclaw-mem0/dist/index.js",
+      "sha256": "f90a83ffa84dd044a7db785508feb7c518111d51117e3eec28f081408c05e8d6",
+      "snapshot": "resources/qq-latency-budget-media-guidance-v1/snapshot-0",
+      "recognizedBefore": [
+        "2424568d0831869220f5d737d019fc864d02bcbff59a1c4e80bbb400395966ef",
+        "b9e9eacea3799ece574bd49364b7fede5f78a3f807070761f5b915dd105f9e12",
+        "c91d096f1be848a79b98835ceb485404de9982db6d5aca65466a0688276e1765"
+      ],
+      "syntax": "esm",
+      "mode": 384
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/npm/projects/mem0-openclaw-mem0-09729737ad/node_modules/@mem0/openclaw-mem0/package.json",
+      "sha256": "2ee48b1c27399a3339ea8aa9e758fbb0f5ef9bde516a2e700be8019417f31f88",
+      "snapshot": "resources/remediation-s0-installed/snapshot-26",
+      "recognizedBefore": [],
+      "syntax": "json",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/npm/projects/mem0-openclaw-mem0-09729737ad/node_modules/mem0ai/dist/oss/index.mjs",
+      "sha256": "5533f241b75027c19540622cdfa67e4b6cff09fbf5618650eb94d20ff5fc7060",
+      "snapshot": "resources/runtime-scope-media-maintenance-v1/snapshot-12",
+      "recognizedBefore": [
+        "d6bd437d7faeb1054ecd710b3ef803a418b37cb90d8cf6d0a6e451f42583eb17",
+        "fa980a121406205486395835f551ad09758ca4e02f518b6b16cf9a142ea82a1b"
+      ],
+      "syntax": "esm",
+      "mode": 384
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/npm/projects/mem0-openclaw-mem0-09729737ad/node_modules/mem0ai/package.json",
+      "sha256": "ef7fd87d18f331cccdc13a575bf71da5c5295b9dbf6d8965fc5e1cfb5d33e8a4",
+      "snapshot": "resources/remediation-s0-installed/snapshot-28",
+      "recognizedBefore": [],
+      "syntax": "json",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/npm/projects/openclaw-codex-8902d781d4__openclaw-generation__g-8b0d230c729a2812/node_modules/@openclaw/codex/dist/.setup/dynamic-tools-Db2sY5cZ.mjs",
+      "sha256": "948720cd36651796d0e7156b58bb3f9bee83df9325851e2d05c7b3d1d5fed8db",
+      "snapshot": "resources/qq-context-slim-v3/snapshot-5",
+      "recognizedBefore": [
+        "2da155999855898849d7eb256f9860794abf12d14c91b736f32e58829484a513",
+        "80523db9ed449fa7b878bbb402b43b073224b620896642528ae9cb31207a3ebb"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/npm/projects/openclaw-codex-8902d781d4__openclaw-generation__g-8b0d230c729a2812/node_modules/@openclaw/codex/dist/.setup/inference-dispatch-CMZtjQyz.mjs",
+      "sha256": "c447e9e698af25c03bad1706f9a17e5481a16f95a7eff4e89d1b62fc519384d0",
+      "snapshot": "resources/qq-latency-followup-v1/snapshot-6",
+      "recognizedBefore": [
+        "1e215d0549212bf1be17d0df5ebd4210f63bdfbb1900811aa5e7ab0675530879",
+        "58d6148021532f917aca798cc9ca39c789e31218c2a147c64a7a7890d0f477e1",
+        "655897468387e531ca9cd9cae2bfd46546d4f9f041ceceeb43c225dcf517945b"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/npm/projects/openclaw-codex-8902d781d4__openclaw-generation__g-8b0d230c729a2812/node_modules/@openclaw/codex/dist/.setup/inference-metadata-CgIf7sOx.mjs",
+      "sha256": "3b2782c31410b40db1b4d1bfa7fd8bd11f20db9580ca317fa525de84ae2a0e76",
+      "snapshot": "resources/remediation-s0-installed/snapshot-31",
+      "recognizedBefore": [
+        "0fef864847516d892dcffee77d7cc060c4bce7425b7accefa918685d9ba16e52"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/npm/projects/openclaw-codex-8902d781d4__openclaw-generation__g-8b0d230c729a2812/node_modules/@openclaw/codex/dist/.setup/inference-proxy-DhcXOgUE.mjs",
+      "sha256": "a8d3a8aaedf20bf03478815e0bad6217c724339f931842c58a226c3b4276036b",
+      "snapshot": "resources/qq-bounded-ws-reuse-v5/snapshot-0",
+      "recognizedBefore": [
+        "73aba77c75d23d606b6e6ea9c52d8a5ac02a13da0446224952dd09af70266b66",
+        "d27deddcd3ec6624990ab47f779ab25dd5ad842de5e555fb45ef2153aeb4a829",
+        "0ea63ebcbe1eef7e89d73c4dd16109d9c9ce817a6bed2a45fb6ba59078ccf9e4"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/npm/projects/openclaw-codex-8902d781d4__openclaw-generation__g-8b0d230c729a2812/node_modules/@openclaw/codex/dist/.setup/preparation-leaf-timing.mjs",
+      "sha256": "77c66be83b2846bc8cbd8fa548ad734e6513f02f4ffe69b63dab5c61da6d35ba",
+      "snapshot": "resources/remediation-s0-installed/snapshot-33",
+      "recognizedBefore": [
+        null
+      ],
+      "syntax": "esm",
+      "mode": 420
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/npm/projects/openclaw-codex-8902d781d4__openclaw-generation__g-8b0d230c729a2812/node_modules/@openclaw/codex/dist/.setup/qq-native-auto-compact.mjs",
+      "sha256": "fa8612fe7294e364a322a86638b851b42a253d705a3bd9fed6ac38f2a7466ef5",
+      "snapshot": "resources/remediation-s0-installed/snapshot-34",
+      "recognizedBefore": [
+        null
+      ],
+      "syntax": "esm",
+      "mode": 420
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/npm/projects/openclaw-codex-8902d781d4__openclaw-generation__g-8b0d230c729a2812/node_modules/@openclaw/codex/dist/.setup/qq-native-exec-lifecycle.mjs",
+      "sha256": "784c182c5f5662a10fd9e225ff68c0a5d6ce774c3d3623f14a8a7481aa39fb1b",
+      "snapshot": "resources/remediation-s0-installed/snapshot-35",
+      "recognizedBefore": [
+        null
+      ],
+      "syntax": "esm",
+      "mode": 420
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/npm/projects/openclaw-codex-8902d781d4__openclaw-generation__g-8b0d230c729a2812/node_modules/@openclaw/codex/dist/.setup/run-attempt-dYJhjZrp.mjs",
+      "sha256": "f494c3ac6c36b7d656c0be6800918b08da82add396ed64ab0f8c3953b78e9752",
+      "snapshot": "resources/qq-cache-keepalive-catalog-v6/snapshot-1",
+      "recognizedBefore": [
+        "169a49c5b0838da67998a7907ed28f41430b1d4c39e25eefeda44731085b8ec2",
+        "1c9842bddb52ed7619af6eede6cca4e80c0bc017f0a32cf6b0966cdd525e8702",
+        "40c3a58e9e3378bb81d7e986ead7ca8f26f58befb5db42199ce04a163e91267f",
+        "4829f07a0a8d58ad7ed99bcbf877475d28c75157448671adcfff9d450cad9a6b",
+        "5e789a5c050aee73f2257f6df4870e67279693bab200df2a8c3b493f192c2a50",
+        "9e99418705e1d2bd9b5e726b3a0b8f043b84aa72da24188441af8534610186b6",
+        "b26efc153cce67aa82457858101f710a41baf641acc5129e7a4fb3358d372afd",
+        "ce084684339ccb9bf08a55f9420e3ca16405de390940f85ddb2d8894ca24455b",
+        "dd3d6e3b24d85854089ce76602b82c076e8782b6a41f069bfe5b4b6d678065b0",
+        "32726300d43e208dddb2eec8bd264f6bfcc5384ee8140a3f99aeb44eca4a1872"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/npm/projects/openclaw-codex-8902d781d4__openclaw-generation__g-8b0d230c729a2812/node_modules/@openclaw/codex/dist/.setup/thread-lifecycle-_bAbjedG.mjs",
+      "sha256": "ac2512816c9fe2193850fa05ffb36ddd289729f904164d2d937ccdacda70b431",
+      "snapshot": "resources/qq-cache-keepalive-catalog-v6/snapshot-2",
+      "recognizedBefore": [
+        "6dd88732884a23bb60f603f5c2e7d8357a3cbda2c889d79e850435582a6e555d",
+        "5032aa4ccc4ed195f592fdd29a2c1af7f229d0644f799188d0ba02cedeb31356"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/npm/projects/openclaw-codex-8902d781d4__openclaw-generation__g-8b0d230c729a2812/node_modules/@openclaw/codex/dist/.setup/thread-requests-OWGOiDaV.mjs",
+      "sha256": "539411d5c1d142d64ca7764f8dbece933e6d24897e99534c09b96f8a8b8f9bf8",
+      "snapshot": "resources/remediation-s0-installed/snapshot-38",
+      "recognizedBefore": [
+        "c77af78e4f4d17a80190416d6e447d31e525726b364ae29b77ac1bc249d27c08"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/npm/projects/openclaw-codex-8902d781d4__openclaw-generation__g-8b0d230c729a2812/node_modules/@openclaw/codex/dist/.setup/ws-lifecycle-diagnostics.mjs",
+      "sha256": "242cdb66daec80e90993b297e1b397d67a772e8432b600dc58f52710f6b4c5b1",
+      "snapshot": "resources/remediation-s0-installed/snapshot-39",
+      "recognizedBefore": [
+        null
+      ],
+      "syntax": "esm",
+      "mode": 420
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/npm/projects/openclaw-codex-8902d781d4__openclaw-generation__g-8b0d230c729a2812/node_modules/@openclaw/codex/package.json",
+      "sha256": "267479e804502739a0aa2f1457ecb280a775c08fc8ac8eea45207e9cf4d6fee8",
+      "snapshot": "resources/remediation-s0-installed/snapshot-40",
+      "recognizedBefore": [],
+      "syntax": "json",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/npm/projects/tencent-connect-openclaw-qqbot-a7ec020d86__openclaw-generation__g-b97d26bd0d7f19d9/node_modules/@tencent-connect/openclaw-qqbot/dist/index.cjs",
+      "sha256": "40fe25b0470f17996d7b79ea166406b9f596cfd6da875cae112fb565b8a0199d",
+      "snapshot": "resources/hosino-20261020-registered/snapshot-1",
+      "recognizedBefore": [
+        "0d11160183b26b13be6bc22a58986af3a50164d71eb03ab8e54c93452483fc78",
+        "2c0f550359d9b6d1981c4f168de4bc9c688397a081da525ffab0255a0cc8714b",
+        "46ad728d526ff7467d667ecdb888cb16538f8fb9d09678e86660946da8a73330",
+        "4e9dd3873bbeedd84c8f4e75f3a386fe627e72c8b023f1072d560719765ab33b",
+        "6005e2f809a5b434b73d3211a52fa6ca3db8a4d2ac208a35445b1be0a96448e8",
+        "b8c7beaa62e2cdde4ab4373ac999c7028defb61136214d6ec65643c0786cc879",
+        "c999eb014da169523bf077ef6875d3fe399664643e5331d52ffe89c9fe06ef85",
+        "e876df50851d77ab778672681d62cb217e55acf9aa3a971f2e64b94867a3b947",
+        "f3d9fa1fc944a5cc5a655dc18e9a112b3628122976cc35b7179f1bf726633889",
+        "ba7e5d7e64ad7e602d6474e44c2f1e2f3e06a048b7b2f3fa7c2937bcc31412a8",
+        "06e903e557ccdee59a89cf989bf95a16602497ddecdb65e93567b224b6e49a56",
+        "04917034e1e92473ed636bec737bcf6ecaee8d6d653e0bd91e2a0269144090ab",
+        "66a4a9954a7c4c00e5fbf7440c2a0a808149db24097c431fbadcf82ac2011c0d"
+      ],
+      "syntax": "cjs",
+      "mode": 384
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/npm/projects/tencent-connect-openclaw-qqbot-a7ec020d86__openclaw-generation__g-b97d26bd0d7f19d9/node_modules/@tencent-connect/openclaw-qqbot/package.json",
+      "sha256": "1854a1bae6951b90cbd7344792bfb6ab4401700d71af9db4d77fbe89c8e8b0e9",
+      "snapshot": "resources/remediation-s0-installed/snapshot-42",
+      "recognizedBefore": [],
+      "syntax": "json",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/openclaw.json",
+      "sha256": "fd0268e3e633ca52ba0de5e55cc8c1c58ae57d22332ecd2869a9fc894f6e5325",
+      "snapshot": "resources/claude-catalog-complete-v2/config.snapshot.json",
+      "recognizedBefore": [
+        "094f752cf19658fc583bbc39350b99d56f5105663fe47a64da497091072c30fc",
+        "2bec1cda3f45718b74e33d12bc12ff09407de5d8f8fdf7fc3e5e5ee017c3ba70",
+        "35257acaf3bbe3960af7779f915c358552bd6147a34652ad872dbfde9188b9b5",
+        "926f5808821cb5b27aadb59338ef5106af5710bcc5003e53d505f8cfd52bccef",
+        "bf4d5146206b2c63279d8675ffe5552acd53b6e370240d4ecc55e4e607f4efa6",
+        "cb77b749afe1a3c53a4a9c2c54798308ef54317c212368696131a34f01d336b5",
+        "d6105f82339f3055a227315079113486b0d850bc51fb037f1e813c11a4d1af2d",
+        "ff6ce3eadd34ce4f19baca4d25905e441f0f7e9e77df385e2de5c4aa0c356494",
+        "2ad444e27b156439a0a92a64969ae683bd4ee75e8c91dffc5c2b27521c8c0e23"
+      ],
+      "syntax": "json",
+      "mode": 384
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/EXPECTED_SHA256.txt",
+      "sha256": "2b27a0bf7683dc13ea955f206af093caceefb363b2a2ab81d39dd87ab3ac57b9",
+      "snapshot": "resources/remediation-s0-installed/snapshot-44",
+      "recognizedBefore": [
+        "1a2638d6282b65e8d3c17e209f56186dfbcc6204fe7dcb373f67bdc24781f8cc"
+      ],
+      "syntax": "text",
+      "mode": 384
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/PATCHES.md",
+      "sha256": "25172e56de330374e8fa7a84ab4e71486e427fe8727128fc84887e3abe3adbc5",
+      "snapshot": "resources/remediation-s0-installed/snapshot-45",
+      "recognizedBefore": [],
+      "syntax": "text",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/codex_ws_reuse_patch.py",
+      "sha256": "329349443e361d791b115fecde8e12da77cf3bcd8c5cd3b8e7f707b8d55c9a84",
+      "snapshot": "resources/remediation-s0-installed/snapshot-46",
+      "recognizedBefore": [],
+      "syntax": "python",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/continuation_reapply.py",
+      "sha256": "204c9ea7bebf4b961fe214c6d2d32ce75d1af85adb0aedfe6594d3cc8d4b2764",
+      "snapshot": "resources/remediation-s0-installed/snapshot-47",
+      "recognizedBefore": [],
+      "syntax": "python",
+      "mode": 420
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/early_message_hook_patch.py",
+      "sha256": "d212d44c49f363473b14c67cfc69d31a0b6d6f7d352de06d81de10653769c3e7",
+      "snapshot": "resources/remediation-s0-installed/snapshot-48",
+      "recognizedBefore": [],
+      "syntax": "python",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/image_replay_cache_patch.py",
+      "sha256": "3fd1c801af2ac22fd5170a1d8a945d80458350ea996b2630ab52cfc88075f0fd",
+      "snapshot": "resources/remediation-s0-installed/snapshot-49",
+      "recognizedBefore": [],
+      "syntax": "python",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/img_resize_cache_patch.py",
+      "sha256": "7efb308e5100a59b584ea879d4a93c75825da875a2517dda86540c7f209daf43",
+      "snapshot": "resources/cache-monitor-xai-v1/snapshot-1",
+      "recognizedBefore": [
+        "84ec940a38f7668b1949ec88aad67e52fb77765467173eb921da291a276ad0eb"
+      ],
+      "syntax": "python",
+      "mode": 420
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/latency456_reapply.py",
+      "sha256": "c5532394f00b0a749e28a7b2d5c5ee76d803e5c5dc5644341559f4a0b56825db",
+      "snapshot": "resources/remediation-s0-installed/snapshot-51",
+      "recognizedBefore": [],
+      "syntax": "python",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/media_latency_reapply.py",
+      "sha256": "f74020749efdbc3481f5b3abc4cbbb62e9ae04506d1f3533bb2db4b4ad13887b",
+      "snapshot": "resources/remediation-s0-installed/snapshot-52",
+      "recognizedBefore": [],
+      "syntax": "python",
+      "mode": 420
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/mem0_patch_v2.py",
+      "sha256": "10f4e0249a44fa1f0a4381a5e1b4e317134d7d09def6bac0bd04bba2949117ed",
+      "snapshot": "resources/remediation-s0-installed/snapshot-53",
+      "recognizedBefore": [],
+      "syntax": "python",
+      "mode": 493
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/mem0_patch_v2b.py",
+      "sha256": "04785054e900aeff6ce496017d28ea112bd9d359506206056d174e4e7bdbc032",
+      "snapshot": "resources/remediation-s0-installed/snapshot-54",
+      "recognizedBefore": [],
+      "syntax": "python",
+      "mode": 493
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/mem0_qdrant_query_patch.py",
+      "sha256": "6da6fb764de2a0251cae4b1e2193251a666bfc085e8bb3c526456187bfc3bf78",
+      "snapshot": "resources/remediation-s0-installed/snapshot-55",
+      "recognizedBefore": [],
+      "syntax": "python",
+      "mode": 493
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/mem0_recall_v1_patch.py",
+      "sha256": "6e54f5f90da620e09e1ea0845fa5a3827c5073a4fe5c2b55bbf189dbe89316d5",
+      "snapshot": "resources/remediation-s0-installed/snapshot-56",
+      "recognizedBefore": [],
+      "syntax": "python",
+      "mode": 493
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/oversize_image_patch.py",
+      "sha256": "1dc385dea5521475a249662b66abdb65b1c83672e3b796f5526532c9bc37f212",
+      "snapshot": "resources/remediation-s0-installed/snapshot-57",
+      "recognizedBefore": [],
+      "syntax": "python",
+      "mode": 493
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/parallel_recall_patch.py",
+      "sha256": "9aff9a414f9bab7e87b1b1ba46fab0b70f613ecf7235fdcf092b388b566842b6",
+      "snapshot": "resources/remediation-s0-installed/snapshot-58",
+      "recognizedBefore": [],
+      "syntax": "python",
+      "mode": 420
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/patch_qq_image_completion.py",
+      "sha256": "649d0d6e04a44521230f5847b0858eaee9f9eedc5fea0321a36fbaa5ac5071e3",
+      "snapshot": "resources/remediation-s0-installed/snapshot-59",
+      "recognizedBefore": [],
+      "syntax": "python",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/patch_tool_path.py",
+      "sha256": "b67bb59f8496e572d8dffd3264215ca228333ed1a72837d2e9452a1359d19211",
+      "snapshot": "resources/remediation-s0-installed/snapshot-60",
+      "recognizedBefore": [],
+      "syntax": "python",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/qq_first_sentence_patch.py",
+      "sha256": "463a71b49130801c6717e5ef2df67aaff3634efa951fd4d0d45d60f9af33c2a0",
+      "snapshot": "resources/remediation-s0-installed/snapshot-61",
+      "recognizedBefore": [],
+      "syntax": "python",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/qq_group_steer_patch.py",
+      "sha256": "9cb3c8adc7a84c74469d31d68fae1f3d5618b7d5973225bd48139a38017de239",
+      "snapshot": "resources/dual-group-optimization-v1/snapshot-1",
+      "recognizedBefore": [
+        "7a8756b8b88761311144ba269a7b44c6141e41e062af04c34e6a9f1354c7913c"
+      ],
+      "syntax": "python",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/qq_jm_button_patch.py",
+      "sha256": "b3d315c77cb26994f8f16bbb6deffcd482168cc19ee3341144dba6fc9fec8202",
+      "snapshot": "resources/remediation-s0-installed/snapshot-63",
+      "recognizedBefore": [],
+      "syntax": "python",
+      "mode": 420
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/qq_request_timing_patch.py",
+      "sha256": "0b0dc0136f3891e6be69677403944a3318a759a20b9c43f068320db260216a74",
+      "snapshot": "resources/remediation-s0-installed/snapshot-64",
+      "recognizedBefore": [],
+      "syntax": "python",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/qq_segment_block_reconcile_patch.py",
+      "sha256": "b543b3dd8d297a670d6524071ea2488dcc74345d553903b3e1deed3cbaa22c3e",
+      "snapshot": "resources/remediation-s0-installed/snapshot-65",
+      "recognizedBefore": [],
+      "syntax": "python",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/qq_unified_tools_patch.py",
+      "sha256": "709f1e20103ae4d025df1e72eab570ac0a6af0c4918cd30d371efc58659d23f2",
+      "snapshot": "resources/keeper-catalog-attestation-v1/snapshot-1",
+      "recognizedBefore": [
+        "969f87cdfad68e7cb5daf3168dbefedfa0ad80e2f46dca0916ac6eb933de4275"
+      ],
+      "syntax": "python",
+      "mode": 420
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/qqmedia_patch.py",
+      "sha256": "46d1f8d8fe337db7aea2de2c37ecf81436f3ba54b6755ab4627d32552ade3853",
+      "snapshot": "resources/remediation-s0-installed/snapshot-67",
+      "recognizedBefore": [],
+      "syntax": "python",
+      "mode": 493
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/qqopt_patch.py",
+      "sha256": "3b383b4957c50b74b11bd9f51715c93680c2802a0c3f379408efd6036c4f1aea",
+      "snapshot": "resources/remediation-s0-installed/snapshot-68",
+      "recognizedBefore": [],
+      "syntax": "python",
+      "mode": 493
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/qqsegment_patch.py",
+      "sha256": "932ef9810615ad36d5361dbb3c356bc30ab91887cb009a8997d9e250370fb71e",
+      "snapshot": "resources/remediation-s0-installed/snapshot-69",
+      "recognizedBefore": [],
+      "syntax": "python",
+      "mode": 493
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/qqsilent_patch.py",
+      "sha256": "7457720440b6d5731ecfa5c233d63a307b16dc32e37d305f64f8580057a0567f",
+      "snapshot": "resources/remediation-s0-installed/snapshot-70",
+      "recognizedBefore": [],
+      "syntax": "python",
+      "mode": 493
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/reapply_all.sh",
+      "sha256": "5d7d020e143e1f8a59342075e22d53af98750f07abbd6289d50712770292d1fc",
+      "snapshot": "resources/remediation-s0-installed/snapshot-71",
+      "recognizedBefore": [
+        "47bedd25a02ec9bff7b98d66f4399be2083b2bdecd687be735303d6dab4a1f47"
+      ],
+      "syntax": "bash",
+      "mode": 493
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/release_manager.py",
+      "sha256": "83bbb6c2f7b9d9a52dee3ebad85a5a59959cc53666da46ee2ee8b2e770f369b4",
+      "snapshot": "resources/remediation-s0-installed/snapshot-72",
+      "recognizedBefore": [
+        null
+      ],
+      "syntax": "python",
+      "mode": 384
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/resources/continuation-latency-v1/93-qq-continuation-latency.conf",
+      "sha256": "67fe2d5a3276ae2265bef1ce73342b63dce1d00d78adb4977c1e448d5906832b",
+      "snapshot": "resources/remediation-s0-installed/snapshot-73",
+      "recognizedBefore": [],
+      "syntax": "text",
+      "mode": 420
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/resources/continuation-latency-v1/dispatch-from-config-Dph1dwRJ.mjs",
+      "sha256": "01cc5f57b3d428806fca4ac9b9db7177aa5c56bf5469eab662a0b7ed608b9c47",
+      "snapshot": "resources/remediation-s0-installed/snapshot-74",
+      "recognizedBefore": [],
+      "syntax": "esm",
+      "mode": 420
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/resources/continuation-latency-v1/get-reply-BV8KEWbF.mjs",
+      "sha256": "e6eb41a5c8d8e10b189c2f200c3e8085e022be7123151ebdc79675bbcdf8b7d0",
+      "snapshot": "resources/remediation-s0-installed/snapshot-75",
+      "recognizedBefore": [],
+      "syntax": "esm",
+      "mode": 420
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/resources/continuation-latency-v1/plan.json",
+      "sha256": "e3b8d68daec8dd32cf6b62bb145ea8e70f7bb34bdba3a4f59607c5aa050cf16d",
+      "snapshot": "resources/remediation-s0-installed/snapshot-76",
+      "recognizedBefore": [],
+      "syntax": "json",
+      "mode": 420
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/resources/continuation-latency-v1/qq-native-exec-lifecycle.mjs",
+      "sha256": "784c182c5f5662a10fd9e225ff68c0a5d6ce774c3d3623f14a8a7481aa39fb1b",
+      "snapshot": "resources/remediation-s0-installed/snapshot-77",
+      "recognizedBefore": [],
+      "syntax": "esm",
+      "mode": 420
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/resources/continuation-latency-v1/run-attempt-dYJhjZrp.mjs",
+      "sha256": "9e99418705e1d2bd9b5e726b3a0b8f043b84aa72da24188441af8534610186b6",
+      "snapshot": "resources/remediation-s0-installed/snapshot-78",
+      "recognizedBefore": [],
+      "syntax": "esm",
+      "mode": 420
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/resources/continuation-latency-v1/session-transcript-read-worker-runtime-Ey1OtD_0.mjs",
+      "sha256": "6f0237fdc1d5a1d23a6c4fbd5187052dc937814971cdb080efcfdcc55e6fc025",
+      "snapshot": "resources/remediation-s0-installed/snapshot-79",
+      "recognizedBefore": [],
+      "syntax": "esm",
+      "mode": 420
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/resources/continuation-latency-v1/worker-task-pool-Cl1KhdJb.mjs",
+      "sha256": "14167a65ca888a0f3d9c532431b22b163820a684d6d5fd233263a6dac59459ae",
+      "snapshot": "resources/remediation-s0-installed/snapshot-80",
+      "recognizedBefore": [],
+      "syntax": "esm",
+      "mode": 420
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/resources/latency456-v1/inference-dispatch-CMZtjQyz.mjs",
+      "sha256": "1e215d0549212bf1be17d0df5ebd4210f63bdfbb1900811aa5e7ab0675530879",
+      "snapshot": "resources/remediation-s0-installed/snapshot-81",
+      "recognizedBefore": [],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/resources/latency456-v1/inference-metadata-CgIf7sOx.mjs",
+      "sha256": "3b2782c31410b40db1b4d1bfa7fd8bd11f20db9580ca317fa525de84ae2a0e76",
+      "snapshot": "resources/remediation-s0-installed/snapshot-82",
+      "recognizedBefore": [],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/resources/latency456-v1/inference-proxy-DhcXOgUE.mjs",
+      "sha256": "73aba77c75d23d606b6e6ea9c52d8a5ac02a13da0446224952dd09af70266b66",
+      "snapshot": "resources/remediation-s0-installed/snapshot-83",
+      "recognizedBefore": [],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/resources/latency456-v1/plan.json",
+      "sha256": "f49ea6100ece4404808095a792ca73af2ee2248513221236ff3dba9da86b5611",
+      "snapshot": "resources/remediation-s0-installed/snapshot-84",
+      "recognizedBefore": [],
+      "syntax": "json",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/resources/latency456-v1/preparation-leaf-timing.mjs",
+      "sha256": "77c66be83b2846bc8cbd8fa548ad734e6513f02f4ffe69b63dab5c61da6d35ba",
+      "snapshot": "resources/remediation-s0-installed/snapshot-85",
+      "recognizedBefore": [],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/resources/latency456-v1/qq-native-auto-compact.mjs",
+      "sha256": "fa8612fe7294e364a322a86638b851b42a253d705a3bd9fed6ac38f2a7466ef5",
+      "snapshot": "resources/remediation-s0-installed/snapshot-86",
+      "recognizedBefore": [],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/resources/latency456-v1/qq-native-exec-lifecycle.mjs",
+      "sha256": "784c182c5f5662a10fd9e225ff68c0a5d6ce774c3d3623f14a8a7481aa39fb1b",
+      "snapshot": "resources/remediation-s0-installed/snapshot-87",
+      "recognizedBefore": [],
+      "syntax": "esm",
+      "mode": 420
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/resources/latency456-v1/qq-tool-path-hint.mjs",
+      "sha256": "66941b4d31457a99aa56321747f19f90d719dd21578c802ebe07d6c51a5c37b3",
+      "snapshot": "resources/remediation-s0-installed/snapshot-88",
+      "recognizedBefore": [],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/resources/latency456-v1/run-attempt-dYJhjZrp.mjs",
+      "sha256": "9e99418705e1d2bd9b5e726b3a0b8f043b84aa72da24188441af8534610186b6",
+      "snapshot": "resources/remediation-s0-installed/snapshot-89",
+      "recognizedBefore": [],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/resources/latency456-v1/thread-lifecycle-_bAbjedG.mjs",
+      "sha256": "5032aa4ccc4ed195f592fdd29a2c1af7f229d0644f799188d0ba02cedeb31356",
+      "snapshot": "resources/remediation-s0-installed/snapshot-90",
+      "recognizedBefore": [],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/resources/latency456-v1/thread-requests-OWGOiDaV.mjs",
+      "sha256": "539411d5c1d142d64ca7764f8dbece933e6d24897e99534c09b96f8a8b8f9bf8",
+      "snapshot": "resources/remediation-s0-installed/snapshot-91",
+      "recognizedBefore": [],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/resources/latency456-v1/ws-lifecycle-diagnostics.mjs",
+      "sha256": "242cdb66daec80e90993b297e1b397d67a772e8432b600dc58f52710f6b4c5b1",
+      "snapshot": "resources/remediation-s0-installed/snapshot-92",
+      "recognizedBefore": [],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/resources/media-latency-v1/90-mem0-no-telemetry.conf",
+      "sha256": "b2d2c86b89c611a7ad6faa2359a91df9159981a9bd4e6d0cc5cb9099a37ae62c",
+      "snapshot": "resources/remediation-s0-installed/snapshot-93",
+      "recognizedBefore": [],
+      "syntax": "text",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/resources/media-latency-v1/mem0ai-oss-index.mjs",
+      "sha256": "fa980a121406205486395835f551ad09758ca4e02f518b6b16cf9a142ea82a1b",
+      "snapshot": "resources/remediation-s0-installed/snapshot-94",
+      "recognizedBefore": [],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/resources/media-latency-v1/plan.json",
+      "sha256": "fb7ec796656227ac484a6a37af93132a1f85dbfdc816a629a9e5ea26ba96b9f7",
+      "snapshot": "resources/remediation-s0-installed/snapshot-95",
+      "recognizedBefore": [],
+      "syntax": "json",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/resources/media-latency-v1/qq-index.cjs",
+      "sha256": "b8c7beaa62e2cdde4ab4373ac999c7028defb61136214d6ec65643c0786cc879",
+      "snapshot": "resources/remediation-s0-installed/snapshot-96",
+      "recognizedBefore": [],
+      "syntax": "cjs",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/resources/media-latency-v1/qq-tool-path-hint.mjs",
+      "sha256": "66941b4d31457a99aa56321747f19f90d719dd21578c802ebe07d6c51a5c37b3",
+      "snapshot": "resources/remediation-s0-installed/snapshot-97",
+      "recognizedBefore": [],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/resources/media-latency-v1/xingye_tts.py",
+      "sha256": "eac9d61164ad2ebf46b156d3e50f677514142d5d346102c71bc83191a6b1ef0f",
+      "snapshot": "resources/remediation-s0-installed/snapshot-98",
+      "recognizedBefore": [],
+      "syntax": "python",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/tools_effective_cache_patch.py",
+      "sha256": "f3b149d9b91db40a102644d9a773750648d7dd02fab41238eea2e2761c12fb4a",
+      "snapshot": "resources/remediation-s0-installed/snapshot-99",
+      "recognizedBefore": [],
+      "syntax": "python",
+      "mode": 493
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/tools_effective_nonblocking_patch.py",
+      "sha256": "89e34cafd875a37e3bc9213419ffe9326079be7e8ad8edc874e6d4af91d2b858",
+      "snapshot": "resources/remediation-s0-installed/snapshot-100",
+      "recognizedBefore": [],
+      "syntax": "python",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/plugins/qq-group-followup-gate/index.js",
+      "sha256": "744f110ef7f175f54b0a9264143252770495cbe254add2cf78ef5502f496faf1",
+      "snapshot": "resources/hosino-20261020-registered/snapshot-2",
+      "recognizedBefore": [
+        "43c25bdb2cbadea745c125f229dc692bee8231a116e5ea56db86525d39b96e0b",
+        "8fe4f5842729af2f5e0a04dd5f42c040443ac5ddb48470f83565efaf29154072",
+        "541a0ed1fcc4a5a8ff12c535c62de839280b52e357d866c22864b41836fee0b2",
+        "8e4902279e64b8116e5a13b7dff440976962634102bfe31a4205389d8b3f24fc",
+        "db312abc7943184b26611c64b2aebca464d2dd40737d88cbd7bffc99d87ed1a4"
+      ],
+      "syntax": "esm",
+      "mode": 420
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/plugins/qq-group-followup-gate/keepalive.js",
+      "sha256": "ee778e7ad3f1fd370a788a25762f7f0d958cd986a9021f0208c5ad7b89f7a284",
+      "snapshot": "resources/qq-cache-keepalive-catalog-v6/snapshot-0",
+      "recognizedBefore": [
+        "6785b7b8756bdb34e2125dc50b85e99a4c380323c018066d726d0cfe017061e4",
+        "86cecb79deeb082f8482cc31e997942b2bf4c1ad9117298541f9d7a9cf78fb69",
+        "9fbff72f2be5807fbbf63dc13d91c9bd41cc92093dcd502ac46582f9b143ed43"
+      ],
+      "syntax": "esm",
+      "mode": 420
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/plugins/qq-group-followup-gate/qq-tool-path-hint.mjs",
+      "sha256": "66941b4d31457a99aa56321747f19f90d719dd21578c802ebe07d6c51a5c37b3",
+      "snapshot": "resources/remediation-s0-installed/snapshot-103",
+      "recognizedBefore": [
+        "0427b5c4d68096cefabd20c13eee922ec288477d27c207828a5483c88fd1fcb9",
+        "529cc7fd9f296d916807eaf57a942e92925a8eb9c653c16350e5e5e6af4a6197"
+      ],
+      "syntax": "esm",
+      "mode": 420
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/plugins/qq-group-owner-guard/index.js",
+      "sha256": "9709943256e24c4728f95f4ea4123724c3e764ae30d8cc92412ece206cfd58db",
+      "snapshot": "resources/qq-claude-group-compat-v1/snapshot-7",
+      "recognizedBefore": [
+        "792ff175233ec15bad4aaa9818ce92831119e12274952fe48c6eb5caba21122d",
+        "a24edc6a25bba7b8ebae3a4586297cfbc980525672c6b9ac0618c4a28b61ff1e",
+        "c23d39a858b09be6520105e976c7eaf1d1bdca7760f521096de80ff26f2db8bf",
+        "cab01102a57817acc42f5ead07695039ebc64cd54aed53d3a4192a80f45cd08f",
+        "fd31e90b78a3e40844102eaf377e34b39098c1f4f5fc4cc017d8c69eacf16d07",
+        "fdf1354c9d3bcc605009cc4685402c5a9835c16fd471169394fcfdce5f6791c7"
+      ],
+      "syntax": "esm",
+      "mode": 420
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/workspace/scripts/baidu_search.py",
+      "sha256": "3595d1517ab8f23f0d866f48e1da17f419a07ea1f7d7a30592e825705f73d2b5",
+      "snapshot": "resources/remediation-s0-installed/snapshot-105",
+      "recognizedBefore": [
+        "c9407bab477d378146afb1a75d25ae9e31235da6ed7e329f9779182ef99a2923"
+      ],
+      "syntax": "python",
+      "mode": 384
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/workspace/scripts/xingye_tts.py",
+      "sha256": "4a8f16a4347ac59d7efe77158df3ecd7eeda05ff19dabb6ba8529f14c0d7070f",
+      "snapshot": "resources/runtime-scope-media-maintenance-v1/snapshot-25",
+      "recognizedBefore": [
+        "0e7e65a1e8869e173722e5559bd3322277bec7728038c9b0786eb8d2a4ce35f9",
+        "eac9d61164ad2ebf46b156d3e50f677514142d5d346102c71bc83191a6b1ef0f"
+      ],
+      "syntax": "python",
+      "mode": 384
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/agent-harness-runtime-CnrNnAqy.mjs",
+      "sha256": "89b5789886c1201f701b62b7c64de08395e66469f99f463f344684cc43582dcb",
+      "snapshot": "resources/runtime-scope-media-maintenance-v1/snapshot-0",
+      "recognizedBefore": [
+        "50f435ada748a790cf8307be381653c87a0da072a905374f6d443a54967a8410"
+      ],
+      "syntax": "esm",
+      "mode": 384
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/agent-tools-DdIcx9SP.mjs",
+      "sha256": "7ee9744508c9c6538df3bd114130630a60cda97c5b61b68838899719c6ee28c5",
+      "snapshot": "resources/media-queue-json-v2/snapshot-0",
+      "recognizedBefore": [
+        "3baf123339fb718e3a0495362bf72d061856a179e77b1aa34d53019b13d28d24",
+        "e9c73b7b2190b9e92e78c8c8969d4fbc011aabb4c72dc2a464c1370b8d6b2bf7"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/agent-tools.before-tool-call-BbipAsOC.mjs",
+      "sha256": "38e6d9fd53ea62c29289ab1fad3d345daf4baa646a0539bb3d0ee42e1183aae0",
+      "snapshot": "resources/runtime-scope-media-maintenance-v1/snapshot-2",
+      "recognizedBefore": [
+        "9b958b3318c4ad0753841e46efa87fa1a824d793ef454b9600c6df49b46e3358"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/loader-runtime-load-DCwhg2IV.mjs",
+      "sha256": "8caf64da5d07c5bc47f65756fdd9355f30ca52ec461c6e5731f17d2af441816a",
+      "snapshot": "resources/runtime-scope-media-maintenance-v1/snapshot-6",
+      "recognizedBefore": [
+        "fc94e3a269398b80bc93e997051aa30f7ea5de8ec5042e04dcd5e7b7a7c8cb8e"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/selection-aEGvijq3.mjs",
+      "sha256": "510ee0e0d9fce13efc98a5b3a53b4d1ad893107aa2738feac75e49248700b584",
+      "snapshot": "resources/qq-text-file-capability-v3/snapshot-4",
+      "recognizedBefore": [
+        "156d92945fe2379c1f66c057967839ba94b5ead4ccb999aef24583ac7d89ad4d",
+        "dfcd88e2e79a4296a9e11b7c3ee02fbf99f840431786a01896582389200a7e3a"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/npm/projects/mem0-openclaw-mem0-09729737ad/node_modules/@mem0/openclaw-mem0/dist/memory-queue.mjs",
+      "sha256": "157090445a2c238a8b92042079bbe1619eac80a1886bae5dc5efffae634db597",
+      "snapshot": "resources/runtime-scope-media-maintenance-v1/snapshot-9",
+      "recognizedBefore": [
+        null
+      ],
+      "syntax": "esm",
+      "mode": 384
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/npm/projects/mem0-openclaw-mem0-09729737ad/node_modules/@mem0/openclaw-mem0/dist/memory-runtime.mjs",
+      "sha256": "47c7aac1bbe524c2d81657d5803e08da8046f3c3a44c01707b705f2e94a27c94",
+      "snapshot": "resources/runtime-prefetch-continuation-v2/snapshot-6",
+      "recognizedBefore": [
+        null,
+        "0dfd351cfa87582d05b10b45932c48b33e553d4ae4e309f731755fb21610c6ef",
+        "333d714a08b744a323f45bf2903ea0f535179e106c9cdfef70bff30d5632163d"
+      ],
+      "syntax": "esm",
+      "mode": 384
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/npm/projects/mem0-openclaw-mem0-09729737ad/node_modules/@mem0/openclaw-mem0/dist/memory-scope.mjs",
+      "sha256": "9df88bd7862f0414cb3009f5bc9dc1e925608dfadffc174a1f6f6b6010217294",
+      "snapshot": "resources/runtime-scope-media-maintenance-v1/snapshot-11",
+      "recognizedBefore": [
+        null
+      ],
+      "syntax": "esm",
+      "mode": 384
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/npm/projects/mem0-openclaw-mem0-09729737ad/node_modules/mem0ai/dist/oss/oc-memory-receipt.mjs",
+      "sha256": "f00297bd64bcb73c14454a6b6a62fe6eb43b4b2d5711af42258de7cccd5c27b1",
+      "snapshot": "resources/runtime-scope-media-maintenance-v1/snapshot-13",
+      "recognizedBefore": [
+        null
+      ],
+      "syntax": "esm",
+      "mode": 384
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/npm/projects/openclaw-codex-8902d781d4__openclaw-generation__g-8b0d230c729a2812/node_modules/@openclaw/codex/dist/.setup/qq-memory-privacy-epoch.mjs",
+      "sha256": "03cad5bfc925bea119f9a3459fcfe389b852122207475387059659daa2978309",
+      "snapshot": "resources/qq-context-slim-v3/snapshot-1",
+      "recognizedBefore": [
+        null,
+        "1781f54ebf17201604885ac8999b02b0d7d4232a735035e91d159daa433b5f7f"
+      ],
+      "syntax": "esm",
+      "mode": 384
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/npm/projects/tencent-connect-openclaw-qqbot-a7ec020d86__openclaw-generation__g-b97d26bd0d7f19d9/node_modules/@tencent-connect/openclaw-qqbot/dist/qq-delivery-receipts.cjs",
+      "sha256": "3c9490f0aa066acc09ac004ee99eaf0c7ac577a8a348c70077469297db541475",
+      "snapshot": "resources/runtime-scope-media-maintenance-v1/snapshot-18",
+      "recognizedBefore": [
+        null
+      ],
+      "syntax": "cjs",
+      "mode": 384
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/plugins/qq-group-owner-guard/execution-policy.mjs",
+      "sha256": "805f9233c0d7c297d738876f3a0b65ab3e61a21db8d73af0391ec60320953b5e",
+      "snapshot": "resources/qq-claude-group-compat-v1/snapshot-6",
+      "recognizedBefore": [
+        null,
+        "d4a78308fd96779657ddd6bd084a110eec11a5fbe8762685366453d5f0dd4f56",
+        "accc3618466d2a20f416de63c0ec99626d0825a5b152b5d915ec099be1f0ec1f"
+      ],
+      "syntax": "esm",
+      "mode": 420
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/plugins/qq-group-owner-guard/public-read-documents.json",
+      "sha256": "fcff69ed215bc2fbc68dafc0328087a30cbee08c9a8c2d05f327f64586aeaef1",
+      "snapshot": "resources/runtime-scope-media-maintenance-v1/snapshot-22",
+      "recognizedBefore": [
+        null
+      ],
+      "syntax": "json",
+      "mode": 384
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/plugins/qq-group-owner-guard/qq-tag-references.mjs",
+      "sha256": "e6ec09b60b2ef670c6309791fd8d9302f2665751d6ded1de7e0a35896621dbfe",
+      "snapshot": "resources/runtime-scope-media-maintenance-v1/snapshot-23",
+      "recognizedBefore": [
+        null
+      ],
+      "syntax": "esm",
+      "mode": 420
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/plugins/qq-group-owner-guard/read-capabilities.mjs",
+      "sha256": "841eb597c6f34124f8766ad1c4f9ad9fa02dc4ea1a76e08377d8e4b2a8e72331",
+      "snapshot": "resources/runtime-scope-media-maintenance-v1/snapshot-24",
+      "recognizedBefore": [
+        null
+      ],
+      "syntax": "esm",
+      "mode": 420
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/workspace/scripts/xingye_voice.py",
+      "sha256": "cc81651cfa471e00f81ba42a20b0876be385b73b147b11a1acfb4556e4ef18cb",
+      "snapshot": "resources/runtime-scope-media-maintenance-v1/snapshot-26",
+      "recognizedBefore": [
+        "7be230a036e0dd6f01d546a79b3970fb701fd92b83258207b508ec1bc6f717d7"
+      ],
+      "syntax": "python",
+      "mode": 448
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/workspace/scripts/mp3_to_silk.py",
+      "sha256": "80423a233d181995e3b974f7124a2bab545cbdc920c4b962f084f3f27894ef56",
+      "snapshot": "resources/runtime-scope-media-maintenance-v1/snapshot-27",
+      "recognizedBefore": [
+        "ec86e8ebca5775a1b495386a89730629d3fde2d96b452802ed210a55d61d5583"
+      ],
+      "syntax": "python",
+      "mode": 384
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/workspace/scripts/mimo_tts.py",
+      "sha256": "2291d3c5a8b276331f45de6627610bbc10d2fe0393eb50c1fb3964c4c6e8e3a1",
+      "snapshot": "resources/runtime-scope-media-maintenance-v1/snapshot-28",
+      "recognizedBefore": [
+        "48289df045db097651cc8b1c7248bf4b48bd30b0f5c3fcf8c3aeb5acaa6e5367"
+      ],
+      "syntax": "python",
+      "mode": 384
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/workspace/scripts/doubao_tts.py",
+      "sha256": "b194dd7b1f0210a089632598a391bb02ca40a733e8dc77491080067ef04ee9ee",
+      "snapshot": "resources/runtime-scope-media-maintenance-v1/snapshot-29",
+      "recognizedBefore": [
+        "e0df1fdf208d465336b0adb166b87dd2641f69bce203123a4951796cb2db2474"
+      ],
+      "syntax": "python",
+      "mode": 384
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/workspace/scripts/doubao_vision.py",
+      "sha256": "0ab446826a021d2bf9b3bb18f3461d02c2239901ede6e6c627d61bea90df50c5",
+      "snapshot": "resources/runtime-scope-media-maintenance-v1/snapshot-30",
+      "recognizedBefore": [
+        "8e9a668ee6a7d8db78077df74fd79383755b0b6be3eae224927cc7613d21cf73"
+      ],
+      "syntax": "python",
+      "mode": 384
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/workspace/scripts/doubao_draw.py",
+      "sha256": "58285f286c5d54cca297c4b17f66133425baab12123922e86aa4707259722248",
+      "snapshot": "resources/runtime-scope-media-maintenance-v1/snapshot-31",
+      "recognizedBefore": [
+        "3585e5f24d16dd980d96945dc4d88d57c92b02a5a0debdccda3e0375edb38fc1"
+      ],
+      "syntax": "python",
+      "mode": 384
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/workspace/scripts/doubao_video.py",
+      "sha256": "7e4ecef7fd18d0ebc3bc149e4ee2c70b888d50777fe78b0ab0c60a59f0c17b6e",
+      "snapshot": "resources/runtime-scope-media-maintenance-v1/snapshot-32",
+      "recognizedBefore": [
+        "911353ca78cd4c56e030c3fa47c07e98c0e77f96603dff8c0744ebca11d92dea"
+      ],
+      "syntax": "python",
+      "mode": 384
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/workspace/scripts/grok_imagine.py",
+      "sha256": "8e384dd0799e600d2a45f0c4e70a9f651ddb6478493ca7e7aa24d78824c3ce18",
+      "snapshot": "resources/runtime-prefetch-continuation-v2/snapshot-8",
+      "recognizedBefore": [
+        "6891b8485686287ac0f379dd9d9e701c341b62e821fddf839ba6d24159f34692",
+        "74b90f8b52c91eb0a4d692417db97ef5797983789e440a0af9bb123180a4c1e7",
+        "a9559e9ebc5f204dbb6fc7dbd3fc2504a60806ffb572e318afd260fa4fe0bf5d"
+      ],
+      "syntax": "python",
+      "mode": 448
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/workspace/scripts/sticker_manager.py",
+      "sha256": "0ba3e2519aabcb9bb782f1f92fb5582b244e1053b59ca2e4c77917a5b88336db",
+      "snapshot": "resources/hosino-20261020-registered/snapshot-3",
+      "recognizedBefore": [
+        "848989acf04db304f8dde705413cb6e2ee39fe9644d13bb1fe7a1f55c3dd3cb7",
+        "b8808059cb5cf238f50bb6862f33b1e94a3e0bcc26558876ac27bc1cf03985d8"
+      ],
+      "syntax": "python",
+      "mode": 448
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/maintenance/health_monitor.py",
+      "sha256": "3196c9f82899253ada9852e3a8b6586747db3bae5b578f5bb03bf73d6fd637f1",
+      "snapshot": "resources/cache-monitor-xai-v1/snapshot-2",
+      "recognizedBefore": [
+        null,
+        "87e50e2eaf668462aae3d7b2d8801466ccb7e8dad8deb2f99c846d849756d83a"
+      ],
+      "syntax": "python",
+      "mode": 448
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/maintenance/maintenance-config.json",
+      "sha256": "718418fe11f5ab7f78cafc128c5d49a76e98cf93ac99952ea8060457f12ecbfa",
+      "snapshot": "resources/runtime-scope-media-maintenance-v1/snapshot-36",
+      "recognizedBefore": [
+        null
+      ],
+      "syntax": "json",
+      "mode": 384
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/maintenance/archive_dry_run.py",
+      "sha256": "0930dd4658ffabdd1fcc422c601c822e8477cc5992bad203d0b124aa5f91575d",
+      "snapshot": "resources/runtime-scope-media-maintenance-v1/snapshot-37",
+      "recognizedBefore": [
+        null
+      ],
+      "syntax": "python",
+      "mode": 448
+    },
+    {
+      "target": "/home/ubuntu/.config/systemd/user/openclaw-local-health.service",
+      "sha256": "1fdd9e30dff3b02304148e7fbbf441df85df9edda52faf9d0ea886dc8c13b8bf",
+      "snapshot": "resources/runtime-scope-media-maintenance-v1/snapshot-38",
+      "recognizedBefore": [
+        null
+      ],
+      "syntax": "systemd",
+      "mode": 420
+    },
+    {
+      "target": "/home/ubuntu/.config/systemd/user/openclaw-local-health.timer",
+      "sha256": "18d0b65cef86ffbcb11dacf4efe4bc8012267a420bd56041dffb0ff745d68ca0",
+      "snapshot": "resources/runtime-scope-media-maintenance-v1/snapshot-39",
+      "recognizedBefore": [
+        null
+      ],
+      "syntax": "systemd",
+      "mode": 420
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/workspace/scripts/media_deadline.py",
+      "sha256": "dbaa61dbc96f44ba7e5bfb479aebb972aee1a83c3aec62e29271c0c2988acc4c",
+      "snapshot": "resources/runtime-scope-media-maintenance-v1/snapshot-40",
+      "recognizedBefore": [
+        null
+      ],
+      "syntax": "python",
+      "mode": 448
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/npm/projects/mem0-openclaw-mem0-09729737ad/node_modules/better-sqlite3/build/Release/better_sqlite3.node",
+      "sha256": "473561b43a33cb84725ce0f416021188bc148e9b1330ae2eb47787a553f59d0a",
+      "snapshot": "resources/runtime-scope-media-maintenance-v1/snapshot-42",
+      "recognizedBefore": [
+        null
+      ],
+      "syntax": "binary",
+      "mode": 384
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/npm/projects/mem0-openclaw-mem0-09729737ad/node_modules/@mem0/openclaw-mem0/dist/oc-memory-receipt.mjs",
+      "sha256": "f00297bd64bcb73c14454a6b6a62fe6eb43b4b2d5711af42258de7cccd5c27b1",
+      "snapshot": "resources/runtime-scope-media-maintenance-v1/snapshot-extra-memory-queue-receipt",
+      "recognizedBefore": [
+        null
+      ],
+      "syntax": "esm",
+      "mode": 384
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/bash-tools-3n5rTZUL.mjs",
+      "sha256": "33154a07da31467a66bc17716c58f63799595e8fc8ee86c350f463c441222b13",
+      "snapshot": "resources/media-queue-json-v2/snapshot-1",
+      "recognizedBefore": [
+        "e871089b72268ba00a83cab02aa7000dd80e4118a636390a78783e82a9161dd5"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/drain-Da2fh6J9.mjs",
+      "sha256": "04141f891a0fbd320b6b44044ecfc7d8819befe8da046b497d57978b443dd335",
+      "snapshot": "resources/controlled-media-inspection-compat-v1/0abcd76a-794b-40e2-ba67-ad6dc020bdfd/us-qq-media-stop-20261020-v9-04141f891a0fbd320b6b44044ecfc7d8819befe8da046b497d57978b443dd335-002.mjs",
+      "recognizedBefore": [
+        "df9d5ca35d536a0a9a464833c775cde3f2badea9a23a6788e637dd90c1c0412b",
+        "64c36388cf2fc15c0fc96d36d2a7ef38b3ad1cc3152616f32eab1b15415381ad"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/get-reply-run-queue-Bmv2zHLu.mjs",
+      "sha256": "831a9700d45880a7254a2898b3b5a6f60c27c5544c0003e7e3528f0dc2965880",
+      "snapshot": "resources/media-queue-json-v2/snapshot-4",
+      "recognizedBefore": [
+        "f0e8ed1da4389e0ee5b438b1d8a177687784927ac89f075172833c16be9bb62b"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/qq-queue-diagnostics.mjs",
+      "sha256": "d68116109cdabc5483872f49cc3241ca0b9ca19cb3b70deca285a047f5035388",
+      "snapshot": "resources/media-queue-json-v2/snapshot-5",
+      "recognizedBefore": [
+        null
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/queue-DC2hEEWL.mjs",
+      "sha256": "de02283851ac93d5f937144d3d7c7c0e26af6dfe0d91c28e759632ba036de25b",
+      "snapshot": "resources/media-queue-json-v2/snapshot-6",
+      "recognizedBefore": [
+        "1e04dbbef6fd653e65be1d5bcdfa047b3002f2ad428f0f4e5769da1d19fe72fc"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/plugins/qq-group-followup-gate/controlled-media-jobs.cjs",
+      "sha256": "938e8d27f81df1d5019469901d6576a5f00d75f413992a40e1785bc72d3e1489",
+      "snapshot": "resources/qq-latency-budget-media-guidance-v1/snapshot-1",
+      "recognizedBefore": [
+        null,
+        "3ac3d2532b4e13c8be727fa3fbaf485232eceae0356fd2ce5e93878ea7b3f4bb",
+        "9f0811c4a8eeb2a89acd48263a54c66c87dbbc9db5f4af58f64de20517e64848",
+        "a05ad3ee4f623c0ad1084d135e840ce7cdfaad261323ff380d3776b0aa83e9aa"
+      ],
+      "syntax": "cjs",
+      "mode": 384
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/plugins/qq-group-followup-gate/controlled-media-plugin.mjs",
+      "sha256": "8bb9519ce5d8ca367ea3149656ce336d03bb624f01d38e4f9e7531ebbe54291b",
+      "snapshot": "resources/controlled-media-inspection-compat-v1/0abcd76a-794b-40e2-ba67-ad6dc020bdfd/us-qq-media-stop-20261020-v9-8bb9519ce5d8ca367ea3149656ce336d03bb624f01d38e4f9e7531ebbe54291b-007.mjs",
+      "recognizedBefore": [
+        null,
+        "188f9db9b6d25882f2d4ebefcdef55cab94f15bdd88b435126093e7f34d39df5",
+        "55f426348d1af2536904609eb8f3ce36c0c828f22ffc9c4a9c6e70dc70419718",
+        "37ea5f163a8dbcade8a96c9e8145776fba92082c1bc1dd97a46882ab867af391"
+      ],
+      "syntax": "esm",
+      "mode": 384
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/plugins/qq-group-followup-gate/controlled_media_runner.py",
+      "sha256": "e9b025d4318a77c398d56829d9009bb81d327d9ebb8e661875158a20b771690d",
+      "snapshot": "resources/media-queue-json-v2/snapshot-12",
+      "recognizedBefore": [
+        null
+      ],
+      "syntax": "python",
+      "mode": 384
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/plugins/qq-group-followup-gate/openclaw.plugin.json",
+      "sha256": "c6563eebe22fd26bfc15bce0f9bcb4212ac639500010ffc8005308b672adcc5d",
+      "snapshot": "resources/dual-group-optimization-v1/snapshot-3",
+      "recognizedBefore": [
+        "5bcd6abbcfd1e5614b3d595cc63e229bc7de937702ec0f0fd16517a5b6606cd5",
+        "5d896f3fb1a731f6c64626ceb32db9fafd3dd132d234443baf796689d59847b8"
+      ],
+      "syntax": "json",
+      "mode": 420
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/plugins/qq-group-owner-guard/controlled-job-authority.mjs",
+      "sha256": "a628ceec3822a10ec8696d93a2a44fb0e83ab6bc79ad14a45f4203c75abd669a",
+      "snapshot": "resources/media-queue-json-v2/snapshot-15",
+      "recognizedBefore": [
+        null
+      ],
+      "syntax": "esm",
+      "mode": 420
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/workspace/AGENTS.md",
+      "sha256": "81be66e97e0414454b947d0e3f72c9e236d15995166aaadcda761f4f3b92114d",
+      "snapshot": "resources/hosino-20261020-registered/snapshot-4",
+      "recognizedBefore": [
+        "3ac036aa4e60f0fb3f784da113c5c59a1eac45c5604a2f5b2b6f7ccc2af4851d",
+        "d989041a53fd8a3ae491975a3b1c29592bec311d8f67cc60f7a90f3d5edce21a",
+        "8515fdf64bac1e2ab8d7624748b8b463c38a2b65d55b917963a0c62c64676d62",
+        "7cbaf572c63825f2aac8e93f199cc17162fa84ab0111c44da972dd5ebee66c8a",
+        "e1e79f208761010adfdb4ff0df634677fabd91fe4270ee4bd27303e810e05b74"
+      ],
+      "syntax": "text",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/patches/core-process-runtime-preload.mjs",
+      "sha256": "5d5bb74314941db7de05c1ed93b7ae270d4dde388284b3883142e2576e5d7579",
+      "snapshot": "resources/media-queue-json-v4/snapshot-0",
+      "recognizedBefore": [
+        null
+      ],
+      "syntax": "esm",
+      "mode": 384
+    },
+    {
+      "target": "/home/ubuntu/.config/systemd/user/openclaw-gateway.service.d/94-core-process-runtime.conf",
+      "sha256": "9f952c60acd80ba690bdc1d10a72dc8108ded99490947c4992e6b2d972e26a7e",
+      "snapshot": "resources/media-queue-json-v4/snapshot-1",
+      "recognizedBefore": [
+        null
+      ],
+      "syntax": "text",
+      "mode": 384
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/supervisor-Bkt-g18U.mjs",
+      "sha256": "889009a67e35df217f9db01516ac879559f2c0416665a3aad4d55dfb4e0a6430",
+      "snapshot": "resources/media-queue-json-v4/snapshot-2",
+      "recognizedBefore": [
+        "889009a67e35df217f9db01516ac879559f2c0416665a3aad4d55dfb4e0a6430"
+      ],
+      "syntax": "text",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/process/supervisor/service-child-relay.js",
+      "sha256": "77d22efd282a346ce05f753392f679633b68b67c21b51426db5bba51d3fa24e8",
+      "snapshot": "resources/media-queue-json-v4/snapshot-3",
+      "recognizedBefore": [
+        "77d22efd282a346ce05f753392f679633b68b67c21b51426db5bba51d3fa24e8"
+      ],
+      "syntax": "text",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/process/supervisor/service-child-group-anchor.js",
+      "sha256": "f23f3fb710b4da7a279037afa0401f2c2f8ac303f44f6558d88cae151672744b",
+      "snapshot": "resources/media-queue-json-v4/snapshot-4",
+      "recognizedBefore": [
+        "f23f3fb710b4da7a279037afa0401f2c2f8ac303f44f6558d88cae151672744b"
+      ],
+      "syntax": "text",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/process/spawn-broker/worker.js",
+      "sha256": "d1ccf7a1d4fbb89c14f50d590ad5ef88ef31f57667e88869bcdc419e01c7f26c",
+      "snapshot": "resources/media-queue-json-v4/snapshot-5",
+      "recognizedBefore": [
+        "d1ccf7a1d4fbb89c14f50d590ad5ef88ef31f57667e88869bcdc419e01c7f26c"
+      ],
+      "syntax": "text",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/agent-runner.runtime-CbEKSY5P.mjs",
+      "sha256": "46523b4a4ed8b7487d77d2da20d9a031362afbbe2ea20515c8cd2e2bfcb2b8c1",
+      "snapshot": "resources/controlled-media-inspection-compat-v1/0abcd76a-794b-40e2-ba67-ad6dc020bdfd/us-qq-media-stop-20261020-v9-46523b4a4ed8b7487d77d2da20d9a031362afbbe2ea20515c8cd2e2bfcb2b8c1-003.mjs",
+      "recognizedBefore": [
+        "400290ba7c4a1db3cc7e51e301e5322058d6d13903bda8de03faa520c41faec2",
+        "7da2a1d9670bc3eee0afacac63c21e6b68272e80d30b8536d4f903786af1e9f1",
+        "c37f6915cc9dd41717f5aed611c92780b15fb63f3f980b717b585415825bae3a",
+        "107057f0803262146881be8fdf2e63af5ba18cb6a9a7f783f7d3396313170023"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/hook-helpers-CP-hOKld.mjs",
+      "sha256": "3d082a38a87a6001f7ec177a069950df43c36d027281517ab40268fd772d10c7",
+      "snapshot": "resources/runtime-prefetch-continuation-v2/snapshot-4",
+      "recognizedBefore": [
+        "fbf762cddb1649d832737b5cc6794c2103334c2236d4fd994e3c50fbe46a74cd"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/maintenance/mem0_daily_readonly.py",
+      "sha256": "c552d0759c1d2f6ad5ccaad57011d9d121ad586bf8ecdbda7100000875349048",
+      "snapshot": "resources/voice-mem0-maintenance-v1/snapshot-1",
+      "recognizedBefore": [
+        null
+      ],
+      "syntax": "python",
+      "mode": 384
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/maintenance/mem0-daily-config.json",
+      "sha256": "b733ef9ffaf4a71f5ea56ae1a8b2649ce8633db5ebae145b704b9b619f5598cf",
+      "snapshot": "resources/voice-mem0-maintenance-v1/snapshot-2",
+      "recognizedBefore": [
+        null
+      ],
+      "syntax": "json",
+      "mode": 384
+    },
+    {
+      "target": "/home/ubuntu/.config/systemd/user/openclaw-mem0-daily.service",
+      "sha256": "d3f67a40eb6d95e5d14a2b471cb21e8f2833494697d43c2858a4ff02c4ed33fa",
+      "snapshot": "resources/voice-mem0-maintenance-v1/snapshot-3",
+      "recognizedBefore": [
+        null
+      ],
+      "syntax": "systemd",
+      "mode": 420
+    },
+    {
+      "target": "/home/ubuntu/.config/systemd/user/openclaw-mem0-daily.timer",
+      "sha256": "3a719d04ce6db40ed2b9658b7ed401a62d81bbd8d6ebc8034b3f340991b5e3bf",
+      "snapshot": "resources/voice-mem0-maintenance-v1/snapshot-4",
+      "recognizedBefore": [
+        null
+      ],
+      "syntax": "systemd",
+      "mode": 420
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/extensions/xai/index.js",
+      "sha256": "85b0ceef271e69ff10781c014901256eca73402eacaca2f5ec5b5b92c250831a",
+      "snapshot": "resources/cache-monitor-xai-v1/snapshot-3",
+      "recognizedBefore": [
+        "86bf10671cb5555ff6a8a0dd5990aa7666681c175b3349e05de0d2d9eb88da6f"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/npm/projects/openclaw-codex-8902d781d4__openclaw-generation__g-8b0d230c729a2812/node_modules/@openclaw/codex/dist/.setup/compact-8ttks5U5.mjs",
+      "sha256": "7459563a98922b15b5632a47fe1120f011debc0249816eec0213654e13e496d9",
+      "snapshot": "resources/native-compaction-custody-v2/snapshot-0",
+      "recognizedBefore": [
+        "886adbb9ef28cdb357f50d0b53aa816cbd0d81b56b10a9a6fb7214ebc200713c"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/npm/projects/openclaw-codex-8902d781d4__openclaw-generation__g-8b0d230c729a2812/node_modules/@openclaw/codex/dist/.setup/shared-client-CJCTeFpQ.mjs",
+      "sha256": "9e1f99a5770a8037a8071e86ff74d35d600f4533e7e52d0f001194d7985bfb5d",
+      "snapshot": "resources/native-compaction-custody-v2/snapshot-1",
+      "recognizedBefore": [
+        "f618110c3ae5f701151d1d1a0989cbd3b5ed482f2d27795cb383d31a7a7166f7"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/npm/projects/openclaw-codex-8902d781d4__openclaw-generation__g-8b0d230c729a2812/node_modules/@openclaw/codex/dist/.setup/native-subagent-monitor-BwkQXf9e.mjs",
+      "sha256": "096533168bea3c3cea5dc0db80ae55f9d00161a7fdfd51cd12d51fdd16a4bade",
+      "snapshot": "resources/native-compaction-custody-v2/snapshot-2",
+      "recognizedBefore": [
+        "58a74c09183f9351e2575faf38cabb23652995a61537ee9952af7bc1d143cc1e"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/npm/projects/openclaw-codex-8902d781d4__openclaw-generation__g-8b0d230c729a2812/node_modules/@openclaw/codex/dist/.setup/compaction-cleanup-custody.mjs",
+      "sha256": "f43e3764229fc08af974701dcf5b2359f94aac8ca96453a185a6e4416270c00e",
+      "snapshot": "resources/native-compaction-custody-v2/snapshot-3",
+      "recognizedBefore": [
+        null
+      ],
+      "syntax": "esm",
+      "mode": 420
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/simple-completion-runtime-SCvr0cFK.mjs",
+      "sha256": "b54e01df815ae13f09d148e31d4e985132db0f543a0b50dbba21fae38d949797",
+      "snapshot": "resources/simple-completion-runtime-scope-v1/snapshot-0",
+      "recognizedBefore": [
+        "6217fde506f4d2d0043ea5a1d56d43515bab2c43c6988ee4eb919e561a906f6c"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/prepared-model-runtime-CiPCD0fr.mjs",
+      "sha256": "14d386f393fadea07ff3936a60f2b5d8bb79c10eea0db053447870ca7dcc5fe5",
+      "snapshot": "resources/simple-completion-runtime-scope-v1/snapshot-1",
+      "recognizedBefore": [
+        "a57b707a1e15973ad4795e8ddc2f8943fc5dfb5084bb2b6044af1c22e7796b3f"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/prepared-model-runtime.facts-Pifkw2OK.mjs",
+      "sha256": "3ec37d86877087b167b6ba7d815c96b14def13978fcb12891e355ca97185fe59",
+      "snapshot": "resources/simple-completion-runtime-scope-v1/snapshot-2",
+      "recognizedBefore": [
+        "b2136723cfa5b3df9f44ebd7c28e36c9b67cee1de1acbc53a6b53d030f564dc1"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/runtime-plugin-load-plan-ZJcpwJnb.mjs",
+      "sha256": "52da3d5898bed263a108050e8d8d5b99f4e03ccda18ca61b21e2f6fb0a7d5fc7",
+      "snapshot": "resources/simple-completion-runtime-scope-v1/snapshot-3",
+      "recognizedBefore": [
+        "aceaf6a732ff3ca621fe746424ce7356253c1c5006dc72ac68dc0572b7842b1f"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/prepared-model-runtime.plugin-generation-BhjdlyN-.mjs",
+      "sha256": "3da0db4af96b62dd475276106d5f78e38cfe0c4900cbc07b3639ff11ae644669",
+      "snapshot": "resources/simple-completion-runtime-scope-v1/snapshot-4",
+      "recognizedBefore": [
+        "0fcbd193646bcce3dd695603812ffe9bdaded3a3cc4e860fd5682c3bd173064a"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/runtime-plugins-CsYRgcd7.mjs",
+      "sha256": "b5a895dd6fcf4235c8df0eaf3e0e5eb15dec6767fdd9864cd805fdcf4e36b0c9",
+      "snapshot": "resources/simple-completion-runtime-scope-v1/snapshot-5",
+      "recognizedBefore": [
+        "3d3ee043c1b21843b8b7b5bb72830e850c292bf0acbede6145299897065bd2bc"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/embedded-agent-DsCaQmKI.mjs",
+      "mode": 436,
+      "syntax": "esm",
+      "sha256": "95b0f48637987b95223b4071d9d6d646cd4c0cf9aebe07173100198aae1ebb42",
+      "snapshot": "resources/qq-latency-boundaries-v4/snapshot-3",
+      "recognizedBefore": [
+        "1d3795b2f36ee04a9863a03b50fecb5669b50791fbc6485271c0a1203399eb83",
+        "f20437d75630c7e388ac6817fdcc72e3478e8c4f9be759b9287d99427ea08182"
+      ]
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/plugins/qq-group-owner-guard/qq-text-file-tool.mjs",
+      "syntax": "esm",
+      "mode": 420,
+      "sha256": "d15f982a8d7869b7e507ab8fabf8c25e1a91ad19eecdb34294528b9333caf013",
+      "snapshot": "resources/qq-text-file-capability-v3/snapshot-0",
+      "recognizedBefore": [
+        null
+      ]
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/plugins/qq-group-owner-guard/openclaw.plugin.json",
+      "syntax": "json",
+      "mode": 420,
+      "sha256": "2a8d70aa40cf10df9810cc2b2e6a1745660203b804d17b95672fd7589b30c0b1",
+      "snapshot": "resources/qq-text-file-capability-v3/snapshot-3",
+      "recognizedBefore": [
+        "73cf2cdcaa495e962a8e03ebdfc66a5f4e2d1bf323d268c059a542c4e805156f"
+      ]
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/plugins/qq-group-owner-guard/restart-requester-authority.mjs",
+      "syntax": "esm",
+      "mode": 420,
+      "sha256": "a77c50f2b1d84426c56161b3267eae137786a821cacc8fad15d01e6a42ecc5ce",
+      "snapshot": "resources/qq-dm-restart-authority-v4/snapshot-0",
+      "recognizedBefore": [
+        null,
+        "b33768654069f94bb9f6162417a0854e8f6a431f9e34ed5d0c10cd9cf4b99fd8"
+      ]
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/restart-recovery-state-DXIMXTjg.mjs",
+      "syntax": "esm",
+      "mode": 436,
+      "sha256": "9bf46e0a3a47a5f02acf30b47dea1abe5a082a5205e099dfa0b61a3908f7d9d6",
+      "snapshot": "resources/qq-dm-restart-authority-v2/snapshot-5",
+      "recognizedBefore": [
+        "1f986839d257e1a3cc761070ef25273f89e873567264804cbdaea99ebc4afb16"
+      ]
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/agent-turn-service-DTertIom.mjs",
+      "syntax": "esm",
+      "mode": 436,
+      "sha256": "23b050ce8d53551a412dec52ba15ce52a8e6761db46c271856b753ec6f630130",
+      "snapshot": "resources/qq-dm-restart-authority-v4/snapshot-1",
+      "recognizedBefore": [
+        "88972f371e7790af0cb86164b6c2313bdf30a862575c0c74eed29723f865ca33",
+        "af3fe97e4901b4edb2f4f6d23c473f41430134b26c20cf48e4d3c74e91047fd7"
+      ]
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/session-cY6eTKvB.mjs",
+      "syntax": "esm",
+      "mode": 436,
+      "sha256": "334406a71780f2681242da9f0a4008d3753555373103305ed614433452c1097f",
+      "snapshot": "resources/qq-dm-restart-authority-v2/snapshot-7",
+      "recognizedBefore": [
+        "6a85b5df84997b8a692c11fb02708edb2d3a8cf25d7ffe40dd8b43b8063baac0"
+      ]
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/session-entry-slot-keys-CUiZdkL7.mjs",
+      "syntax": "esm",
+      "mode": 436,
+      "sha256": "0e43ca98e9edbdeeed522b1853fb9b426b05c2f3efd34cf8d9b19888214b325a",
+      "snapshot": "resources/qq-dm-restart-authority-v2/snapshot-8",
+      "recognizedBefore": [
+        "adb296eaecd55f35ea025db63af3aff646820969ea1d693476792013e146c1f8"
+      ]
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/main-session-recovery-clear-BczELu-B.mjs",
+      "syntax": "esm",
+      "mode": 436,
+      "sha256": "fbe8c9cd5a1d8b3b8c22a4f1e12edbeb5a85b37e1c048f38eb1000d5dda41426",
+      "snapshot": "resources/qq-dm-restart-authority-v2/snapshot-9",
+      "recognizedBefore": [
+        "ba2bf263f897a47409122d91a727a7af7a74e619f78f7aaa4da8284f9745da47"
+      ]
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/chat-send-handler-EwrCzZoZ.mjs",
+      "syntax": "esm",
+      "mode": 436,
+      "sha256": "0245ba9c4ad790fd7a94ec79fc231f42d403344d42920abdcb479c2c9adfc03e",
+      "snapshot": "resources/qq-dm-restart-authority-v2/snapshot-10",
+      "recognizedBefore": [
+        "3035262ea9911cd376d0149dd5411da478746f97c6fe421013ad8be75b089c76"
+      ]
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/npm/projects/openclaw-codex-8902d781d4__openclaw-generation__g-8b0d230c729a2812/node_modules/@openclaw/codex/dist/.setup/qq-compact-skill-catalog.mjs",
+      "syntax": "esm",
+      "mode": 420,
+      "sha256": "8cbd1faa6b30fb2c8a4d64ecc32fb63d65a2485d881c165371b969e7847cadba",
+      "snapshot": "resources/qq-context-slim-v3/snapshot-2",
+      "recognizedBefore": [
+        null
+      ]
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/npm/projects/openclaw-codex-8902d781d4__openclaw-generation__g-8b0d230c729a2812/node_modules/@openclaw/codex/dist/.setup/scoped-tool-result-archive.mjs",
+      "syntax": "esm",
+      "mode": 384,
+      "sha256": "6a85388871718bef68a3c7533c0c5bf3c75fb3dc6e46f6ab9f4e42f47010540a",
+      "snapshot": "resources/qq-context-slim-v3/snapshot-6",
+      "recognizedBefore": [
+        null
+      ]
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/dispatch-DiXuntoC.mjs",
+      "syntax": "esm",
+      "mode": 436,
+      "sha256": "90513b2e507309fdd5d5311dc9e7c187d0debb564d260a0437b8be83deb55776",
+      "snapshot": "resources/qq-claude-latency-opt-v2/snapshot-3",
+      "recognizedBefore": [
+        "70cc38d2e4d417ded359fa33a65236db6d7bb0a2b4dc5780e15ffb023594d5ff",
+        "09419b9f1bf13621b1e5a6bed3057c0d8e285e39782f5dee8fb09c853e155097"
+      ]
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/qq-host-latency-trace.mjs",
+      "syntax": "esm",
+      "mode": 420,
+      "sha256": "6c735e701041527bac10aca2d2f353195560dc1b483c632e8d4a978fc588527e",
+      "snapshot": "resources/qq-claude-latency-opt-v2/snapshot-5",
+      "recognizedBefore": [
+        null,
+        "30c4a543049e87acfa36b3af1caf06f0bedecf8b5a5223609897d75c0fd677e0",
+        "a87c85bf0cf82d2c066576b411ec2f48b9434e0559f3ab4aaa59ec04bc02cd4b",
+        "58c43d886d0bb71ceb596c043a98550aafed2122e81bf1692472b630d0f92379"
+      ]
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/qq-latency-trace.mjs",
+      "syntax": "esm",
+      "mode": 420,
+      "sha256": "6898992018477110f3fc960bf707dc2369036363d70c7fe43485353a892f27a2",
+      "snapshot": "resources/qq-latency-boundaries-v4/snapshot-7",
+      "recognizedBefore": [
+        null
+      ]
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/session-entry-handle-BRPwkXaJ.mjs",
+      "syntax": "esm",
+      "mode": 436,
+      "sha256": "3cc1a4da1b0cf0386ce898756d593efd558c58917e1ac5d9f58615e14f893efd",
+      "snapshot": "resources/qq-latency-followup-v1/snapshot-4",
+      "recognizedBefore": [
+        "56cb00ada710584745f33519b1b766c1f24f0e9f318e3a2a37a2fa4467afae21",
+        "8bc7a84a2c87b07c95096145cfdcd9a19d93e800124d4cbcac2d3b2ddc12bda4"
+      ]
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/stage-timing-BUG4Fnsv.mjs",
+      "syntax": "esm",
+      "mode": 436,
+      "sha256": "28a885eb413f4947df460ebb6dd9d0598ee546a823414480ea5d5dac00036bd8",
+      "snapshot": "resources/qq-latency-boundaries-v4/snapshot-9",
+      "recognizedBefore": [
+        "1d8cfb8dd0717d5198b6cd0ee4a821175a92bcab254ce2ae72b73dc77ad11a38"
+      ]
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/npm/projects/openclaw-codex-8902d781d4__openclaw-generation__g-8b0d230c729a2812/node_modules/@openclaw/codex/dist/.setup/qq-native-latency-timing.mjs",
+      "syntax": "esm",
+      "mode": 420,
+      "sha256": "dd8560e7f56aa7aaee38289fb24f62eb8ab88e431858726a5897044ff82c06aa",
+      "snapshot": "resources/qq-latency-deep-dive-v1/snapshot-5",
+      "recognizedBefore": [
+        null,
+        "70fa28e472ded8e8327f22713015127b8a015905a596169386a67ba8d4635402",
+        "b75e384086a4f61a627c69cf5aa21a5c29b5ef0f1ade19ea39af330931ad6ab6"
+      ]
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/npm/projects/openclaw-codex-8902d781d4__openclaw-generation__g-8b0d230c729a2812/node_modules/@openclaw/codex/dist/.setup/qq-latency-trace.mjs",
+      "syntax": "esm",
+      "mode": 420,
+      "sha256": "6898992018477110f3fc960bf707dc2369036363d70c7fe43485353a892f27a2",
+      "snapshot": "resources/qq-latency-boundaries-v4/snapshot-14",
+      "recognizedBefore": [
+        null
+      ]
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/coordinator-CylDxma1.mjs",
+      "syntax": "esm",
+      "mode": 436,
+      "sha256": "75e365de51f9d8c15b4981b1063ec0ae374d4544002c1af7b7f6f1bb18efdbaf",
+      "snapshot": "resources/qq-latency-followup-v1/snapshot-0",
+      "recognizedBefore": [
+        "f983a41b5761833ae1b44cf5eb91a816b01ed4b0bfb1ee5886ba3c1e9d44ce13"
+      ]
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/session-accessor.sqlite-entry-C87Sde4p.mjs",
+      "syntax": "esm",
+      "mode": 436,
+      "sha256": "cb737488e44994de39df4379b667ce061b30216610311d8dffb6a497d44e56ca",
+      "snapshot": "resources/qq-latency-deep-dive-v1/snapshot-2",
+      "recognizedBefore": [
+        "10ce248e344c33316e34f1030a4ac4d5542463f77df068536c54e8d672d48dc7",
+        "15cb26aed4f27a606d590819ed236a5d56e40b262090a43094e8099c7f30c40d"
+      ]
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/session-lifecycle-admission-6HF8YqSN.mjs",
+      "syntax": "esm",
+      "mode": 436,
+      "sha256": "25136a87149a5f5271ab0ac700eda9c28cf9b8372a64fb95f15bb3b3012cddad",
+      "snapshot": "resources/qq-latency-followup-v1/snapshot-5",
+      "recognizedBefore": [
+        "93771a8cecba15c20d9b8bd89859cd770301ecc6e991af30cd2d1a61a51cd8db"
+      ]
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/openclaw-agent-execution-C4GB-NRD.mjs",
+      "syntax": "esm",
+      "mode": 436,
+      "sha256": "c383a48e2e131af3695c5ded851300b4b44c73c1b187450abfbc0ec5898e2366",
+      "snapshot": "resources/qq-latency-deep-dive-v1/snapshot-0",
+      "recognizedBefore": [
+        "31566ec350dfc2f23e8d9aa1e6e82bd3f4c0e1dc34f61554728a2cd6be5acfb5"
+      ]
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/sqlite-worker-store-DNLj-iuz.mjs",
+      "syntax": "esm",
+      "mode": 436,
+      "sha256": "6001937787d0b6d85a98304599a1da859cfe273d011e012d37220f811bebaf3f",
+      "snapshot": "resources/qq-latency-deep-dive-v1/snapshot-3",
+      "recognizedBefore": [
+        "32978bbd053f5c7b104518dc97c6d43b9969faa07790f6d524534b522efd3739"
+      ]
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/index.js",
+      "syntax": "esm",
+      "mode": 509,
+      "sha256": "ed465d317e14f9c1b6efbe9e9c16cb1dff9ca35c39b89a5976af79a233dfd51d",
+      "snapshot": "resources/qq-entry-worker-cache-v4/snapshot-0",
+      "recognizedBefore": [
+        "d0a285a7d6244e192d469f2ad5ff4af2e1681e3383b9bc89cb93af1de2971cdf"
+      ]
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/node-compile-cache-env-ClGKcLRy.mjs",
+      "syntax": "esm",
+      "mode": 436,
+      "sha256": "b0901bb65bc1cc95ef0377e940be0959f3035481b00a0cfc369e46a1c22dc51b",
+      "snapshot": "resources/qq-entry-worker-cache-v4/snapshot-1",
+      "recognizedBefore": [
+        "35b1efde271759862531daaf09b61c94879205cc9a9c640a6576e942e91c762e"
+      ]
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/session-transcript-worker-resources-DLvHY0vJ.mjs",
+      "syntax": "esm",
+      "mode": 436,
+      "sha256": "f214f8e07a2042e0135c9e6a1e9b55ce2e0c7e6a478a0055ab3202480f96dcad",
+      "snapshot": "resources/qq-entry-worker-cache-v4/snapshot-3",
+      "recognizedBefore": [
+        "96f8df7c060e496701f462433cc06351bc41896bdb0b550cac8ab5ca9e35e0c8"
+      ]
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/extensions/anthropic/cli.runtime.js",
+      "sha256": "44e4c4a1d5f1688ce8424ad470a2922ff39c834dd5acc62122c40ba905d29c3d",
+      "snapshot": "resources/qq-claude-group-compat-v1/snapshot-0",
+      "recognizedBefore": [
+        "175c1f6492c7320a354fed331ddd2437c28af821d53b67cd216fb97ec44770f0"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/execute.runtime-BlvImd0-.mjs",
+      "sha256": "38e793b754697dfe475c75a7b903e49918a34d5414f006387ba6c2bee15a9a55",
+      "snapshot": "resources/qq-claude-group-compat-v2/snapshot-2",
+      "recognizedBefore": [
+        "67cac60ff969c7daa921460088eb59ddd9950f875bbbb6f9715d6f3e9028f032",
+        "5c9b8cd2950b70943fff2d276bb35c1bc39e57626f0f2bf4695672b0c2f3793f"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/mcp-grant-context-BX7efeWf.mjs",
+      "sha256": "928afe9a3d001a2f853284f4aa94724e0d9a782978fe73cde8c7fa3aafe23c00",
+      "snapshot": "resources/qq-claude-group-compat-v2/snapshot-0",
+      "recognizedBefore": [
+        "b51bec820d2c6aca2fc490be0fd3a1b7ce9ffae148690b2d5093ceec4334b730",
+        "531f20d200e267e127063bb179769f306655bc6c206a911b686c2740032a1a0d"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/mcp-http-CM8OLJ7U.mjs",
+      "sha256": "0ff2cfa196cf67dab1af79921589bcc2105ae4ed6bcc11376452cdfa10ae05ce",
+      "snapshot": "resources/qq-claude-group-compat-v1/snapshot-3",
+      "recognizedBefore": [
+        "ac8ae03d77d6e5c58ef2d040c69f17828233aee79cb3dd0aeaa0cfb3fbd0c75d"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/mcp-http.runtime-C0W84mMK.mjs",
+      "sha256": "7364563c1f5c6b25d506d90fabc6a7ed82601886f25b8d74b4acca3a00bef97d",
+      "snapshot": "resources/qq-claude-latency-opt-v2/snapshot-7",
+      "recognizedBefore": [
+        "3cef82faf986fe65e79048d230abbf66c2639e2d58c09473cd2bdc081c8e824b",
+        "7cd7603b156f6043f97e846bdf4e4ec57677a4a24143513f3c040a95729f4c31",
+        "1a0946e8d2e218b486afc13fa4e35c233dc6a8816f4bb0afb54788c2013fcb8a"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/tool-resolution-CStAFkPx.mjs",
+      "sha256": "8b2ba266b4676e96a9c7a4f2bcf1677fcdaa855edd096ad5836804e29db6b785",
+      "snapshot": "resources/qq-claude-group-compat-v1/snapshot-5",
+      "recognizedBefore": [
+        "45b90e88022eb20d7ccfe04f8f3fca446e7451242d40222877d5427ef633afe2"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/prepare.runtime-D_2b2gwh.mjs",
+      "sha256": "60106ae091a40e3a3ac4453075e9360a2069d7aac98b4b999d1781c8f61e86b3",
+      "snapshot": "resources/controlled-media-inspection-compat-v1/0abcd76a-794b-40e2-ba67-ad6dc020bdfd/us-qq-media-stop-20261020-v9-60106ae091a40e3a3ac4453075e9360a2069d7aac98b4b999d1781c8f61e86b3-009.mjs",
+      "recognizedBefore": [
+        "467062df4dd6154c7c9a90573420f5f08b390933559d3443bab5e2474430855b",
+        "605f5ca5853c652cdd644c453769f5848b1602c5f0117442eee25fe3cc3401b7",
+        "1a002c417cb522457a2af88032e0c246189ecb78935c0f3232b6bb4e2f5f346e"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/qq-claude-host-prep-timing.mjs",
+      "sha256": "44b0b26cbd2d08b60c4e0de369b883f3fc9a10657719ea3034708e42e1cae5aa",
+      "snapshot": "resources/qq-claude-group-compat-v2/snapshot-4",
+      "recognizedBefore": [
+        null
+      ],
+      "syntax": "esm",
+      "mode": 420
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/workspace/group-rules/qqbot-shared.md",
+      "sha256": "cd42ad8aa63e774d8c40c8f8f4e05441ed59db941687a1c4b2fd9bdd3ec92f87",
+      "snapshot": "resources/qq-more-participation-v2/snapshot-2",
+      "recognizedBefore": [
+        "637181889991f99142b5ea5a35f66c552544c1d88c8e978de6d4bcfce16f807c"
+      ],
+      "syntax": "text",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/context-engine-maintenance-DKbclwGZ.mjs",
+      "sha256": "a5f4f84da3e203b1430ad204e9c869f7d9eccc291f26516d89ddcb53ec1d03cc",
+      "snapshot": "resources/qq-claude-latency-opt-v2/snapshot-1",
+      "recognizedBefore": [
+        "a6b20cf4d832983aa676c63db2592a62b39818be8cbb5f13d21e5e2c8028c847"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/qq-claude-memory-prefetch-bridge.mjs",
+      "sha256": "252c89801df65119c1353a2f1810cfdd0321b4eef682f73f5d44761dc64d0c1b",
+      "snapshot": "resources/hosino-20261020-registered/snapshot-5",
+      "recognizedBefore": [
+        null,
+        "6719f78336478342c726bca9ffd76d5f3291e92ec7a48cba2e3e6188f696b4ec"
+      ],
+      "syntax": "esm",
+      "mode": 420
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/computer-tool-C2ukNywl.mjs",
+      "sha256": "a89202d709852c9d3d471f8b7c53205a75600c1b542d736ebee164324a93a79a",
+      "snapshot": "resources/qq-claude-latency-opt-v2/snapshot-6",
+      "recognizedBefore": [
+        "3b1dcb5e42ff71636b5717b390f439fd160165474716e9545d54e5c10f44405a"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/node-exec-availability-Vy5vF0ta.mjs",
+      "sha256": "86a89eaaf724ebd5b48ff1ce29918869330b1baeba5d0b128e144dde5175191e",
+      "snapshot": "resources/qq-claude-latency-opt-v2/snapshot-8",
+      "recognizedBefore": [
+        "ee39d4e343f9be0d768f1d7f061a214e08079914cba08ace671bf4d94118299e"
+      ],
+      "syntax": "esm",
+      "mode": 436
+    },
+    {
+      "target": "/home/ubuntu/.openclaw/npm/projects/tencent-connect-openclaw-qqbot-a7ec020d86__openclaw-generation__g-b97d26bd0d7f19d9/node_modules/@tencent-connect/openclaw-qqbot/dist/qq-explicit-stop.cjs",
+      "mode": 420,
+      "syntax": "cjs",
+      "recognizedBefore": [
+        null
+      ],
+      "sha256": "950d0c3fbf58e044b2440bdedc176fec1f459d23ed16e7df228ded4b971a63d4",
+      "snapshot": "resources/controlled-media-inspection-compat-v1/0abcd76a-794b-40e2-ba67-ad6dc020bdfd/us-qq-media-stop-20261020-v9-950d0c3fbf58e044b2440bdedc176fec1f459d23ed16e7df228ded4b971a63d4-004.cjs"
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/qq-explicit-stop.cjs",
+      "mode": 420,
+      "syntax": "cjs",
+      "recognizedBefore": [
+        null
+      ],
+      "sha256": "950d0c3fbf58e044b2440bdedc176fec1f459d23ed16e7df228ded4b971a63d4",
+      "snapshot": "resources/controlled-media-inspection-compat-v1/0abcd76a-794b-40e2-ba67-ad6dc020bdfd/us-qq-media-stop-20261020-v9-950d0c3fbf58e044b2440bdedc176fec1f459d23ed16e7df228ded4b971a63d4-005.cjs"
+    },
+    {
+      "target": "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/openclaw-tools-BwWTN0hs.mjs",
+      "mode": 436,
+      "syntax": "esm",
+      "recognizedBefore": [
+        "ea5a9c72c98e0012b2098c40b34f8de0e721ad520cda0594b902879036e1630f"
+      ],
+      "sha256": "a5bc4c564f6d6192bd6e199011bef7e0fc0d5e6ada9e4d16ef40e7aa7e40492b",
+      "snapshot": "resources/controlled-media-inspection-compat-v1/0abcd76a-794b-40e2-ba67-ad6dc020bdfd/us-qq-media-stop-20261020-v9-a5bc4c564f6d6192bd6e199011bef7e0fc0d5e6ada9e4d16ef40e7aa7e40492b-008.mjs"
+    }
+  ],
+  "repairRequiredSmokeChecks": [
+    "gateway_ready",
+    "qq_ready",
+    "mem0_loaded",
+    "guard_loaded",
+    "stable_tools",
+    "native_history",
+    "controlled_jobs_ready",
+    "host_process_origin",
+    "image_output_contract",
+    "scoped_prefetch_current_source",
+    "fallback_continuation_contract",
+    "media_process_states",
+    "natural_voice_only",
+    "mem0_daily_current",
+    "maintenance_compatibility_state",
+    "image_cache_integrity",
+    "process_kind_truthful",
+    "xai_simple_stream_headers",
+    "heartbeat_catalog_scope",
+    "native_compaction_cleanup_custody",
+    "simple_completion_runtime_scope",
+    "dual_group_optimization_scope",
+    "li_dm_admission_scope",
+    "qq_scoped_recall_deadline",
+    "controlled_submit_guidance",
+    "qq_native_off_minimum",
+    "capacity_retry_boundary",
+    "direct_command_public_status",
+    "ordinary_group_text_file_boundary",
+    "ordinary_group_text_file_delivery",
+    "ordinary_group_text_file_manifest_discovery",
+    "ordinary_group_text_file_host_context",
+    "dm_guard_decision_parity",
+    "dm_refusal_scope_truthful",
+    "dm_authority_metadata_redacted",
+    "dm_guard_diagnostics_loaded",
+    "qq_restart_original_source_capture",
+    "qq_restart_exact_claim_custody",
+    "qq_restart_private_authority_boundaries",
+    "qq_restart_integration_scope",
+    "qq_restart_core_slot_protected",
+    "qq_restart_source_lifecycle_cleanup",
+    "qq_private_fresh_source_owner_bridge",
+    "qq_private_fresh_source_revocation_and_scope",
+    "qq_restart_real_generation_contract",
+    "qq_restart_generation_fence_boundaries",
+    "context_skill_catalog_preserved",
+    "context_group_wrappers_scoped",
+    "context_tool_result_custody",
+    "context_authority_regression_retained",
+    "context_native_history_continuity",
+    "latency_trace_scope_privacy",
+    "latency_trace_exact_correlation",
+    "latency_trace_fail_open_bounded",
+    "latency_trace_business_parity",
+    "latency_trace_current_group_observation",
+    "latency_followup_scope_privacy",
+    "latency_followup_exact_correlation",
+    "latency_followup_fail_open_bounded",
+    "latency_followup_business_parity",
+    "latency_followup_current_group_observation",
+    "latency_deep_dive_scope_privacy",
+    "latency_deep_dive_exact_correlation",
+    "latency_deep_dive_fail_open_bounded",
+    "latency_deep_dive_business_parity",
+    "latency_deep_dive_current_group_observation",
+    "latency_history_reuse_scope_fresh_history_authority",
+    "latency_history_reuse_old_group_300s",
+    "latency_history_reuse_both_group_roundtrips",
+    "latency_startup_lifecycle_fixture",
+    "latency_startup_lifecycle_current_ready",
+    "latency_startup_lifecycle_jm_after_ready",
+    "latency_startup_lifecycle_normal_restart",
+    "latency_startup_lifecycle_both_group_roundtrips",
+    "latency_entry_worker_cache_entry_fixture",
+    "latency_entry_worker_cache_reader_fixture",
+    "latency_entry_worker_cache_current_main",
+    "latency_entry_worker_cache_current_reader",
+    "latency_entry_worker_cache_current_history_lane",
+    "latency_entry_worker_cache_both_group_roundtrips",
+    "bounded_ws_fixture_67",
+    "bounded_ws_current_health",
+    "bounded_ws_new_group_60s_reuse",
+    "bounded_ws_old_group_60s_reuse",
+    "cache_catalog_native_and_scheduler_51",
+    "cache_catalog_current_health",
+    "cache_catalog_new_owner_turn",
+    "cache_catalog_old_owner_turn",
+    "linux_compat_fixtures",
+    "gateway_qq_health",
+    "maintenance_inventory",
+    "owner_group_native_and_mcp_execution",
+    "claude_native_timing_real_turn",
+    "group_reply_delivery",
+    "linux_compat_v2_fixtures",
+    "gateway_qq_v2_health",
+    "maintenance_v2_inventory",
+    "two_group_full_schema_catalog_live",
+    "owner_member_execution_boundary_live",
+    "claude_host_prep_timing_real_turn",
+    "linux_compat_v3_fixtures",
+    "gateway_qq_v3_health",
+    "maintenance_v3_inventory",
+    "qq_literal_sentinel_and_emoji_delivery_live",
+    "qq_suppressed_metrics_semantics_live",
+    "qq_full_catalog_after_sdk_reload_live",
+    "linux_compat_v4_fixtures",
+    "gateway_qq_v4_health",
+    "maintenance_v4_inventory",
+    "qq_file_name_cache_live",
+    "qq_catalog_after_file_fix_reload_live",
+    "qq_text_and_emoji_after_file_fix_live",
+    "linux_qq_more_participation_v2_fixtures",
+    "gateway_qq_more_participation_v2_health",
+    "maintenance_qq_more_participation_v2_inventory",
+    "qq_two_group_public_participation_v2_live",
+    "linux_qq_claude_latency_opt_v2_fixtures",
+    "gateway_qq_claude_latency_opt_v2_health",
+    "maintenance_qq_claude_latency_opt_v2_inventory",
+    "qq_claude_memory_prefetch_bridge_v2_live",
+    "qq_claude_tool_inventory_and_sender_v2_live",
+    "qq_claude_core_route_timing_v2_live"
+  ],
+  "markerRegistry": [
+    {
+      "label": "TOOLS-EFFECTIVE-NONBLOCKING-PATCH v1",
+      "targets": [
+        "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/tools-effective-CvK1OSvA.mjs"
+      ],
+      "marker": "TOOLS-EFFECTIVE-NONBLOCKING-PATCH v1"
+    },
+    {
+      "label": "IMG-RESIZE-CACHE-PATCH v1",
+      "targets": [
+        "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/package-update-activation-recovery.mjs",
+        "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/tool-images-C_eAR31_.mjs"
+      ],
+      "marker": "IMG-RESIZE-CACHE-PATCH v1"
+    },
+    {
+      "label": "OVERSIZE-IMAGE-PATCH v1",
+      "targets": [
+        "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/package-update-activation-recovery.mjs",
+        "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/tool-images-C_eAR31_.mjs"
+      ],
+      "marker": "OVERSIZE-IMAGE-PATCH v1"
+    },
+    {
+      "label": "QQ-GROUP-SILENT-PATCH v2",
+      "targets": [
+        "/home/ubuntu/.openclaw/npm/projects/tencent-connect-openclaw-qqbot-a7ec020d86__openclaw-generation__g-b97d26bd0d7f19d9/node_modules/@tencent-connect/openclaw-qqbot/dist/index.cjs"
+      ],
+      "marker": "/* QQ-GROUP-SILENT-PATCH v2 */"
+    },
+    {
+      "label": "QQ-SEGMENT-PATCH v1",
+      "targets": [
+        "/home/ubuntu/.openclaw/npm/projects/tencent-connect-openclaw-qqbot-a7ec020d86__openclaw-generation__g-b97d26bd0d7f19d9/node_modules/@tencent-connect/openclaw-qqbot/dist/index.cjs"
+      ],
+      "marker": "/* QQ-SEGMENT-PATCH v1 */"
+    },
+    {
+      "label": "QQ-MEDIA-TAG-PATCH v1",
+      "targets": [
+        "/home/ubuntu/.openclaw/npm/projects/tencent-connect-openclaw-qqbot-a7ec020d86__openclaw-generation__g-b97d26bd0d7f19d9/node_modules/@tencent-connect/openclaw-qqbot/dist/index.cjs"
+      ],
+      "marker": "/* QQ-MEDIA-TAG-PATCH v1 */"
+    },
+    {
+      "label": "QQ-UPLOAD-CACHE v1 + MEDIA-TAG v1.1",
+      "targets": [
+        "/home/ubuntu/.openclaw/npm/projects/tencent-connect-openclaw-qqbot-a7ec020d86__openclaw-generation__g-b97d26bd0d7f19d9/node_modules/@tencent-connect/openclaw-qqbot/dist/index.cjs"
+      ],
+      "marker": "QQ-UPLOAD-CACHE-PATCH v1"
+    },
+    {
+      "label": "QQ-JM-BUTTON-PATCH v4",
+      "targets": [
+        "/home/ubuntu/.openclaw/npm/projects/tencent-connect-openclaw-qqbot-a7ec020d86__openclaw-generation__g-b97d26bd0d7f19d9/node_modules/@tencent-connect/openclaw-qqbot/dist/index.cjs"
+      ],
+      "marker": "QQ-JM-BUTTON-PATCH v4"
+    },
+    {
+      "label": "mem0ai Qdrant query() fix",
+      "targets": [
+        "/home/ubuntu/.openclaw/npm/projects/mem0-openclaw-mem0-09729737ad/node_modules/mem0ai/dist/oss/index.mjs"
+      ],
+      "marker": "this.client.query(this.collectionName"
+    },
+    {
+      "label": "MEM0-RECALL-PATCH v1",
+      "targets": [
+        "/home/ubuntu/.openclaw/npm/projects/mem0-openclaw-mem0-09729737ad/node_modules/@mem0/openclaw-mem0/dist/index.js"
+      ],
+      "marker": "MEM0-RECALL-PATCH v1"
+    },
+    {
+      "label": "MEM0-RECALL-PATCH v2",
+      "targets": [
+        "/home/ubuntu/.openclaw/npm/projects/mem0-openclaw-mem0-09729737ad/node_modules/@mem0/openclaw-mem0/dist/index.js"
+      ],
+      "marker": "MEM0-RECALL-PATCH v2:"
+    },
+    {
+      "label": "MEM0-RECALL-PATCH v2 warmup",
+      "targets": [
+        "/home/ubuntu/.openclaw/npm/projects/mem0-openclaw-mem0-09729737ad/node_modules/@mem0/openclaw-mem0/dist/index.js"
+      ],
+      "marker": "MEM0-RECALL-PATCH v2 warmup"
+    },
+    {
+      "label": "PARALLEL-RECALL-PATCH v1",
+      "targets": [
+        "/home/ubuntu/.openclaw/npm/projects/mem0-openclaw-mem0-09729737ad/node_modules/@mem0/openclaw-mem0/dist/index.js"
+      ],
+      "marker": "PARALLEL-RECALL-PATCH v1"
+    },
+    {
+      "label": "QQ-GROUP-UNIFIED-TOOLS-PATCH v1",
+      "targets": [
+        "/home/ubuntu/.openclaw/npm/projects/openclaw-codex-8902d781d4__openclaw-generation__g-8b0d230c729a2812/node_modules/@openclaw/codex/dist/.setup/dynamic-tools-Db2sY5cZ.mjs",
+        "/home/ubuntu/.openclaw/npm/projects/openclaw-codex-8902d781d4__openclaw-generation__g-8b0d230c729a2812/node_modules/@openclaw/codex/dist/.setup/run-attempt-dYJhjZrp.mjs"
+      ],
+      "marker": "QQ-GROUP-UNIFIED-TOOLS-PATCH v1"
+    },
+    {
+      "label": "TOOLS-EFFECTIVE-CACHE-PATCH v1",
+      "targets": [
+        "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/tools-effective-CvK1OSvA.mjs"
+      ],
+      "marker": "TOOLS-EFFECTIVE-CACHE-PATCH v1"
+    },
+    {
+      "label": "IMAGE-REPLAY-CACHE-PATCH v1",
+      "targets": [
+        "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/images-B_8zJlPf.mjs",
+        "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/package-update-activation-recovery.mjs"
+      ],
+      "marker": "IMAGE-REPLAY-CACHE-PATCH v1"
+    },
+    {
+      "label": "QQ-GROUP-STEER-INGRESS-PATCH v1",
+      "targets": [
+        "/home/ubuntu/.openclaw/npm/projects/tencent-connect-openclaw-qqbot-a7ec020d86__openclaw-generation__g-b97d26bd0d7f19d9/node_modules/@tencent-connect/openclaw-qqbot/dist/index.cjs"
+      ],
+      "marker": "QQ-GROUP-STEER-INGRESS-PATCH v1"
+    },
+    {
+      "label": "QQ-GROUP-STEER-AUTH-PATCH v1",
+      "targets": [
+        "/home/ubuntu/.openclaw/plugins/qq-group-owner-guard/index.js"
+      ],
+      "marker": "QQ-GROUP-STEER-AUTH-PATCH v1"
+    },
+    {
+      "label": "QQ-REQUEST-TIMING-PATCH v1",
+      "targets": [
+        "/home/ubuntu/.openclaw/npm/projects/tencent-connect-openclaw-qqbot-a7ec020d86__openclaw-generation__g-b97d26bd0d7f19d9/node_modules/@tencent-connect/openclaw-qqbot/dist/index.cjs"
+      ],
+      "marker": "QQ-REQUEST-TIMING-PATCH v1"
+    },
+    {
+      "label": "CODEX-WS-REUSE-PATCH v1",
+      "targets": [
+        "/home/ubuntu/.openclaw/npm/projects/openclaw-codex-8902d781d4__openclaw-generation__g-8b0d230c729a2812/node_modules/@openclaw/codex/dist/.setup/inference-proxy-DhcXOgUE.mjs"
+      ],
+      "marker": "CODEX-WS-REUSE-PATCH v1"
+    },
+    {
+      "label": "QQ-FAST-FIRST-SENTENCE-PATCH v1",
+      "targets": [
+        "/home/ubuntu/.openclaw/npm/projects/tencent-connect-openclaw-qqbot-a7ec020d86__openclaw-generation__g-b97d26bd0d7f19d9/node_modules/@tencent-connect/openclaw-qqbot/dist/index.cjs"
+      ],
+      "marker": "QQ-FAST-FIRST-SENTENCE-PATCH v1"
+    },
+    {
+      "label": "QQ-EARLY-MESSAGE-HOOK-OWNERSHIP v2",
+      "targets": [
+        "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/agent-tool-definition-adapter-DhVQiLqj.mjs"
+      ],
+      "marker": "QQ-EARLY-MESSAGE-HOOK-OWNERSHIP v2"
+    },
+    {
+      "label": "QQ-SEGMENT-BLOCK-RECONCILE-PATCH v1",
+      "targets": [
+        "/home/ubuntu/.openclaw/npm/projects/tencent-connect-openclaw-qqbot-a7ec020d86__openclaw-generation__g-b97d26bd0d7f19d9/node_modules/@tencent-connect/openclaw-qqbot/dist/index.cjs"
+      ],
+      "marker": "QQ-SEGMENT-BLOCK-RECONCILE-PATCH v1"
+    },
+    {
+      "label": "QQ-IMAGE-DIRECT-COMPLETION worker",
+      "targets": [
+        "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/server-restart-sentinel-CzWy_UqH.mjs"
+      ],
+      "marker": "QQ-IMAGE-DIRECT-COMPLETION-PATCH v1"
+    },
+    {
+      "label": "QQ-IMAGE-DIRECT-COMPLETION producer",
+      "targets": [
+        "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/subagent-announce-delivery-CoOIdkBH.mjs"
+      ],
+      "marker": "QQ-IMAGE-DIRECT-COMPLETION-PATCH v1"
+    },
+    {
+      "label": "QQ-IMAGE-DIRECT-COMPLETION recovery",
+      "targets": [
+        "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/package-update-activation-recovery.mjs"
+      ],
+      "marker": "QQ-IMAGE-DIRECT-COMPLETION-PATCH v1"
+    },
+    {
+      "label": "QQ-TOOL-PATH-PATCH v1",
+      "targets": [
+        "/home/ubuntu/.openclaw/plugins/qq-group-followup-gate/index.js",
+        "/home/ubuntu/.openclaw/plugins/qq-group-followup-gate/qq-tool-path-hint.mjs"
+      ],
+      "marker": "QQ-TOOL-PATH-PATCH v1"
+    },
+    {
+      "label": "CODEX-LATENCY456 ws",
+      "targets": [
+        "/home/ubuntu/.openclaw/npm/projects/openclaw-codex-8902d781d4__openclaw-generation__g-8b0d230c729a2812/node_modules/@openclaw/codex/dist/.setup/inference-proxy-DhcXOgUE.mjs",
+        "/home/ubuntu/.openclaw/npm/projects/openclaw-codex-8902d781d4__openclaw-generation__g-8b0d230c729a2812/node_modules/@openclaw/codex/dist/.setup/inference-dispatch-CMZtjQyz.mjs",
+        "/home/ubuntu/.openclaw/npm/projects/openclaw-codex-8902d781d4__openclaw-generation__g-8b0d230c729a2812/node_modules/@openclaw/codex/dist/.setup/inference-metadata-CgIf7sOx.mjs",
+        "/home/ubuntu/.openclaw/npm/projects/openclaw-codex-8902d781d4__openclaw-generation__g-8b0d230c729a2812/node_modules/@openclaw/codex/dist/.setup/ws-lifecycle-diagnostics.mjs"
+      ],
+      "marker": "CODEX-LATENCY456-PATCH v1"
+    },
+    {
+      "label": "CODEX-LATENCY456 prepare",
+      "targets": [
+        "/home/ubuntu/.openclaw/npm/projects/openclaw-codex-8902d781d4__openclaw-generation__g-8b0d230c729a2812/node_modules/@openclaw/codex/dist/.setup/run-attempt-dYJhjZrp.mjs",
+        "/home/ubuntu/.openclaw/npm/projects/openclaw-codex-8902d781d4__openclaw-generation__g-8b0d230c729a2812/node_modules/@openclaw/codex/dist/.setup/preparation-leaf-timing.mjs"
+      ],
+      "marker": "CODEX-LATENCY456-PATCH v1"
+    },
+    {
+      "label": "CODEX-LATENCY456 compact",
+      "targets": [
+        "/home/ubuntu/.openclaw/npm/projects/openclaw-codex-8902d781d4__openclaw-generation__g-8b0d230c729a2812/node_modules/@openclaw/codex/dist/.setup/thread-requests-OWGOiDaV.mjs",
+        "/home/ubuntu/.openclaw/npm/projects/openclaw-codex-8902d781d4__openclaw-generation__g-8b0d230c729a2812/node_modules/@openclaw/codex/dist/.setup/thread-lifecycle-_bAbjedG.mjs",
+        "/home/ubuntu/.openclaw/npm/projects/openclaw-codex-8902d781d4__openclaw-generation__g-8b0d230c729a2812/node_modules/@openclaw/codex/dist/.setup/qq-native-auto-compact.mjs"
+      ],
+      "marker": "CODEX-LATENCY456-PATCH v1"
+    },
+    {
+      "label": "QQ-SEARCH-SOURCES-HINT-PATCH v1",
+      "targets": [
+        "/home/ubuntu/.openclaw/plugins/qq-group-followup-gate/qq-tool-path-hint.mjs"
+      ],
+      "marker": "QQ-SEARCH-SOURCES-HINT-PATCH v1"
+    },
+    {
+      "label": "BAIDU-SEARCH-SOURCES-PATCH v1",
+      "targets": [
+        "/home/ubuntu/.openclaw/workspace/scripts/baidu_search.py"
+      ],
+      "marker": "qianfan.baidubce.com/v2/ai_search/web_search"
+    },
+    {
+      "label": "MEDIA-LATENCY-FIX v1",
+      "targets": [
+        "/home/ubuntu/.openclaw/plugins/qq-group-followup-gate/qq-tool-path-hint.mjs",
+        "/home/ubuntu/.openclaw/workspace/scripts/xingye_tts.py"
+      ],
+      "marker": "MEDIA-LATENCY-FIX v1"
+    },
+    {
+      "label": "QQ-NATIVE-QUEUE-ADAPTER-PATCH v1",
+      "targets": [
+        "/home/ubuntu/.openclaw/npm/projects/tencent-connect-openclaw-qqbot-a7ec020d86__openclaw-generation__g-b97d26bd0d7f19d9/node_modules/@tencent-connect/openclaw-qqbot/dist/index.cjs"
+      ],
+      "marker": "QQ-NATIVE-QUEUE-ADAPTER-PATCH v1"
+    },
+    {
+      "label": "MEM0-QUERY-ENTITY-BATCH-PATCH v1",
+      "targets": [
+        "/home/ubuntu/.openclaw/npm/projects/mem0-openclaw-mem0-09729737ad/node_modules/mem0ai/dist/oss/index.mjs"
+      ],
+      "marker": "MEM0-QUERY-ENTITY-BATCH-PATCH v1"
+    },
+    {
+      "label": "MEM0-NO-BLOCKING-TELEMETRY v1",
+      "targets": [
+        "/home/ubuntu/.config/systemd/user/openclaw-gateway.service.d/90-mem0-no-telemetry.conf"
+      ],
+      "marker": "MEM0-NO-BLOCKING-TELEMETRY v1"
+    },
+    {
+      "label": "QQ-NATIVE-EXEC-LIFECYCLE-PATCH v1",
+      "targets": [
+        "/home/ubuntu/.openclaw/npm/projects/openclaw-codex-8902d781d4__openclaw-generation__g-8b0d230c729a2812/node_modules/@openclaw/codex/dist/.setup/run-attempt-dYJhjZrp.mjs",
+        "/home/ubuntu/.openclaw/npm/projects/openclaw-codex-8902d781d4__openclaw-generation__g-8b0d230c729a2812/node_modules/@openclaw/codex/dist/.setup/qq-native-exec-lifecycle.mjs"
+      ],
+      "marker": "QQ-NATIVE-EXEC-LIFECYCLE-PATCH v1"
+    },
+    {
+      "label": "QQ-HISTORY-IDLE-REUSE-PATCH v1",
+      "targets": [
+        "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/worker-task-pool-Cl1KhdJb.mjs",
+        "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/session-transcript-read-worker-runtime-Ey1OtD_0.mjs"
+      ],
+      "marker": "QQ-HISTORY-IDLE-REUSE-PATCH v1"
+    },
+    {
+      "label": "QQ-PREPARATION-PROFILE-PATCH v1",
+      "targets": [
+        "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/dispatch-from-config-Dph1dwRJ.mjs",
+        "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/get-reply-BV8KEWbF.mjs"
+      ],
+      "marker": "QQ-PREPARATION-PROFILE-PATCH v1"
+    },
+    {
+      "label": "QQ-CONTINUATION-LATENCY-FLAGS v1",
+      "targets": [
+        "/home/ubuntu/.config/systemd/user/openclaw-gateway.service.d/93-qq-continuation-latency.conf"
+      ],
+      "marker": "QQ-CONTINUATION-LATENCY-FLAGS v1"
+    },
+    {
+      "label": "QQ-TEXT-FILE-TOOL v1",
+      "targets": [
+        "/home/ubuntu/.openclaw/plugins/qq-group-owner-guard/qq-text-file-tool.mjs"
+      ],
+      "marker": "QQ-TEXT-FILE-TOOL v1"
+    },
+    {
+      "label": "HOSINO-CLI-ADMISSION v2",
+      "targets": [
+        "/home/ubuntu/.npm-global/lib/node_modules/openclaw/dist/qq-claude-memory-prefetch-bridge.mjs"
+      ],
+      "marker": "HOSINO-CLI-ADMISSION v2"
+    }
+  ],
+  "backupReports": [
+    {
+      "label": "openclaw.sqlite",
+      "bytes": 16666624,
+      "sha256": "1625c6a02cf5dc729353afa47141bf9869ed2340084e03896f0222f508ae2eff",
+      "quickCheck": "ok"
+    },
+    {
+      "label": "openclaw-agent.sqlite",
+      "bytes": 104509440,
+      "sha256": "10b58b0e1510d0dcae55b50aa311dd420705769ba8ac58f738bd9b4207222424",
+      "quickCheck": "ok"
+    },
+    {
+      "label": "state_5.sqlite",
+      "bytes": 36487168,
+      "sha256": "729e18961206e5c42928b2c0e94e54ca96a5863b3826b028a1dc79e8a20729f8",
+      "quickCheck": "ok"
+    },
+    {
+      "label": "thread_history_1.sqlite",
+      "bytes": 138502144,
+      "sha256": "bf794d6c73c3d9ef1ee9a3964ee1018575736612ef9262b797d25166edd95443",
+      "quickCheck": "ok"
+    }
+  ],
+  "note": "Authoritative composed runtime and maintenance bytes. Unknown upgrades require offline porting; runtime data excluded."
+}

@@ -1,0 +1,62 @@
+# toolcat recheck, gateway journal since 2026-10-20 21:06 SGT (pids 480852 then 498761 after 22:0x restart)
+EXEC 21:18:12 trigger=user session=688ab8f27ec4 reuse=reusable-drift:prompt-tools
+CAT 21:18:12 new captured owner=True toolCount=61 exec=61 fp=ddbc69ff182b epoch=e3d0b3ee nativeAuthPending=True
+EXEC 21:18:18 trigger=user session=0a51f2d856e4 reuse=reusable-drift:prompt-tools
+LAT 21:18:21 new reused=False executeTotalMs=9482 sessionRestartMs=0.252 outcome=completed
+EXEC 21:18:23 trigger=user session=10625d13c8b3 reuse=reusable-drift:prompt-tools
+EXEC 21:18:23 trigger=user session=688ab8f27ec4 reuse=reusable-drift:prompt-tools
+CAT 21:18:23 old captured owner=True toolCount=61 exec=61 fp=ddbc69ff182b epoch=03dd08fb nativeAuthPending=True
+CAT 21:18:24 new applied owner=False toolCount=61 exec=59 fp=ddbc69ff182b epoch=e3d0b3ee nativeAuthPending=True
+LAT 21:18:30 new reused=False executeTotalMs=6806 sessionRestartMs=476.903 outcome=completed
+LAT 21:18:30 old reused=False executeTotalMs=7310 sessionRestartMs=0.077 outcome=completed
+EXEC 21:18:32 trigger=user session=10625d13c8b3 reuse=reusable-drift:prompt-tools
+CAT 21:18:33 old applied owner=False toolCount=61 exec=59 fp=ddbc69ff182b epoch=03dd08fb nativeAuthPending=True
+LAT 21:18:37 old reused=False executeTotalMs=5003 sessionRestartMs=288.376 outcome=completed
+EXEC 21:19:27 trigger=user session=10625d13c8b3 reuse=reusable
+LAT 21:19:28 old reused=True executeTotalMs=1510 sessionRestartMs=None outcome=completed
+EXEC 21:19:36 trigger=user session=688ab8f27ec4 reuse=reusable
+EXEC 21:19:38 trigger=user session=10625d13c8b3 reuse=reusable
+LAT 21:19:38 new reused=True executeTotalMs=2053 sessionRestartMs=None outcome=completed
+CAT 21:19:40 old applied owner=False toolCount=61 exec=59 fp=ddbc69ff182b epoch=03dd08fb nativeAuthPending=False
+LAT 21:19:42 old reused=True executeTotalMs=3821 sessionRestartMs=None outcome=completed
+EXEC 21:19:44 trigger=user session=688ab8f27ec4 reuse=reusable
+CAT 21:19:47 new applied owner=False toolCount=61 exec=59 fp=ddbc69ff182b epoch=e3d0b3ee nativeAuthPending=False
+LAT 21:19:49 new reused=True executeTotalMs=5174 sessionRestartMs=None outcome=completed
+EXEC 21:28:58 trigger=heartbeat session=0a51f2d856e4 reuse=reusable-drift:prompt-tools
+EXEC 21:53:58 trigger=heartbeat session=0a51f2d856e4 reuse=reusable
+EXEC 22:15:39 trigger=user session=688ab8f27ec4 reuse=reusable-drift:prompt-tools
+CAT 22:15:40 new captured owner=True toolCount=61 exec=61 fp=ddbc69ff182b epoch=e3d0b3ee nativeAuthPending=True
+LAT 22:15:44 new reused=False executeTotalMs=4396 sessionRestartMs=0.309 outcome=completed
+EXEC 22:15:45 trigger=user session=688ab8f27ec4 reuse=reusable-drift:prompt-tools
+CAT 22:15:46 new applied owner=False toolCount=61 exec=59 fp=ddbc69ff182b epoch=e3d0b3ee nativeAuthPending=True
+LAT 22:15:51 new reused=False executeTotalMs=5971 sessionRestartMs=276.074 outcome=completed
+EXEC 22:16:08 trigger=user session=10625d13c8b3 reuse=reusable-drift:prompt-tools
+CAT 22:16:08 old captured owner=True toolCount=61 exec=61 fp=ddbc69ff182b epoch=03dd08fb nativeAuthPending=True
+LAT 22:16:12 old reused=False executeTotalMs=3858 sessionRestartMs=0.095 outcome=completed
+EXEC 22:16:15 trigger=user session=0a51f2d856e4 reuse=reusable-drift:prompt-tools
+EXEC 22:16:15 trigger=user session=10625d13c8b3 reuse=reusable-drift:prompt-tools
+CAT 22:16:16 old applied owner=False toolCount=61 exec=59 fp=ddbc69ff182b epoch=03dd08fb nativeAuthPending=True
+LAT 22:16:21 old reused=False executeTotalMs=5520 sessionRestartMs=308.371 outcome=completed
+EXEC 22:17:50 trigger=user session=10625d13c8b3 reuse=reusable-drift:prompt-tools
+CAT 22:17:51 old captured owner=True toolCount=61 exec=61 fp=ddbc69ff182b epoch=03dd08fb nativeAuthPending=True
+LAT 22:17:54 old reused=False executeTotalMs=3971 sessionRestartMs=465.096 outcome=completed
+EXEC 22:17:56 trigger=user session=10625d13c8b3 reuse=reusable-drift:prompt-tools
+CAT 22:17:57 old applied owner=False toolCount=61 exec=59 fp=ddbc69ff182b epoch=03dd08fb nativeAuthPending=True
+LAT 22:18:01 old reused=False executeTotalMs=4998 sessionRestartMs=260.911 outcome=completed
+EXEC 22:18:29 trigger=user session=10625d13c8b3 reuse=reusable-drift:prompt-tools
+CAT 22:18:29 old captured owner=True toolCount=61 exec=61 fp=ddbc69ff182b epoch=03dd08fb nativeAuthPending=True
+LAT 22:18:33 old reused=False executeTotalMs=4751 sessionRestartMs=207.566 outcome=completed
+EXEC 22:18:36 trigger=user session=10625d13c8b3 reuse=reusable-drift:prompt-tools
+CAT 22:18:37 old applied owner=False toolCount=61 exec=59 fp=ddbc69ff182b epoch=03dd08fb nativeAuthPending=True
+LAT 22:18:41 old reused=False executeTotalMs=5178 sessionRestartMs=302.548 outcome=completed
+EXEC 22:18:58 trigger=user session=10625d13c8b3 reuse=reusable-drift:prompt-tools
+CAT 22:18:58 old captured owner=True toolCount=61 exec=61 fp=ddbc69ff182b epoch=03dd08fb nativeAuthPending=True
+LAT 22:19:02 old reused=False executeTotalMs=3931 sessionRestartMs=293.642 outcome=completed
+EXEC 22:19:16 trigger=user session=10625d13c8b3 reuse=reusable
+LAT 22:19:19 old reused=True executeTotalMs=3574 sessionRestartMs=None outcome=completed
+EXEC 22:19:23 trigger=user session=10625d13c8b3 reuse=reusable-drift:prompt-tools
+CAT 22:19:23 old applied owner=False toolCount=61 exec=59 fp=ddbc69ff182b epoch=03dd08fb nativeAuthPending=True
+LAT 22:19:27 old reused=False executeTotalMs=4542 sessionRestartMs=225.975 outcome=completed
+EXEC 22:19:29 trigger=user session=10625d13c8b3 reuse=reusable
+CAT 22:19:31 old applied owner=False toolCount=61 exec=59 fp=ddbc69ff182b epoch=03dd08fb nativeAuthPending=False
+LAT 22:19:33 old reused=True executeTotalMs=3808 sessionRestartMs=None outcome=completed

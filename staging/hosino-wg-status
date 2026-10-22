@@ -1,0 +1,59 @@
+#!/usr/bin/python3 -I
+import sys, json, subprocess, time
+if len(sys.argv) != 1:
+    sys.stderr.write("no arguments accepted\n"); sys.exit(2)
+def mask_ep(e):
+    if not e or e == "(none)": return None
+    if e.startswith("["): return "[ipv6]:" + e.rsplit(":",1)[-1]
+    h, _, p = e.rpartition(":")
+    return h.split(".")[0] + ".x.x.x:" + p
+
+def sh(a, t=10):
+    try: return subprocess.run(a, capture_output=True, text=True, timeout=t, env={"PATH":"/usr/bin:/bin"}).stdout
+    except Exception: return ""
+def xray():
+    U="openclaw-xray-reality"; x={"unit":U}
+    kv=dict(l.split("=",1) for l in sh(["/usr/bin/systemctl","show",U,"-p","ActiveState,SubState,ActiveEnterTimestampMonotonic,NRestarts,MemoryCurrent,CPUUsageNSec,MainPID"]).splitlines() if "=" in l)
+    x["active"]=kv.get("ActiveState")=="active"; x["sub"]=kv.get("SubState")
+    try:
+        up=float(open("/proc/uptime").read().split()[0]); m=int(kv.get("ActiveEnterTimestampMonotonic","0"))
+        x["uptimeSec"]=int(up-m/1e6) if m else None
+    except Exception: x["uptimeSec"]=None
+    num=lambda k: int(kv[k]) if kv.get(k,"").isdigit() else None
+    x["restarts"]=num("NRestarts"); x["memoryBytes"]=num("MemoryCurrent")
+    c=num("CPUUsageNSec"); x["cpuSec"]=round(c/1e9,1) if c is not None else None
+    est=[l.split() for l in sh(["/usr/bin/ss","-Htn","state","established","( sport = :8443 )"]).splitlines() if l.strip()]
+    x["connections"]=len(est)
+    x["uniqueClients"]=len({e[-1].rsplit(":",1)[0] for e in est if e})
+    x["listening"]=bool(sh(["/usr/bin/ss","-Hltn","( sport = :8443 )"]).strip())
+    v=sh(["/usr/local/lib/openclaw-xray-reality-v1/xray","version"]).split()
+    x["version"]=v[1] if len(v)>1 else None
+    try:
+        cfg=json.load(open("/run/credentials/openclaw-xray-reality.service/config.json"))
+        ib=[i for i in cfg.get("inbounds",[]) if i.get("port")==8443] or cfg.get("inbounds",[])
+        i=ib[0]; ss_=i.get("streamSettings",{}); r=ss_.get("realitySettings",{}); cl=i.get("settings",{}).get("clients",[])
+        x["config"]={"protocol":i.get("protocol"),"port":i.get("port"),"network":ss_.get("network"),"security":ss_.get("security"),
+            "serverNames":r.get("serverNames",[]),"target":r.get("target") or r.get("dest"),
+            "clients":len(cl),"flows":sorted({c.get("flow") or "none" for c in cl}),"shortIdCount":len(r.get("shortIds") or []),
+            "outbounds":[o.get("protocol") for o in cfg.get("outbounds",[])],"routingRules":len(cfg.get("routing",{}).get("rules",[])),
+            "logLevel":cfg.get("log",{}).get("loglevel"),"statsApi":"stats" in cfg and "api" in cfg}
+    except Exception: x["config"]=None
+    return x
+try:
+    out = subprocess.run(["/usr/bin/wg","show","all","dump"], capture_output=True, text=True, timeout=10, env={"PATH":"/usr/bin:/bin"}).stdout
+except Exception:
+    print(json.dumps({"interfaces":[],"xray":xray(),"ts":int(time.time()),"error":"wg failed"})); sys.exit(1)
+ifs = {}
+order = []
+for line in out.splitlines():
+    f = line.split("\t")
+    if len(f) == 5:  # iface privkey pubkey port fwmark
+        ifs[f[0]] = {"name":f[0], "listenPort": int(f[3]) if f[3].isdigit() else None, "peers":[]}; order.append(f[0])
+    elif len(f) == 9:  # iface pub psk endpoint allowed hs rx tx keepalive
+        i = ifs.setdefault(f[0], {"name":f[0],"listenPort":None,"peers":[]})
+        if f[0] not in order: order.append(f[0])
+        ai = [a for a in f[4].split(",") if a and a != "(none)"]
+        i["peers"].append({"pub6":f[1][:6], "endpoint":mask_ep(f[3]), "allowedIpsCount":len(ai),
+            "latestHandshake":int(f[5]) if f[5].isdigit() else 0,
+            "rxBytes":int(f[6]) if f[6].isdigit() else 0, "txBytes":int(f[7]) if f[7].isdigit() else 0})
+print(json.dumps({"interfaces":[ifs[n] for n in order], "xray":xray(), "ts":int(time.time())}))

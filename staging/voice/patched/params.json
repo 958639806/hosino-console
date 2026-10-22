@@ -1,0 +1,49 @@
+{
+ "version": 1,
+ "updatedAt": 1792497396571,
+ "enabled": true,
+ "attachProbability": 0.25,
+ "cooldownReplies": 3,
+ "quietHours": {
+  "start": "00:00",
+  "end": "08:00",
+  "tz": "Asia/Singapore"
+ },
+ "defaultEnabled": false,
+ "sessions": {
+  "group:b4ee2a7019c96343c96eeba8cb63d8c5": {
+   "enabled": true
+  },
+  "group:379363a480715dfc01f13aaf92571111": {
+   "enabled": true
+  }
+ },
+ "genEnabled": true,
+ "genDailyCap": 10,
+ "_note": "私聊（c2c:<openid>）目前标签补丁不支持，写了也不生效；defaultEnabled=false 表示其它群默认关闭",
+ "voice": {
+  "enabled": true,
+  "probability": 0.12,
+  "cooldownReplies": 4,
+  "tz": "Asia/Singapore",
+  "quietHours": [
+   {
+    "start": "00:00",
+    "end": "08:00"
+   }
+  ],
+  "defaultEnabled": false,
+  "perConversation": {
+   "group:b4ee2a7019c96343c96eeba8cb63d8c5": {
+    "enabled": true
+   },
+   "group:379363a480715dfc01f13aaf92571111": {
+    "enabled": true
+   }
+  },
+  "maxChars": 40,
+  "dailyLimit": 20,
+  "exclusiveWithSticker": true,
+  "_note": "HOSINO-VOICE-PARAMS v1：只管群聊 <语音> 标签；私聊第二期。dailyLimit 按会话按天（Asia/Singapore）计，0=不限。"
+ }
+}

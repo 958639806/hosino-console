@@ -1,0 +1,170 @@
+--- server.mjs.v11	2026-10-20 16:27:12.778339296 +0800
++++ server.mjs	2026-10-20 16:27:43.894402250 +0800
+@@ -496,6 +496,7 @@
+   "GET /api/models": async () => cached("models", 60e3, async () => { const r = await call("models.list"); return { models: r.models.map(m => ({ id: m.id, name: m.name, alias: m.alias, provider: m.provider, contextWindow: m.contextWindow, reasoning: m.reasoning, tags: m.tags, available: m.available, runtime: m.agentRuntime?.id, thinkingDefault: m.thinkingDefault })) }; }),
+   "GET /api/usage": async () => cached("usage", 120e3, async () => { const [u, c, mi] = await Promise.all([call("usage.status").then(redact), claudeUsage(), mimoUsage()]); const providers = (u.providers || []).filter(p => p.provider !== "anthropic"); providers.push(c); const xi = providers.findIndex(p => p.provider === "xiaomi-token-plan"); if (xi >= 0) providers[xi] = { ...providers[xi], ...mi }; else providers.push({ provider: "xiaomi-token-plan", displayName: "Xiaomi MiMo Token Plan", ...mi }); return { ...u, providers }; }),
+   "GET /api/vpn": async () => vpnStatus(),
++  "GET /api/link": async () => vpnStatus(), // 线路状态（与旧接口同一份数据）
+   "GET /api/channels": async () => cached("ch", 8000, () => call("channels.status").then(redact)),
+   "GET /api/plugins": async () => cached("pl", 60e3, async () => { const r = await call("plugins.list"); return { plugins: r.plugins.filter(p => p.installed || p.enabled).map(p => ({ id: p.id, name: p.name, description: p.description, version: p.version, origin: p.origin, enabled: p.enabled, state: p.state, runtime: p.runtime?.state })) }; }),
+   "GET /api/skills": async () => cached("sk", 60e3, () => call("skills.status").then(redact)),
+@@ -510,6 +511,150 @@
+   },
+ };
+ 
++// ---------- v2.6：每日群报 / 星野日记 / 互动统计 / 表情库 / 主动行为参数 ----------
++// 全部不向 QQ 发送：不调用 chat.send / send / qq 相关写方法。生图与总结走本机 CLI `openclaw infer`（一次性推理，无会话、无投递）。
++const WORKSPACE = process.env.OPENCLAW_WORKSPACE || "/home/ubuntu/.openclaw/workspace";
++const OPENCLAW_BIN = process.env.OPENCLAW_BIN || "/home/ubuntu/.npm-global/bin/openclaw";
++const DIGEST_IMAGE_MODEL = process.env.DIGEST_IMAGE_MODEL || "openai/gpt-6-luna";
++const DIGEST_TEXT_MODEL = process.env.DIGEST_TEXT_MODEL || ""; // 空 = 网关默认模型
++const TZ = "Asia/Singapore";
++const DIGEST_DIR = path.join(DATA, "digests");
++const sgParts = (ms = Date.now()) => { const p = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(ms).map(x => [x.type, x.value])); return { day: `${p.year}-${p.month}-${p.day}`, hm: `${p.hour}:${p.minute}` }; };
++const sgDayOf = ms => sgParts(ms).day;
++const atomicWrite = (f, data) => { fs.mkdirSync(path.dirname(f), { recursive: true, mode: 0o700 }); const tmp = f + ".tmp-" + process.pid; fs.writeFileSync(tmp, data, { mode: 0o600 }); fs.renameSync(tmp, f); fs.chmodSync(f, 0o600); };
++const digestSettings = jsonStore("digest-settings.json", () => ({ enabled: true, time: "22:00", sessions: {}, lastRun: {} }));
++const isHM = s => /^([01]\d|2[0-3]):[0-5]\d$/.test(String(s || ""));
++const runCli = (args, t) => new Promise(r => execFile(OPENCLAW_BIN, args, { timeout: t, maxBuffer: 8 << 20, env: { ...process.env, NO_COLOR: "1" } }, (e, o, er) => r({ e: e ? String(er || e.message).trim().slice(-400) : null, o: o || "" })));
++const lastJson = s => { const i = s.indexOf("{"); if (i < 0) return null; try { return JSON.parse(s.slice(i)); } catch { for (const l of s.trim().split("\n").reverse()) { try { return JSON.parse(l); } catch {} } return null; } };
++const usageOf = j => { if (!j || typeof j !== "object") return null; const u = j.usage || j.result?.usage || j.meta?.usage || j.attempts?.find?.(a => a.usage)?.usage || null; const cost = j.cost ?? j.usage?.cost ?? j.meta?.cost ?? null; return u || cost != null ? { ...(u || {}), ...(cost != null ? { cost } : {}) } : null; };
++const textOfJson = j => j?.text || j?.output || j?.payloads?.map?.(p => p.text).filter(Boolean).join("\n") || j?.result?.text || null;
++const digestRunning = new Set();
++async function runDigest(key, day) {
++  if (digestRunning.has(key + day)) throw httpErr(409, "该会话当天群报正在生成");
++  digestRunning.add(key + day); const t0 = Date.now();
++  const id = `${day}__${crypto.createHash("sha1").update(key).digest("hex").slice(0, 10)}`;
++  const rec = { id, sessionKey: key, name: aliasFor(key) || key, day, startedAt: t0, status: "running", messageCount: 0, text: null, image: null, usage: { text: null, image: null }, errors: [] };
++  const save = () => atomicWrite(path.join(DIGEST_DIR, id + ".json"), JSON.stringify(rec, null, 1));
++  try {
++    const raw = await call("chat.history", { sessionKey: key, limit: 1000 }, 20000);
++    const h = buildHistory(raw, null);
++    const lines = [];
++    for (const m of h.messages) {
++      if (!m.ts || sgDayOf(m.ts) !== day) continue; const t = textOf(m).trim(); if (!t) continue;
++      if (m.role === "user") lines.push(`[${sgParts(m.ts).hm}] ${m.sender?.name || aliasFor(m.senderId || "") || "群友"}: ${t.slice(0, 400)}`);
++      else if (m.role === "assistant" && m.delivery === "sent" && m.model !== "delivery-mirror") lines.push(`[${sgParts(m.ts).hm}] 星野: ${t.slice(0, 400)}`);
++    }
++    rec.messageCount = lines.length;
++    let notes = ""; try { for (const f of fs.readdirSync(path.join(WORKSPACE, "memory")).filter(f => f.startsWith(day) && f.endsWith(".md")).sort()) notes += fs.readFileSync(path.join(WORKSPACE, "memory", f), "utf8").slice(0, 3000) + "\n"; } catch {}
++    rec.notesUsed = !!notes;
++    if (!lines.length) { rec.status = "empty"; rec.text = "今天这个会话没有消息。"; return rec; }
++    const chat = lines.join("\n").slice(-16000);
++    const prompt = `你是群聊日报编辑。下面是 QQ 会话「${rec.name}」在 ${day}（${TZ}）的聊天记录${notes ? "和当天的记忆小结" : ""}。请用中文写一份简短有趣的“今日群报”：标题一行、3–6 条要点（谁聊了什么、有趣瞬间）、一句总结。不要编造记录里没有的内容，不要输出 QQ openid。最后单独一行以“画面：”开头，用一句话描述一张适合作为今日群报插图的可爱插画场景（不出现真实人名和文字）。\n\n【聊天记录】\n${chat}\n${notes ? "\n【记忆小结】\n" + notes.slice(0, 4000) : ""}`;
++    const tr = await runCli(["infer", "model", "run", "--local", "--json", ...(DIGEST_TEXT_MODEL ? ["--model", DIGEST_TEXT_MODEL] : []), "--prompt", prompt], 180e3);
++    if (tr.e) throw new Error("总结失败：" + tr.e);
++    const tj = lastJson(tr.o); const text = (textOfJson(tj) || tr.o).trim(); rec.usage.text = usageOf(tj); rec.textModel = tj?.model || tj?.provider ? `${tj.provider || ""}/${tj.model || ""}` : null;
++    const sm = /^画面[:：]\s*(.+)$/m.exec(text); rec.text = text.replace(/^画面[:：].*$/m, "").trim(); rec.imagePrompt = sm ? sm[1].trim().slice(0, 500) : `一只可爱的星野猫娘在群聊里和大家热闹聊天，${day} 夜晚，温暖插画风`;
++    const out = path.join(DIGEST_DIR, id + ".png");
++    const ir = await runCli(["infer", "image", "generate", "--model", DIGEST_IMAGE_MODEL, "--prompt", rec.imagePrompt + "。温暖可爱的日系插画风格，画面中不要出现文字。", "--size", "1024x1024", "--output", out, "--json"], 300e3);
++    if (ir.e || !fs.existsSync(out)) rec.errors.push("生图失败：" + (ir.e || "未生成文件"));
++    else { fs.chmodSync(out, 0o600); rec.image = path.basename(out); rec.usage.image = usageOf(lastJson(ir.o)); rec.imageModel = DIGEST_IMAGE_MODEL; }
++    rec.status = rec.errors.length ? "partial" : "ok"; return rec;
++  } catch (e) { rec.status = "error"; rec.errors.push(String(e.message || e).slice(0, 400)); return rec; }
++  finally { rec.finishedAt = Date.now(); rec.durationMs = rec.finishedAt - t0; try { save(); } catch (e) { console.error("digest save", e.message); } digestRunning.delete(key + day); }
++}
++// 调度：每分钟检查；到点后对每个启用会话每天只跑一次（错过时间点的当天会补跑，比如控制台在 22:00 时正在重启）
++let digestTick = false;
++setInterval(async () => {
++  if (digestTick) return; digestTick = true;
++  try {
++    const s = digestSettings.load(); if (!s.enabled) return; const { day, hm } = sgParts(); if (hm < s.time) return;
++    for (const [key, on] of Object.entries(s.sessions || {})) {
++      if (!on || s.lastRun?.[key] === day) continue;
++      const cur = digestSettings.load(); digestSettings.save({ ...cur, lastRun: { ...(cur.lastRun || {}), [key]: day } });
++      await runDigest(key, day);
++    }
++  } catch (e) { console.error("digest tick", e.message); } finally { digestTick = false; }
++}, 60e3).unref();
++const listDigests = () => { let fsx = []; try { fsx = fs.readdirSync(DIGEST_DIR).filter(f => f.endsWith(".json")); } catch {} return fsx.map(f => { try { return JSON.parse(fs.readFileSync(path.join(DIGEST_DIR, f), "utf8")); } catch { return null; } }).filter(Boolean).sort((a, b) => b.startedAt - a.startedAt); };
++const isDigestId = s => /^\d{4}-\d\d-\d\d__[0-9a-f]{10}$/.test(String(s || ""));
++
++// 表情库（只读 workspace/stickers）+ 控制台自己从现在开始累计的使用排行
++const STICKER_DIR = path.join(WORKSPACE, "stickers");
++const stickerStats = jsonStore("sticker-stats.json", () => ({ since: Date.now(), counts: {}, seen: [], lastScan: null }));
++const stickerFiles = () => { try { return fs.readdirSync(STICKER_DIR).filter(f => /\.(png|jpe?g|gif|webp)$/i.test(f)).sort(); } catch { return []; } };
++const stickerMeta = f => { const b = f.replace(/\.[^.]+$/, ""); const i = b.indexOf("-"); return { file: f, emotion: i > 0 ? b.slice(0, i) : b, source: i > 0 ? b.slice(i + 1) : null }; };
++async function scanStickers() {
++  const st = stickerStats.load(); const files = stickerFiles(); const byEmo = new Map(files.map(f => [stickerMeta(f).emotion, f]));
++  const seen = new Set(st.seen), counts = { ...st.counts }; let added = 0;
++  const hit = (uid, f, via, ts) => { if (!f || seen.has(uid) || (ts && ts < st.since)) return; seen.add(uid); counts[f] = counts[f] || { total: 0, byVia: {} }; counts[f].total++; counts[f].byVia[via] = (counts[f].byVia[via] || 0) + 1; counts[f].last = ts || Date.now(); added++; };
++  // 1) 网关日志里的潜水表情（插件直发，不进会话历史）
++  try { for (const lf of fs.readdirSync("/tmp/openclaw").filter(x => /^openclaw-\d{4}-\d\d-\d\d\.log$/.test(x))) { const txt = fs.readFileSync(path.join("/tmp/openclaw", lf), "utf8"); for (const l of txt.split("\n")) { const m = /lurk sticker SENT.*?file=(\S+)/.exec(l); if (!m) continue; const f = path.basename(m[1].replace(/["',]+$/, "")); const tm = /"time":"([^"]+)"/.exec(l) || /^(\d{4}-\d\d-\d\dT[\d:.]+Z?)/.exec(l); hit("log:" + crypto.createHash("sha1").update(l).digest("hex").slice(0, 16), files.includes(f) ? f : f, "lurk", tm ? Date.parse(tm[1]) : null); } } } catch {}
++  // 2) QQ 会话历史：工具 media:"stickers/xxx" 与 &&分类&& 标签
++  try {
++    const ss = (await call("sessions.list", { limit: 500 })).sessions || [];
++    for (const s of ss.filter(x => /:qqbot:/.test(x.key))) {
++      let raw; try { raw = await call("chat.history", { sessionKey: s.key, limit: 1000 }, 20000); } catch { continue; }
++      for (const m of buildHistory(raw, s).messages) {
++        if (m.role !== "assistant" || !m.ts || m.ts < st.since) continue;
++        for (const c of m.tools || []) { const a = JSON.stringify(c.args || ""); for (const mm of a.matchAll(/stickers\/([^"\\]+?\.(?:png|jpe?g|gif|webp))/gi)) hit(`h:${m.id}:${c.id}:${mm[1]}`, mm[1], "tool", m.ts); }
++        if (m.delivery === "sent") for (const mm of textOf(m).matchAll(/&&([^&\s]{1,8})&&/g)) hit(`t:${m.id}:${mm[1]}`, byEmo.get(mm[1]) || mm[1], "tag", m.ts);
++      }
++    }
++  } catch {}
++  stickerStats.save({ ...st, counts, seen: [...seen].slice(-20000), lastScan: Date.now() }); return added;
++}
++setTimeout(() => scanStickers().catch(() => {}), 30e3).unref(); setInterval(() => scanStickers().catch(() => {}), 10 * 60e3).unref();
++
++// 互动统计：群会话里每个发言人的消息数、她回复数（本轮有确认/推断已发出的回复）、静默数、最近互动
++async function interactions(key) {
++  const raw = await cached("hist:" + key, 3000, () => call("chat.history", { sessionKey: key, limit: 1000 }, 20000));
++  const h = buildHistory(raw, null); const per = new Map(); const turnSender = new Map();
++  for (const m of h.messages) {
++    if (m.role === "user" && m.senderId) { const id = String(m.senderId).toLowerCase(); const p = per.get(id) || { id, name: null, messages: 0, replies: 0, silences: 0, unknown: 0, lastAt: 0 }; p.messages++; p.name = m.sender?.name || p.name; p.lastAt = Math.max(p.lastAt, m.ts || 0); per.set(id, p); turnSender.set(m.turnId, id); }
++  }
++  const turnOutcome = new Map(); for (const m of h.messages) if (m.role === "assistant" && m.delivery) { const cur = turnOutcome.get(m.turnId); if (m.delivery === "sent") turnOutcome.set(m.turnId, "sent"); else if (cur !== "sent") turnOutcome.set(m.turnId, m.delivery === "silent" && cur !== "unknown" ? "silent" : "unknown"); }
++  for (const [tid, id] of turnSender) { const p = per.get(id), o = turnOutcome.get(tid); if (!o) continue; if (o === "sent") p.replies++; else if (o === "silent") p.silences++; else p.unknown++; }
++  const first = h.messages.find(m => m.ts)?.ts || null;
++  return { sessionKey: key, name: aliasFor(key) || key, windowFrom: first, windowCount: h.messages.length, note: "只统计网关返回的最近一个历史窗口（最多约 1000 条）；回复/静默按“轮”计，归给触发该轮的发言人", people: [...per.values()].map(p => ({ ...p, alias: loadAliases()[p.id] || null })).sort((a, b) => b.messages - a.messages) };
++}
++
++// 主动行为参数（只读 openclaw.json，敏感字段打码）
++const maskCfg = o => Array.isArray(o) ? o.map(maskCfg) : o && typeof o === "object" ? Object.fromEntries(Object.entries(o).map(([k, v]) => [k, /key|token|secret|password|hash/i.test(k) ? (v ? "已设置" : "未设置") : maskCfg(v)])) : o;
++const serveFile = (res, f, ct) => { const st = fs.statSync(f); res.writeHead(200, { "content-type": ct, "content-length": String(st.size), "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff" }); fs.createReadStream(f).pipe(res); };
++
++Object.assign(R, {
++  "GET /api/digest/settings": async () => {
++    const s = digestSettings.load(); let ss = []; try { ss = (await cached("hist-sess", 30e3, () => call("sessions.list", { limit: 500 }))).sessions || []; } catch {}
++    const keys = new Set([...ss.map(x => x.key), ...Object.keys(s.sessions || {})]);
++    return { enabled: !!s.enabled, time: s.time, timeZone: TZ, imageModel: DIGEST_IMAGE_MODEL, sessions: [...keys].map(k => ({ sessionKey: k, name: aliasFor(k) || ss.find(x => x.key === k)?.displayName || k, kind: /:group:/.test(k) && !/:c2c:/.test(k) ? "group" : "other", enabled: !!s.sessions?.[k], lastRunDay: s.lastRun?.[k] || null })) };
++  },
++  "POST /api/digest/settings/set": W("digest.settings.set", b => `${b.sessionKey || "global"} enabled=${b.enabled} time=${b.time ?? ""} global=${b.globalEnabled ?? ""}`, async b => {
++    const s = { ...digestSettings.load() }; s.sessions = { ...(s.sessions || {}) };
++    if (b.time != null) { if (!isHM(b.time)) throw httpErr(400, "time 格式应为 HH:MM（24 小时制）"); s.time = b.time; }
++    if (b.globalEnabled != null) { if (typeof b.globalEnabled !== "boolean") throw httpErr(400, "globalEnabled 必须是布尔值"); s.enabled = b.globalEnabled; }
++    if (b.sessionKey != null) { if (typeof b.sessionKey !== "string" || !b.sessionKey || b.sessionKey.length > 300) throw httpErr(400, "sessionKey 无效"); if (typeof b.enabled !== "boolean") throw httpErr(400, "enabled 必须是布尔值"); if (b.enabled) s.sessions[b.sessionKey] = true; else delete s.sessions[b.sessionKey]; }
++    if (b.sessionKey == null && b.time == null && b.globalEnabled == null) throw httpErr(400, "没有要修改的项");
++    digestSettings.save(s); return { ok: true, enabled: s.enabled, time: s.time, sessions: s.sessions };
++  }, { confirm: true }),
++  "GET /api/digests": async u => { const k = u.searchParams.get("key"); const all = listDigests().filter(d => !k || d.sessionKey === k); const lim = qi(u, "limit", 30, 200); return { digests: all.slice(0, lim).map(({ text, ...d }) => ({ ...d, preview: String(text || "").slice(0, 120) })), total: all.length }; },
++  "POST /api/digests/run-now": W("digest.run-now", b => b.sessionKey, async b => { need(b, "sessionKey"); if (!digestSettings.load().sessions?.[b.sessionKey]) throw httpErr(400, "该会话没有开启群报"); const day = sgParts().day; runDigest(b.sessionKey, day).catch(() => {}); return { ok: true, started: true, day }; }, { confirm: true }),
++  "GET /api/digests/get": async u => { const id = u.searchParams.get("id"); if (!isDigestId(id)) throw httpErr(400, "id 无效"); try { return JSON.parse(fs.readFileSync(path.join(DIGEST_DIR, id + ".json"), "utf8")); } catch { throw httpErr(404, "群报不存在"); } },
++  "GET /api/diary": async () => cached("diary", 60e3, async () => { const r = await call("doctor.memory.dreamDiary", { agentId: "main" }, 15000); return { agentId: r.agentId || "main", found: !!r.found, path: r.path || null, content: r.content || "", updatedAtMs: r.updatedAtMs || null }; }),
++  "GET /api/interactions": async u => {
++    const key = u.searchParams.get("key");
++    if (key) return cached("ia:" + key, 60e3, () => interactions(key));
++    const ss = (await cached("hist-sess", 30e3, () => call("sessions.list", { limit: 500 }))).sessions || [];
++    const gs = ss.filter(x => /:qqbot:/.test(x.key) && /:group:/.test(x.key) && !/:c2c:/.test(x.key));
++    return { groups: await Promise.all(gs.map(g => cached("ia:" + g.key, 60e3, () => interactions(g.key)).catch(e => ({ sessionKey: g.key, error: e.message })))) };
++  },
++  "GET /api/stickers": async () => { const st = stickerStats.load(); const items = stickerFiles().map(f => { let s = null; try { s = fs.statSync(path.join(STICKER_DIR, f)); } catch {} return { ...stickerMeta(f), size: s?.size ?? null, mtime: s?.mtimeMs ?? null, uses: st.counts[f]?.total || 0, byVia: st.counts[f]?.byVia || {}, lastUsed: st.counts[f]?.last || null }; }); const extra = Object.entries(st.counts).filter(([f]) => !items.some(i => i.file === f)).map(([f, c]) => ({ file: f, missing: true, uses: c.total, byVia: c.byVia, lastUsed: c.last })); return { since: st.since, lastScan: st.lastScan, items, ranking: [...items, ...extra].filter(i => i.uses).sort((a, b) => b.uses - a.uses), note: "排行从 since 起由控制台累计；来源：tool=她用工具发表情，tag=回复里的 &&分类&& 标签，lurk=插件潜水表情（网关日志，只保留约两天，控制台每 10 分钟扫描）" }; },
++  "GET /api/behavior": async () => cached("behavior", 30e3, async () => {
++    const c = JSON.parse(fs.readFileSync(CFG, "utf8")); const gate = c.plugins?.entries?.["qq-group-followup-gate"] || {};
++    let last = null; try { last = await call("last-heartbeat", {}, 8000); } catch (e) { last = { error: e.message }; }
++    return { heartbeat: maskCfg(c.agents?.defaults?.heartbeat || null), lastHeartbeat: maskCfg(last), mediaTags: maskCfg(c.channels?.qqbot?.mediaTags || null), followupGate: { enabled: gate.enabled !== false, keepalive: maskCfg(gate.config?.keepalive || null), lurkSticker: maskCfg(gate.config?.lurkSticker || null) }, groupNames: loadAliases(), readOnly: true };
++  }),
++});
++
+ function send(res, code, obj, h = {}) { const b = JSON.stringify(obj); res.writeHead(code, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...h }); res.end(b); }
+ const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".webmanifest": "application/manifest+json" };
+ const SEC = { "x-content-type-options": "nosniff", "x-frame-options": "DENY", "referrer-policy": "no-referrer", "strict-transport-security": "max-age=31536000", "content-security-policy": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'" };
+@@ -537,6 +682,8 @@
+     if (u.pathname.startsWith("/api/")) {
+       if (!authed(req)) return send(res, 401, { error: "请先登录" });
+       if (u.pathname === "/api/media" && req.method === "GET") return await serveMedia(req, res, u);
++      if (u.pathname === "/api/digests/image" && req.method === "GET") { const id = u.searchParams.get("id"); if (!isDigestId(id)) return send(res, 400, { error: "id 无效" }); const f = path.join(DIGEST_DIR, id + ".png"); if (!fs.existsSync(f)) return send(res, 404, { error: "没有图片" }); return serveFile(res, f, "image/png"); }
++      if (u.pathname === "/api/stickers/image" && req.method === "GET") { const n = u.searchParams.get("file"); if (!stickerFiles().includes(n)) return send(res, 404, { error: "表情不存在" }); const real = fs.realpathSync(path.join(STICKER_DIR, n)); if (!real.startsWith(fs.realpathSync(STICKER_DIR) + path.sep)) return send(res, 403, { error: "拒绝" }); return serveFile(res, real, MEDIA_MIME[path.extname(n).toLowerCase()] || "application/octet-stream"); }
+       if (req.method === "POST" && req.headers["x-hs"] !== "1") return send(res, 403, { error: "拒绝跨站请求" });
+       const pm = req.method === "GET" && /^\/api\/profiles\/([^/]+)$/.exec(u.pathname); const h = pm ? (u2 => R["GET /api/profiles/:id"](u2, decodeURIComponent(pm[1]))) : R[req.method + " " + u.pathname]; if (!h) return send(res, 404, { error: "接口不存在" });
+       const b = req.method === "POST" ? await body(req) : null;

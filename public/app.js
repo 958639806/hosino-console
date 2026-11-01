@@ -1,5 +1,5 @@
-import { api, setUnauthedHandler, notReady, mediaOf } from "./api.js?v=20261022164516";
-import { md } from "./md.js?v=20261022164516";
+import { api, setUnauthedHandler, notReady, mediaOf } from "./api.js?v=20261101195157";
+import { md } from "./md.js?v=20261101195157";
 
 // ---------- 小工具 ----------
 const $ = (s, el = document) => el.querySelector(s);
@@ -146,7 +146,10 @@ function sheet(html, onMount, kind) {
   // 同一种面板已经开着就不再叠一层（防重复绑定/双击/触摸+点击双触发）
   if (kind) { const ex = document.querySelector(`[data-sheet="${kind}"]`); if (ex) return () => ex.remove(); }
   const s = document.createElement("div"); if (kind) s.dataset.sheet = kind; s.innerHTML = `<div class="scrim"></div><div class="sheet" role="dialog" aria-modal="true">${html}</div>`;
-  document.body.append(s); const close = () => s.remove();
+  s.dataset.v3sheet = "1"; document.body.append(s);
+  history.pushState({ ...(history.state || {}), sheet: 1 }, "");
+  // 界面关掉：不调 history.back（避免和随后的跳转抢历史），留下的空历史由 popstate 跳过
+  const close = () => s.remove(); s._v3close = () => { s.remove(); s._onclose?.(); }; const snap = new WeakMap(); const take = e => { const t = e.target; if (t.matches?.("input,textarea,select") && !snap.has(t)) snap.set(t, t.type === "checkbox" || t.type === "radio" ? t.checked : t.value); }; for (const ev of ["focusin", "pointerdown", "keydown", "beforeinput"]) s.addEventListener(ev, take, true); s._v3dirty ||= () => [...s.querySelectorAll("[data-save]:not([disabled])")].some(b => !b.closest("[hidden]")) || [...s.querySelectorAll("input,textarea,select")].some(t => snap.has(t) && snap.get(t) !== (t.type === "checkbox" || t.type === "radio" ? t.checked : t.value));
   s.querySelector(".scrim").onclick = close; s.addEventListener("keydown", e => e.key === "Escape" && close()); s.addEventListener("click", e => { if (e.target.closest("a[href^=\"#/\"]")) close(); });
   onMount?.(s.querySelector(".sheet"), close); return close;
 }
@@ -169,6 +172,25 @@ function showLogin() {
 
 // ---------- 路由 ----------
 async function route() {
+  v3stamp();
+  const h = location.hash || "#/overview", p = v3parse(h);
+  const prevName = v3parse(v3pageHash).name;
+  // 系统返回/手势离开时，有没保存的改动先问一句
+  if (v3pageHash && h !== v3pageHash && !v3skip && v3dirty() && v3parse(v3pageHash).name !== p.name) {
+    const ok = await confirmDialog({ title: "还有改动没保存", body: "确定离开吗？没保存的改动会丢掉。", ok: "离开", danger: true });
+    if (!ok) { history.replaceState(history.state, "", v3pageHash); return; }
+  }
+  v3skip = false;
+  if (V3 && document.contains(V3.el) && v3parse(v3pageHash).name !== p.name) v3saveScroll();
+  if (prevName !== p.name) sessionStorage.setItem("v3prev", prevName || "");
+  if (p.name !== (V3?.k) || !document.contains(V3?.el)) v3closeAll();
+  if (TOPIC[p.name] && !p.rest) { const redraw = h === v3pageHash; current = p.name; renderChrome(); clearTimers(); v3pageHash = h; if (p.name !== V3?.k) v3closeAll(); return v3topic(TOPIC[p.name], p.sec, { redraw }); }
+  const al = v3alias(p.name, p.rest);
+  if (al) { history.replaceState(history.state, "", `#/${al.t}#${al.sec}`); const same = V3?.k === al.t && document.contains(V3?.el); current = al.t; renderChrome(); if (!same) clearTimers(); v3pageHash = location.hash; await v3topic(TOPIC[al.t], al.sec); if (al.d) v3detail(al.d); return; }
+  V3 = null; v3pageHash = h;
+  return routeBase();
+}
+async function routeBase() {
   clearTimers();
   const [, name = "overview", ...rest] = location.hash.replace(/^#/, "").split("/");
   const r = VIEWS[name] ? name : "overview"; current = r; renderChrome();
@@ -271,7 +293,7 @@ VIEWS.sessions = async (v, key) => {
   const root = paint(v, (wide ? `<div class="split">${listHtml}<div class="chatpane">` : "") + `
     <div class="chat">
       <div class="chathead">${wide ? "" : `<a class="iconbtn" href="#/sessions" aria-label="返回">${ic("back")}</a>`}
-        <div class="grow"><div class="t"><span class="nm" data-rename="${esc(sess.key)}" title="点击改名" role="button" tabindex="0" aria-label="改名：${esc(sessName(sess))}">${nameHtml(sess)}</span></div><div class="rid mono">${esc(rawId(sess))}</div><div class="faint mono" style="font-size:12px">${esc([sess.model, sess.agentRuntime, sess.thinkingLevel && "思考 " + sess.thinkingLevel].filter(Boolean).join(" · "))}</div></div>
+        <div class="grow"><div class="t"><span class="nm" data-rename="${esc(sess.key)}" title="点击改名" role="button" tabindex="0" aria-label="改名：${esc(sessName(sess))}">${nameHtml(sess)}</span></div><div class="sub" title="${esc(rawId(sess))}">${esc([sess.chatType === "group" ? "群聊" : sess.chatType === "direct" ? "私聊" : "", sess.model, sess.thinkingLevel && "思考 " + sess.thinkingLevel].filter(Boolean).join(" · "))}</div></div>
         <button class="iconbtn" data-x="tune" aria-label="会话设置">${ic("tune")}</button>
         <button class="iconbtn" data-x="theme2" aria-label="切换深浅色">${ic(isDark() ? "sun" : "moon")}</button></div>
       <div class="msgs" id="msgs"><div class="skel"></div></div>
@@ -279,21 +301,24 @@ VIEWS.sessions = async (v, key) => {
         <div class="att-tray" id="tray" hidden></div><div class="att-drop" aria-hidden="true">松手就能添加附件</div>
         <textarea rows="1" placeholder="以凛的身份说点什么…" aria-label="消息"></textarea>
         <div class="qqwarn" hidden>⚠️ 现在发出的内容会<b>以星野のねこ的身份</b>直接发到 ${qqDest(sess)}</div>
-        <div class="ctl"><div class="tgs"><label class="tg"><span class="switch"><input type="checkbox" id="deliver"><i></i></span>同时发送到 QQ</label>
+        <div class="ctl"><button type="button" class="iconbtn optb" id="optb" aria-label="发送选项" aria-expanded="false">${ic("plus")}</button><div class="tgs"><label class="tg"><span class="switch"><input type="checkbox" id="deliver"><i></i></span>同时发送到 QQ</label>
           <label class="tg tg-bot" hidden><span class="switch warn"><input type="checkbox" id="asbot"><i></i></span>以星野のねこ身份发到 QQ</label></div>
-          ${attBtns()}<button type="button" class="btn danger" id="abort" ${sess.hasActiveRun ? "" : "hidden"}>${ic("stop")}中止</button>
+          ${attBtns()}<button type="button" class="btn danger" id="abort" aria-label="中止" ${sess.hasActiveRun ? "" : "hidden"}>${ic("stop")}中止</button>
           <button class="btn primary" id="sendb">${ic("send")}发送</button></div>
       </form>
     </div>` + (wide ? "</div></div>" : ""));
   const msgs = $("#msgs", root), ta = $("textarea", root), form = $("#comp", root), abortB = $("#abort", root);
   const asbot = $("#asbot", root), deliverC = $("#deliver", root);
+  const optb = $("#optb", root); optb.onclick = () => { const o = form.classList.toggle("opts"); optb.setAttribute("aria-expanded", o); };
   const tray = attachTray({ scope: "chat", ensureSession: async () => key, onChange: () => { const sb = $("#sendb", root); if (sb) { sb.disabled = tray.busy(); sb.title = tray.busy() ? "附件还在上传" : ""; } } }); tray.mount($("#tray", root)); tray.bind(form, ta); loadLimits();
   api.features().then(f => { if (f?.qqSend === true) $(".tg-bot", root).hidden = false; }).catch(() => {});
-  asbot.onchange = () => { const on = asbot.checked; form.querySelector(".att-btns").hidden = on; form.classList.toggle("botmode", on); $(".qqwarn", root).hidden = !on; deliverC.disabled = on; if (on) deliverC.checked = false; ta.placeholder = on ? "以星野のねこ的身份说…" : "以凛的身份说点什么…"; $("#sendb", root).innerHTML = ic("send") + (on ? "发到 QQ" : "发送"); };
+  asbot.onchange = () => { const on = asbot.checked; form.querySelector(".att-btns").hidden = on; form.classList.toggle("botmode", on); if (on) { form.classList.add("opts"); optb.setAttribute("aria-expanded", true); } $(".qqwarn", root).hidden = !on; deliverC.disabled = on; if (on) deliverC.checked = false; ta.placeholder = on ? "以星野のねこ的身份说…" : "以凛的身份说点什么…"; $("#sendb", root).innerHTML = ic("send") + (on ? "发到 QQ" : "发送"); };
   msgs.addEventListener("click", e => { const im = e.target.closest("[data-full]"); if (im) lightbox(im.dataset.full, im.getAttribute("aria-label")); });
-  let lastSig = "", older = [], olderNext, olderMore; const openK = new Set(), isGroup = sess.chatType === "group" || qqTarget(key)?.kind === "group";
+  let lastSig = "", older = [], olderNext, olderMore; const openK = new Set(), revealK = new Set(), isGroup = sess.chatType === "group" || qqTarget(key)?.kind === "group";
   msgs.addEventListener("toggle", e => { const k = e.target.dataset?.k; if (k) e.target.open ? openK.add(k) : openK.delete(k); }, true);
   msgs.addEventListener("click", async e => {
+    const cp = e.target.closest("[data-copy]");
+    if (cp) { const ok = await copyText(cp.closest(".codewrap")?.querySelector("code")?.textContent || ""); toast(ok ? "已复制" : "复制没成功，可以长按选中后再复制"); if (ok) { const sp = cp.querySelector("span"); sp.textContent = "已复制 ✓"; cp.classList.add("done"); setTimeout(() => { sp.textContent = "复制"; cp.classList.remove("done"); }, 1800); } return; }
     const pf = e.target.closest("[data-prof]"); if (pf) return profileSheet(pf.dataset.prof, () => { lastSig = ""; loadHist(true); }, isGroup ? key : null);
     const ob = e.target.closest("[data-older]"); if (!ob) return; ob.disabled = true; ob.textContent = "正在翻找…";
     try { const r = await api.history(key, 60, ob.dataset.older); older = [...(r.messages || []), ...older]; olderNext = r.nextBefore ?? null; olderMore = !!r.hasMore; const h = msgs.scrollHeight; lastSig = ""; await loadHist(true); msgs.scrollTop += msgs.scrollHeight - h; }
@@ -304,14 +329,25 @@ VIEWS.sessions = async (v, key) => {
     const seen = new Set(latest.map(m => m.id).filter(Boolean)), ms = [...older.filter(m => !m.id || !seen.has(m.id)), ...latest];
     const sig = older.length + ":" + latest.length + ":" + (latest.at(-1)?.id || latest.at(-1)?.ts || "") + ":" + (latest.at(-1)?.tools || []).map(t => t.status).join(); if (sig === lastSig) return; lastSig = sig;
     const atBottom = msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 80;
-    const ctx = { sendLogFrom: hst.sendLogFrom, openK, group: isGroup };
+    const ctx = { sendLogFrom: hst.sendLogFrom, openK, revealK, group: isGroup };
     const more = older.length ? olderMore : !!hst.hasMore, next = older.length ? olderNext : hst.nextBefore ?? null;
     const head = (more && next != null ? `<button type="button" class="older" data-older="${esc(next)}">加载更早的消息</button>`
       : more || hst.gatewayHasMore ? `<div class="oldnote">🌙 网关只保留最近一个窗口的记录，更早的聊天在这里翻不到了</div>` : ms.length ? `<div class="oldnote">这就是最早的消息啦</div>` : "")
       + (ms.length ? `<div class="histnote faint">共 ${hst.totalMessages ?? ms.length} 条消息${hst.windowCount ? `，网关窗口内 ${hst.windowCount} 条` : ""}，已显示 ${ms.length} 条${hst.sendLogFrom ? ` · 发送日志从 ${esc(hst.sendLogFrom)} 起才有，更早的「已发到 QQ」是推断的` : ""}</div>` : "");
-    msgs.innerHTML = ms.length ? head + ms.map(m => renderMsg(m, ctx)).join("") : `<div class="empty"><b>🌙</b>这里还很安静</div>`;
+    ctx.model = sess.model;
+    msgs.innerHTML = ms.length ? head + renderList(ms, ctx) : `<div class="empty"><b>🌙</b>这里还很安静</div>`; wrapCode(msgs);
     if (!keep && (atBottom || !msgs.dataset.init)) msgs.scrollTop = msgs.scrollHeight; msgs.dataset.init = 1;
   };
+  // 内部通知「查看原文」：先二次确认；原文只在内存里，确认后才渲染进页面；收起 / 切走 / 离开页面就清掉
+  msgs.addEventListener("click", async e => {
+    const hd = e.target.closest("[data-unreveal]"); if (hd) { revealK.delete(hd.dataset.unreveal); lastSig = ""; loadHist(true); return; }
+    const rv = e.target.closest("[data-reveal]"); if (!rv) return;
+    const ok = await confirmDialog({ title: "这是一条内部通知", body: "这是系统内部使用的内容，里面可能带着路径、记录，甚至敏感信息。我会先把密码、密钥这类内容打码；看完记得收起，切走页面也会自动收起。", ok: "确认查看" });
+    if (!ok) return; revealK.add(rv.dataset.reveal); lastSig = ""; loadHist(true);
+  });
+  ["copy", "cut", "dragstart"].forEach(t => msgs.addEventListener(t, e => { if (e.target.closest?.(".annbox")) e.preventDefault(); }, true));
+  const wipeRaw = e => { if (!msgs.isConnected) { document.removeEventListener("visibilitychange", wipeRaw); removeEventListener("pagehide", wipeRaw); return; } if (!revealK.size || (e.type === "visibilitychange" && !document.hidden)) return; revealK.clear(); msgs.querySelectorAll(".annraw").forEach(n => n.remove()); lastSig = ""; loadHist(true).catch(() => {}); };
+  document.addEventListener("visibilitychange", wipeRaw); addEventListener("pagehide", wipeRaw);
   // 搜索跳转：先试 before=messageId，400 等失败就只打开会话
   let jump = null; try { jump = JSON.parse(sessionStorage.getItem("hs-before") || "null"); } catch {} sessionStorage.removeItem("hs-before");
   if (jump && jump.href === location.hash && jump.mid) {
@@ -365,9 +401,9 @@ function qqDest(sess, detail) {
   const t = qqTarget(to), kind = t ? (t.kind === "group" ? "QQ 群" : "QQ 私聊") : "目标";
   return detail ? `<div class="dest-k">发送到</div><div class="dest-v">${t?.kind === "group" ? "👥" : "👤"} ${kind}「${esc(dn)}」</div><div class="dest-s mono">${esc(to)}</div><div class="dest-s mono">会话 ${esc(sess.key)}</div>` : `${kind}「<b>${esc(dn)}</b>」<span class="mono">${esc(to)}</span>`;
 }
-function renderMedia(list) {
+function renderMedia(list, seen) {
   if (!list.length) return "";
-  return `<div class="media">${list.map(x => x.kind === "image" ? `<button type="button" class="thumb" data-full="${esc(x.url)}" aria-label="${esc(x.name)}"><img src="${esc(x.url)}" alt="${esc(x.name)}" loading="lazy" decoding="async"></button>`
+  return `<div class="media">${list.map(x => x.kind === "image" ? `<figure class="mfig"><button type="button" class="thumb" data-full="${esc(x.url)}" aria-label="${esc(x.name)}"><img src="${esc(x.url)}" alt="${esc(x.name)}" loading="lazy" decoding="async"></button>${seen?.has(x.src) ? "" : `<figcaption class="mpath mcap">${esc(x.src)}</figcaption>`}</figure>`
     : x.kind === "audio" ? `<audio controls preload="none" src="${esc(x.url)}"></audio>`
     : x.kind === "video" ? `<video controls preload="metadata" playsinline src="${esc(x.url)}"></video>`
     : `<a class="filelink" href="${esc(x.url)}" download="${esc(x.name)}">📎 ${esc(x.name)}${x.size ? ` <span class="faint">${bytes(x.size)}</span>` : ""}</a>`).join("")}</div>`;
@@ -381,14 +417,15 @@ function lightbox(url, name) {
 }
 const DR = { "delivery-mirror": "网关确认已投递", "mirror-unconfirmed": "网关未确认投递", "no-channel": "这个会话不连 QQ", "silent-token": "静默回复（NO_REPLY 等）", "stay_silent": "这一轮选择了不说话（stay_silent）", "keepalive": "只是缓存保活", "run-failed": "回复前运行失败了", "non-channel-trigger": "这一轮不是 QQ 消息触发的", "intermediate-text": "中间段文本，不一定发出", "qq-send-ok": "网关日志有 qq-send-ok", "no-send-ok-log": "日志里没有发送成功记录", "final-reply-inferred": "按最终回复推断，没有日志可证" };
 const tdur = ms => ms == null ? "" : ms < 1000 ? ms + "ms" : (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + "s";
+// 投递状态：只画一个小点（绿 已发 / 红 没发 / 黄 无法确认），点开才显示一句话原因；点击区用透明伪元素扩到 44px
+const DRS = { "delivery-mirror": "网关确认已投递", "mirror-unconfirmed": "网关没有确认投递", "no-channel": "这个会话不连 QQ", "silent-token": "静默回复，没有发出", "stay_silent": "这一轮选择了不说话", "keepalive": "只是缓存保活", "run-failed": "回复前运行失败了", "non-channel-trigger": "这一轮不是 QQ 消息触发的", "intermediate-text": "中间段文字，不一定发出", "qq-send-ok": "日志里有发送成功记录", "no-send-ok-log": "日志里没有发送成功记录", "final-reply-inferred": "按最终回复推断，没有日志可证" };
 function deliveryBadge(m, ctx) {
   const d = m.delivery; if (!d) return "";
-  const r = m.deliveryReason || "", why = (DR[r] || r) + (r && DR[r] ? `（${r}）` : "");
-  const note = ctx.sendLogFrom ? `\n${ctx.sendLogFrom} 之前的消息没有发送日志` : "";
-  const tip = esc(why + (m.deliveryConfidence ? ` · 置信度 ${m.deliveryConfidence}` : "") + note);
-  if (d === "silent") return `<span class="dv silent" title="${tip}"><b style="white-space:nowrap">🔇 未发到 QQ</b><span class="dv-r">${esc(DR[r] || r || "原因未知")}</span></span>`;
-  if (d === "sent") return m.deliveryConfidence === "high" ? `<span class="dv sent" title="${tip}">✓ 已发到 QQ</span>` : `<span class="dv sent inf" title="${tip}">✓ 已发到 QQ <i>推断</i></span>`;
-  return `<span class="dv unk" title="${tip}">？未确认</span>`;
+  const r = m.deliveryReason || "", why = DRS[r] || DR[r] || r;
+  const inf = d === "sent" && m.deliveryConfidence !== "high";
+  const st = d === "sent" ? { c: "ok", t: inf ? "已发到 QQ（推断）" : "已发到 QQ" } : d === "silent" ? { c: "bad", t: "没发到 QQ" } : { c: "warn", t: "无法确认是否发到 QQ" };
+  const k = "dv" + (m.id || m.ts);
+  return `<details class="dvd" data-k="${esc(k)}" ${ctx.openK.has(k) ? "open" : ""}><summary role="button" aria-label="${esc(st.t)}，点开看原因" title="${esc(st.t)}"><i class="dot ${st.c}" aria-hidden="true"></i></summary><span class="dvn" role="note"><b>${esc(st.t)}</b>${why ? "：" + esc(why) : ""}</span></details>`;
 }
 function blk(label, o, k, ctx) {
   if (!o || o.text == null || o.text === "") return "";
@@ -400,7 +437,7 @@ function chainHtml(m, ctx, compact) {
   const k = "c" + (m.id || m.ts), total = ts.reduce((a, t) => a + (t.durationMs || 0), 0), errs = ts.filter(t => t.isError || t.status === "error").length, pend = ts.some(t => t.status === "pending");
   const icon = t => t.status === "pending" ? `<span class="spin-dot"></span>` : t.isError || t.status === "error" ? `<span class="st err">✕</span>` : `<span class="st ok">✓</span>`;
   const short = n => String(n || "工具").replace(/^mcp__[^_]+__/, "");
-  return `<details class="chain ${compact ? "compact" : ""}" data-k="${esc(k)}" ${ctx.openK.has(k) ? "open" : ""}><summary><span class="ch-ic">🔧</span><span class="ch-sum">${compact ? "只调用了工具：" + esc(ts.map(t => short(t.name)).join("、")) : `调用了 ${ts.length} 个工具`}${total ? " · " + tdur(total) : ""}</span>${errs ? `<span class="badge-err">${errs} 个出错</span>` : ""}${pend ? `<span class="spin-dot"></span>` : ""}</summary><ol>${ts.map((t, i) => `<li class="step ${t.status || ""}"><div class="step-h">${icon(t)}<b class="mono" title="${esc(t.name)}">${esc(short(t.name))}</b><span class="faint">${t.status === "pending" ? "进行中…" : tdur(t.durationMs)}</span></div>${blk("参数", t.args, k + i, ctx)}${t.result ? blk(t.isError ? "错误" : "结果", t.result, k + i, ctx) : t.status === "pending" ? "" : `<div class="faint small">没有返回结果</div>`}</li>`).join("")}</ol></details>`;
+  return `<details class="chain ${compact ? "compact" : ""}" data-k="${esc(k)}" title="${esc(ts.map(t => short(t.name)).join("、") + (total ? " · 工具合计 " + tdur(total) : ""))}" ${ctx.openK.has(k) ? "open" : ""}><summary><span class="ch-ic">🔧</span><span class="ch-sum">调用了 ${ts.length} 个工具${errs ? `，<span class="ch-err">${errs} 个出错</span>` : ""}${pend ? "，还在进行" : ""}</span>${pend ? `<span class="spin-dot"></span>` : ""}</summary><ol>${ts.map((t, i) => `<li class="step ${t.status || ""}"><div class="step-h">${icon(t)}<b class="mono" title="${esc(t.name)}">${esc(short(t.name))}</b><span class="faint">${t.status === "pending" ? "进行中…" : tdur(t.durationMs)}</span></div>${blk("参数", t.args, k + i, ctx)}${t.result ? blk(t.isError ? "错误" : "结果", t.result, k + i, ctx) : t.status === "pending" ? "" : `<div class="faint small">没有返回结果</div>`}</li>`).join("")}</ol></details>`;
 }
 // ---------- v2.10 附件（上传托盘：点选 / 相册 / 粘贴 / 拖拽，进度、重试、移除） ----------
 const MB = 1024 * 1024;
@@ -410,10 +447,10 @@ const loadLimits = async () => { if (LIMITS) return LIMITS; try { const d = awai
 const isImgType = t => /^image\/(png|jpe?g|gif|webp)$/i.test(t || "");
 const fileIcon = (mime = "", name = "") => /pdf/.test(mime) || /\.pdf$/i.test(name) ? "📕" : /zip|gzip|compress|tar/.test(mime) || /\.(zip|gz|tgz|7z|rar)$/i.test(name) ? "🗜️" : /audio/.test(mime) ? "🎵" : /video/.test(mime) ? "🎬" : /word|document/.test(mime) || /\.docx?$/i.test(name) ? "📝" : /sheet|excel/.test(mime) || /\.xlsx?$/i.test(name) ? "📊" : /text|json/.test(mime) ? "📄" : "📎";
 // 历史里的附件：图片 → <img>（同源，符合 img-src 'self'），点开大图；文件 → 卡片，下载走 ?download=1；过期 → 提示
-function attHtml(list) {
+function attHtml(list, cap) {
   if (!Array.isArray(list) || !list.length) return "";
   return `<div class="att-hist">${list.map(a => a?.expired ? `<span class="att-exp">🕰️ 附件已过期${a.name ? "：" + esc(a.name) : ""}</span>`
-    : a.kind === "image" ? `<button type="button" class="thumb att-img" data-full="${esc(a.url)}" aria-label="${esc(a.name || "图片")}"><img src="${esc(a.url)}" alt="${esc(a.name || "图片")}" loading="lazy" decoding="async"></button>`
+    : a.kind === "image" ? (cap ? `<figure class="mfig">` : "") + `<button type="button" class="thumb att-img" data-full="${esc(a.url)}" aria-label="${esc(a.name || "图片")}"><img src="${esc(a.url)}" alt="${esc(a.name || "图片")}" loading="lazy" decoding="async"></button>` + (cap ? `${a.path || a.name ? `<figcaption class="mpath mcap">${esc(a.path || a.name)}</figcaption>` : ""}</figure>` : "")
     : `<a class="att-file" href="${esc(a.url)}?download=1" download="${esc(a.name || "")}"><span class="att-ic">${fileIcon(a.mime, a.name)}</span><span class="att-nm"><b>${esc(a.name || "文件")}</b><span class="faint">${esc([a.size != null ? bytes(a.size) : "", a.path || "", a.expiresAt ? "保留到 " + fmtTime(a.expiresAt) : ""].filter(Boolean).join(" · "))}</span></span><span class="att-dl" aria-hidden="true">⬇</span></a>`).join("")}</div>`;
 }
 const attBtns = () => `<span class="att-btns"><button type="button" class="iconbtn att-b" data-att="img" aria-label="从相册选图片" title="图片">🖼️</button><button type="button" class="iconbtn att-b" data-att="file" aria-label="选择文件" title="文件">📎</button><input type="file" hidden multiple accept="image/*" data-pick="img"><input type="file" hidden multiple data-pick="file"></span>`;
@@ -478,16 +515,137 @@ function attachTray({ scope, ensureSession, onChange }) {
   };
   return self;
 }
-function renderMsg(m, ctx = { openK: new Set() }) {
+// 代码块：包一层带「语言 + 复制」的条；复制先用 navigator.clipboard，失败（非 https / 权限）回退 execCommand
+function wrapCode(root) {
+  root.querySelectorAll("pre.md-code").forEach(pre => {
+    if (pre.parentElement?.classList.contains("codewrap")) return;
+    const w = document.createElement("div"); w.className = "codewrap";
+    w.innerHTML = `<div class="codebar"><span class="cl">${esc(pre.dataset.lang || "代码")}</span><button type="button" class="cp" data-copy aria-label="复制这段代码"><span>复制</span></button></div>`;
+    pre.replaceWith(w); w.appendChild(pre);
+  });
+}
+async function copyText(text) {
+  try { await navigator.clipboard.writeText(text); return true; } catch {}
+  try {
+    const ta = document.createElement("textarea"); ta.value = text; ta.setAttribute("readonly", ""); ta.style.cssText = "position:fixed;top:0;left:0;opacity:0;font-size:16px";
+    document.body.appendChild(ta); ta.select(); ta.setSelectionRange(0, text.length); const ok = document.execCommand("copy"); ta.remove(); return ok;
+  } catch { return false; }
+}
+const DAY = ms => { const d = new Date(ms), n = new Date(), y = new Date(n - 864e5); return d.toDateString() === n.toDateString() ? "今天" : d.toDateString() === y.toDateString() ? "昨天" : `${d.getMonth() + 1}月${d.getDate()}日`; };
+const HM = ms => { const d = new Date(ms), p = x => String(x).padStart(2, "0"); return `${p(d.getHours())}:${p(d.getMinutes())}`; };
+// 这一轮的反应耗时（估算）：助手消息 ts − 触发这一轮的那条用户 / 系统消息 ts。接口没有「整轮用时」字段，所以一律标「约」；
+// 拿不到触发消息（在翻页之外）、时间倒挂、超过 30 分钟（多半是排队 / 恢复）、投递镜像消息，都不显示，绝不编数字。
+const costText = (m, ctx) => {
+  if (m.role !== "assistant" || m.model === "delivery-mirror") return "";
+  const t0 = ctx.trig?.get(m.turnId), t1 = toMs(m.ts); if (t0 == null || t1 == null) return "";
+  const d = t1 - t0; if (!(d >= 0) || d > 30 * 60e3) return "";
+  const sec = Math.round(d / 1000); if (sec < 1) return "用时不到 1 秒";
+  return sec < 60 ? `用时约 ${sec} 秒` : `用时约 ${Math.floor(sec / 60)} 分${sec % 60 ? " " + (sec % 60) + " 秒" : ""}`;
+};
+// 凛的消息来源（只看网关给的标识，不再「有 senderId 就是 QQ」）：
+//  1) idempotencyKey 以 channel-user: 开头，或 senderId 是 32 位 openid → QQ；
+//  2) idempotencyKey 是 <uuid>:user → 控制台（控制台消息的 senderId 可能没有，也可能是 gateway-owner，都不影响）；
+//  保活轮 / 内部 announce / 其他不认识的来源一律不贴标签。
+const HB_RE = /^\s*\[OpenClaw heartbeat/i;
+const srcOf = m => {
+  if (m.role !== "user" || !m.owner) return "";
+  if (HB_RE.test(textOf(m.content))) return "";
+  const k = String(m.idempotencyKey || "");
+  if (/^channel-user:/i.test(k) || isOpenId(m.senderId)) return "QQ";
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}:user$/i.test(k) ? "控制台" : "";
+};
+const MPATH = /\/home\/ubuntu\/\.openclaw\/media\/[^\s"'\\)\]<>]+\.(?:jpe?g|png|gif|webp|bmp|mp4|webm|mov|mp3|wav|ogg|m4a|amr|silk|txt|md|pdf|zip)/gi;
+// 仅展示用：把正文里的本地媒体路径包成灰字（只改渲染出来的 HTML，不碰要发送的内容；代码块里不动）
+const grayPaths = (html, seen) => { let pre = 0; return html.split(/(<[^>]+>)/).map(seg => { if (seg[0] === "<") { if (/^<pre\b/i.test(seg)) pre++; else if (/^<\/pre>/i.test(seg)) pre--; return seg; } return pre > 0 ? seg : seg.replace(MPATH, p => (seen?.add(p), `<span class="mpath">${p}</span>`)); }).join(""); };
+const gkey = m => m.role === "user" ? (m.owner ? "me" + srcOf(m) : "u:" + (senderId(m) || "")) : m.role === "assistant" ? "bot" : "t";
+// ---------- 折叠：连续工具调用 / 内部通知 / 保活 ----------
+// 内部通知（announce）的正文永远不进 DOM：折叠和点开都只有固定文案。
+const ANN_MARK = "<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>";
+const isAnn = m => m.role === "user" && !m.owner && (/^announce:v1:/i.test(String(m.idempotencyKey || "")) || textOf(m.content).includes(ANN_MARK));
+const isHb = m => m.role === "user" && !m.owner && !isAnn(m) && HB_RE.test(textOf(m.content));
+const isNoReply = m => m.role === "assistant" && !m.tools?.length && /^\s*(NO_REPLY|HEARTBEAT_OK)\s*$/.test(textOf(m.content));
+function foldMsgs(ms, ctx) {
+  const out = []; let tr = [], hb = null;
+  const hbTurns = new Set(ms.filter(isHb).map(m => m.turnId).filter(t => t != null));
+  const flushT = () => { if (tr.length > 1) out.push({ role: "_fold", _fold: "tools", id: tr[0].id, ts: tr[0].ts, ts2: tr[tr.length - 1].ts, tools: tr.flatMap(x => x.tools || []) }); else if (tr.length) out.push(tr[0]); tr = []; };
+  const flushH = () => { if (hb) out.push({ role: "_fold", _fold: "hb", id: hb.id, ts: hb.ts, ts2: hb.polls[hb.polls.length - 1], polls: hb.polls }); hb = null; };
+  for (const m of ms) {
+    if (isAnn(m)) { flushT(); flushH(); out.push({ role: "_fold", _fold: "ann", id: m.id || m.ts, ts: m.ts, src: m }); continue; }
+    if (isHb(m)) { flushT(); if (!hb) hb = { id: m.id || m.ts, ts: m.ts, polls: [] }; hb.polls.push(m.ts); continue; }
+    if (hb && isNoReply(m) && hbTurns.has(m.turnId)) continue;
+    const h = renderMsg(m, ctx, { first: true, last: true });
+    if (!h) { out.push(m); continue; }
+    if (h.startsWith('<div class="chainrow">')) { flushH(); tr.push(m); continue; }
+    flushT(); flushH(); out.push(m);
+  }
+  flushT(); flushH(); return out;
+}
+
+// 打码：密码 / 密钥 / token / secret / apikey / Authorization / Bearer / sk- 开头等。只用于「查看原文」的显示，纯函数、不记录、不上传。
+const MASK = "••••••";
+const SECRET_KEY = "pass(?:word|wd)?|pwd|secret|token|api[-_ ]?key|apikey|access[-_ ]?key|private[-_ ]?key|client[-_ ]?secret|credential|authorization|cookie|session[-_ ]?id|密码|密钥|口令|令牌";
+function maskSecrets(t) {
+  let s = String(t ?? "");
+  s = s.replace(/-----BEGIN [A-Z ]*PRIVATE KEY-----[\s\S]*?(?:-----END [A-Z ]*PRIVATE KEY-----|$)/g, "［已打码的私钥］");
+  s = s.replace(/\b(authorization\s*[:=]\s*)(?:bearer\s+|basic\s+)?[^\s,;"'&}]+/gi, (_, a) => a + MASK);
+  s = s.replace(/\b(bearer\s+)[A-Za-z0-9._~+\/=-]{6,}/gi, (_, a) => a + MASK);
+  s = s.replace(new RegExp(`(["']?(?:[\\w.-]*?(?:${SECRET_KEY})[\\w.-]*)["']?\\s*[:=：]\\s*)("[^"\\n]*"|'[^'\\n]*'|[^\\s,;"'&}\\]]+)`, "gi"), (_, a, v) => a + (v[0] === '"' || v[0] === "'" ? v[0] + MASK + v[0] : MASK));
+  s = s.replace(new RegExp(`(--[\\w-]*(?:${SECRET_KEY})[\\w-]*[ =])("[^"\\n]*"|'[^'\\n]*'|\\S+)`, "gi"), (_, a) => a + MASK);
+  s = s.replace(/\bsk-[A-Za-z0-9_-]{6,}/g, "sk-" + MASK);
+  s = s.replace(/\b(?:gh[pousr]_[A-Za-z0-9]{20,}|github_pat_[A-Za-z0-9_]{20,}|xox[abprs]-[A-Za-z0-9-]{10,}|AKIA[0-9A-Z]{16}|AIza[0-9A-Za-z_-]{30,})\b/g, MASK);
+  s = s.replace(/\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{4,}/g, MASK);
+  s = s.replace(/\b(?=[A-Za-z0-9_-]*\d)(?=[A-Za-z0-9_-]*[A-Za-z])[A-Za-z0-9_-]{40,}\b/g, MASK);
+  return s;
+}
+const ANN_MAX = 6000;
+const annText = m => { const r = scrub(maskSecrets(textOf(m.content))); return r.length > ANN_MAX ? r.slice(0, ANN_MAX) + "\n…（内容很长，只显示前 " + ANN_MAX + " 字）" : r; };
+const foldTimes = (a, b) => { const x = toMs(a), y = toMs(b); if (!x) return ""; const same = !y || new Date(x).toDateString() === new Date(y).toDateString(); return (DAY(x) === "今天" ? "" : DAY(x) + " ") + HM(x) + (y && HM(y) !== HM(x) ? "–" + (same ? "" : DAY(y) + " ") + HM(y) : ""); };
+function foldHtml(m, ctx) {
+  const t = foldTimes(m.ts, m.ts2);
+  if (m._fold === "tools") return `<div class="chainrow">${chainHtml({ id: m.id + "~f", tools: m.tools }, ctx, true)}<span class="meta">${esc(t)}</span></div>`;
+  const k = (m._fold === "ann" ? "a" : "h") + (m.id || m.ts);
+  if (m._fold === "ann") {
+    const on = !!ctx.revealK?.has(k);
+    return `<div class="chainrow annrow"><details class="chain fold" data-k="${esc(k)}" ${on || ctx.openK.has(k) ? "open" : ""}><summary><span class="ch-ic">🔔</span><span class="ch-sum">一条内部通知</span></summary>${on ? `<div class="foldbody annraw"><div class="annnote">已把密码、密钥这类内容打码。只能在这里看，不能复制或引用。</div><div class="annbox" draggable="false">${esc(annText(m.src))}</div></div>` : `<div class="foldbody">内部内容已隐藏</div>`}</details>${on ? `<button type="button" class="btn rvl" data-unreveal="${esc(k)}">收起原文</button>` : `<button type="button" class="btn rvl" data-reveal="${esc(k)}">查看原文</button>`}<span class="meta">${esc(t)}</span></div>`;
+  }
+  const first = toMs(m.polls[0]);
+  return `<div class="chainrow"><details class="chain fold" data-k="${esc(k)}" ${ctx.openK.has(k) ? "open" : ""}><summary><span class="ch-ic">💤</span><span class="ch-sum">保活 ${m.polls.length} 次</span></summary><div class="foldbody tchips">${m.polls.map(p => { const x = toMs(p); return `<span class="tchip">${x ? esc((new Date(x).toDateString() === new Date(first).toDateString() ? "" : DAY(x) + " ") + HM(x)) : "—"}</span>`; }).join("")}</div></details><span class="meta">${esc(t)}</span></div>`;
+}
+function renderList(ms, ctx) {
+  let out = "", prev = null, open = false;
+  ctx.trig = new Map(); for (const m of ms) if ((m.role === "user" || m.role === "system") && m.turnId != null && !ctx.trig.has(m.turnId) && toMs(m.ts) != null) ctx.trig.set(m.turnId, toMs(m.ts));
+  ms = foldMsgs(ms, ctx);
+  const close = () => { if (open) { out += "</section>"; open = false; } };
+  ms.forEach((m, i) => {
+    const html0 = renderMsg(m, ctx, { first: true, last: true }); if (!html0) return;
+    if (html0.startsWith('<div class="chainrow">')) { close(); out += html0; if (prev) prev.k = "~"; return; }
+    const ts = toMs(m.ts); let sep = "";
+    if (ts && (!prev || new Date(ts).toDateString() !== new Date(prev.ts).toDateString())) sep = `<div class="dsep"><span>${DAY(ts)}</span></div>`;
+    else if (ts && prev && ts - prev.ts > 20 * 60e3) sep = `<div class="dsep t"><span>${HM(ts)}</span></div>`;
+    const same = prev && !sep && prev.k === gkey(m) && ts - prev.ts <= 3 * 60e3;
+    if (!same) close();
+    out += sep;
+    let nx = null; for (let j = i + 1; j < ms.length; j++) { const h = renderMsg(ms[j], ctx, { first: true, last: true }); if (h) { nx = h.startsWith('<div class="chainrow">') ? null : ms[j]; break; } }
+    const nts = nx && toMs(nx.ts), last = !(nx && gkey(nx) === gkey(m) && nts - ts <= 3 * 60e3 && new Date(nts).toDateString() === new Date(ts).toDateString());
+    if (!same) { out += `<section class="mg ${gkey(m).startsWith("me") ? "me" : gkey(m) === "bot" ? "bot" : "oth"}">`; open = true; }
+    out += renderMsg(m, ctx, { first: !same, last });
+    prev = { k: gkey(m), ts: ts || 0 };
+  });
+  close(); return out;
+}
+function renderMsg(m, ctx = { openK: new Set() }, pos = { first: true, last: true }) {
+  if (m._fold) return foldHtml(m, ctx);
   const media = mediaOf(m);
   const t = textOf(m.content).replace(/^\s*-?\s*Attachment origins \(host metadata[^\n]*$/gim, "").replace(/^\[图片\]$/gm, media.some(x => x.kind === "image") ? "" : "[图片]");
   const role = m.role === "user" ? "user" : m.role === "assistant" ? "assistant" : "tool";
   const hasTools = role === "assistant" && m.tools?.length;
-  const atts = attHtml(m.attachments);
+  const atts = attHtml(m.attachments, true);
   if (!t.trim() && !media.length && !atts) return hasTools ? `<div class="chainrow">${chainHtml(m, ctx, true)}<span class="meta">${fmtTime(m.ts)}</span></div>` : "";
-  const who = role === "user" ? (m.owner ? "凛" : senderLabel(m) || "用户") : role === "assistant" ? "星野のねこ" + (m.model ? " · " + m.model : "") : (m.kind || m.role || "系统");
-  const sid = senderId(m), spk = ctx.group && role === "user" ? `<button type="button" class="speaker" ${isOpenId(sid) ? `data-prof="${esc(sid)}"` : "disabled"} title="${esc(sid || "")}">${esc(senderLabel(m) || (m.owner ? "凛" : "未知发言人"))}</button>` : "";
-  return spk + `<div class="msg ${role} ${role === "user" && !m.owner ? "other" : ""} ${m.isError ? "err" : ""} ${m.delivery === "silent" ? "silent" : ""} ${role === "tool" ? "" : "md"}">${hasTools ? chainHtml(m, ctx) : ""}${role === "tool" ? esc(t.slice(0, 2000)) : t.trim() ? md(t) : ""}${renderMedia(media)}${atts}<span class="meta">${esc(who)} · ${fmtTime(m.ts)}${deliveryBadge(m, ctx)}</span></div>`;
+  const cost = costText(m, ctx), src = srcOf(m);
+  const metaParts = role === "assistant" ? [m.model, cost] : role === "tool" ? [m.kind || m.role || "系统"] : [];
+  const showMeta = role === "assistant" || pos.last, seen = new Set();
+  const sid = senderId(m), spk = !pos.first ? "" : role === "user" && m.owner ? `<span class="speaker me">凛${src ? `<small>${src}</small>` : ""}</span>` : !ctx.group ? "" : role === "assistant" ? `<span class="speaker bot">星野のねこ</span>` : role === "user" ? `<button type="button" class="speaker" ${isOpenId(sid) ? `data-prof="${esc(sid)}"` : "disabled"} title="${esc(sid || "")}">${esc(senderLabel(m) || (m.owner ? "凛" : "未知发言人"))}</button>` : "";
+  return spk + `<div class="msg ${role} ${pos.first ? "gf" : ""} ${pos.last ? "gl" : ""} ${role === "user" && !m.owner ? "other" : ""} ${m.isError ? "err" : ""} ${role === "tool" ? "" : "md"}">${hasTools ? chainHtml(m, ctx) : ""}${role === "tool" ? esc(t.slice(0, 2000)) : t.trim() ? grayPaths(md(t), seen) : ""}${renderMedia(media, seen)}${atts}${showMeta ? `<span class="meta">${metaParts.filter(Boolean).map(x => `<span>${esc(x)}</span>`).join("")}<span class="tm">${HM(toMs(m.ts))}</span>${deliveryBadge(m, ctx)}</span>` : ""}</div>`;
 }
 function tuneSheet(sess, models, defaults) {
   const runtimes = [...new Set([sess.agentRuntime, ...models.map(m => m.runtime)].filter(Boolean))];
@@ -1082,6 +1240,7 @@ const HL_SEC = [
 const HL_TOP = ["enabled", "optOutPhrase"];
 const hlKey = s => String(s).replace(/\s+/g, "").toLowerCase();
 VIEWS.humanlike = async (v, sub) => {
+  if (sub === "voice") return voiceTtsView(v); if (sub === "voices") return voicesView(v);
   const tab = sub === "followups" ? "followups" : "";
   const tabs = `<div class="toolbar"><div class="seg stk-tabs" role="tablist">${[["", "设置"], ["followups", "待追问"]].map(([k, t]) => `<a role="tab" href="#/humanlike${k ? "/" + k : ""}" aria-pressed="${k === tab}">${t}</a>`).join("")}</div></div>`;
   const [d, ss] = await Promise.all([api.hlGet(), api.sessions().catch(() => ({ sessions: [] })), loadAliases()]);
@@ -1131,7 +1290,7 @@ VIEWS.humanlike = async (v, sub) => {
     for (const m of ["optOut", "perGroup"]) { const x = {}; for (const id of new Set([...Object.keys(H0[m] || {}), ...Object.keys(H[m] || {})])) if (!eq(H[m]?.[id], H0[m]?.[id])) x[id] = H[m]?.[id] ?? null; if (Object.keys(x).length) o[m] = x; }
     for (const [sec] of HL_SEC) { const a = H0[sec] || {}, b = H[sec] || {}, so = {}; for (const k of Object.keys(b)) if (!eq(a[k], b[k])) so[k] = b[k]; if (Object.keys(so).length) o[sec] = so; }
     return o; };
-  const root = paint(v, head + `<div id="hf"></div>` + dirtyBar("hsb", "保存设置"));
+  const root = paint(v, head + `<div class="card mlist vt-entry"><a class="mrow" href="#/humanlike/voice"><span class="mic">${ic("tune")}</span><span class="grow"><b>语音设置</b><small>语音引擎、情绪标记、Fish 和 MiMo 的声音</small></span><span class="mchev">${ic("chev")}</span></a><a class="mrow" href="#/humanlike/voices"><span class="mic">${ic("play")}</span><span class="grow"><b>音色</b><small>音色手册、在线找音色、添加备用音色</small></span><span class="mchev">${ic("chev")}</span></a></div>` + `<div id="hf"></div>` + dirtyBar("hsb", "保存设置"));
   const addTag = (sec, k, raw) => { const s = String(raw || "").trim(); const spec = HL_SEC.find(x => x[0] === sec)[3].find(f => f[0] === k); if (!s) return; if ([...s].length > spec[4] || /\n/.test(s)) return toast(`每条最多 ${spec[4]} 字，一行`); const list = H[sec][k] || []; if (list.length >= spec[3]) return toast(`最多 ${spec[3]} 条`); if (list.some(x => hlKey(x) === hlKey(s))) return toast("已经有了"); H[sec] = { ...H[sec], [k]: [...list, s] }; draw(); };
   root.addEventListener("keydown", e => { const t = e.target; if (t.dataset?.tagin && e.key === "Enter" && !e.isComposing) { e.preventDefault(); addTag(t.dataset.tagin, t.dataset.k, t.value); } });
   root.addEventListener("change", e => { const t = e.target, sec = t.dataset.hs, k = t.dataset.k;
@@ -1163,6 +1322,277 @@ VIEWS.humanlike = async (v, sub) => {
   });
   draw();
 };
+// ---------- 拟人化 → 语音设置（HOSINO-VOICE-TTS v1）：只管「用什么声音、怎么念」；发语音的频率在「表情库 → 参数」 ----------
+const VT_PROV = { xai: "Grok", fish: "Fish Audio", mimo: "小米 MiMo" };
+const VT_FB = { xai: "Grok", mimo: "小米 MiMo", none: "不发" };
+const VT_CUR_LABEL = { ...VT_PROV, none: "不发" };
+const VT_BOOL = new Set(["voiceEmotion.enabled", "fish.emotionTags", "fish.perSentence", "fish.stripLeadingUm"]);
+const VT_LABEL = { provider: "语音引擎", "fish.fallback": "Fish 失败时改用", "voiceEmotion.enabled": "让星野给语音加情绪标记", "voiceEmotion.markers": "允许的标记", "fish.emotionMap": "情绪映射表", "fish.defaultTag": "没有标记时用", "fish.emotionTags": "给每句加情绪标签", "fish.model": "Fish 模型", "fish.referenceId": "音色", "fish.temperature": "温度 temperature", "fish.topP": "top_p", "fish.timeoutSec": "每句超时", "fish.perSentence": "逐句合成再拼接", "fish.stripLeadingUm": "去掉开头的「嗯……」", "mimo.model": "MiMo 模型", "mimo.voice": "MiMo 音色" };
+// 与后端校验一致：标记 1–8 字、不含【】[]
+const vtMarkOk = k => typeof k === "string" && !!k.trim() && k.trim().length <= 8 && !/[【】\[\]]/.test(k);
+const vtFreqLink = () => `<div class="section">发语音的频率</div><div class="card mlist vt-freq"><a class="mrow" href="#/voice#rules"><span class="mic">${ic("tune")}</span><span class="grow"><b>语音频率设置</b><small>概率、冷却、每日上限、静默时段、单句字数都在「表情库 → 参数」的语音那一段，这里不重复</small></span><span class="mchev">${ic("chev")}</span></a></div>`;
+// ---------- 音色页（#/humanlike/voices），规格 staging/fish/voices-console-spec.md ----------
+const VV_LANGS = [["", "全部语言"], ["zh", "中文"], ["ja", "日语"], ["en", "英语"], ["ko", "韩语"], ["fr", "法语"], ["de", "德语"], ["es", "西语"]];
+const VV_LN = Object.fromEntries(VV_LANGS.filter(x => x[0]));
+const vvT = t => scrub(t).replace(/好感度/g, "··").replace(/延迟/g, "耗时");
+const vvE = t => esc(vvT(t));
+const vvErr = x => x?.status === 423 ? "默认音色（星野）已锁定，不能删除" : notReady(x) ? "音色接口后台还没上线，再等等哦" : vvT(x?.message || "出错了");
+const vvLangs = a => [].concat(a || []).map(x => VV_LN[x] || String(x)).join(" / ") || "未知";
+const vvNum = n => n == null ? "—" : Number(n) >= 10000 ? (Number(n) / 10000).toFixed(1) + " 万" : String(n);
+const VV_ID_RE = /^[0-9a-f]{32}$/, VV_ALIAS_RE = /^[a-z][a-z0-9_]{1,23}$/;
+function vvParse(raw) { const m = /^(?:https?:\/\/(?:www\.)?fish\.audio\/(?:[a-z-]+\/)?m\/)?([0-9a-f]{32})\/?(?:[?#].*)?$/i.exec(String(raw || "").trim()); return m ? m[1].toLowerCase() : null; }
+function vvNamesErr(alias, nick, desc) {
+  if (!VV_ALIAS_RE.test(alias)) return "别名要 2–24 位小写字母、数字或下划线，字母开头";
+  if (nick.length > 10) return "中文叫法最多 10 个";
+  if (nick.some(x => x.length > 16 || /[|`]/.test(x))) return "每个叫法 1–16 字，不能含 | 或 `";
+  if (desc.length > 120 || /[|\r\n]/.test(desc)) return "用途说明最多 120 字一行，不能含 |";
+  return "";
+}
+const vvCover = (id, title) => VV_ID_RE.test(id || "") ? `<span class="vv-cov"><img loading="lazy" alt="" src="/api/fun/voices/cover?id=${id}"><i aria-hidden="true">${esc([...vvT(title || "?")][0] || "?")}</i></span>` : `<span class="vv-cov"><i aria-hidden="true">${esc([...vvT(title || "?")][0] || "?")}</i></span>`;
+let vvAudio = null, vvUrl = null; const vvBusy = new Set();
+function vvStop() { vvReady = null; if (vvAudio) { vvAudio.pause(); vvAudio = null; } if (vvUrl) { URL.revokeObjectURL(vvUrl); vvUrl = null; } document.querySelectorAll(".vv-play.on,.vv-play.ready").forEach(b => { b.classList.remove("on", "ready"); b.lastChild.textContent = "试听"; }); }
+let vvReady = null; // autoplay 被拦时保留已下载的音频：{ key, a }，再点一次直接播放、不重新请求
+const VV_DECODE = "这段试听音频解不开，可能是生成出错了，稍后再试";
+const vvOn = (btn, a) => { btn.classList.remove("ready"); btn.classList.add("on"); btn.lastChild.textContent = "停止"; a.onended = () => vvStop(); a.onerror = () => { vvStop(); toast(VV_DECODE); }; };
+const vvHold = (btn, key, a) => { vvReady = { key, a }; vvAudio = a; btn.classList.add("ready"); btn.lastChild.textContent = "点一下播放"; toast("浏览器拦了自动播放，再点一次就能听（不会重新请求）"); };
+async function vvPlay(btn, key, text) {
+  if (vvReady && vvReady.key === key && btn.classList.contains("ready")) { const a = vvReady.a; vvReady = null;
+    try { await a.play(); vvOn(btn, a); } catch (e) { if (e?.name === "NotAllowedError") vvHold(btn, key, a); else { vvStop(); toast(VV_DECODE); } } return; }
+  const was = btn.classList.contains("on"); vvStop(); if (was) return;
+  if (vvBusy.has(key)) { toast("正在请求试听，稍等；试听会消耗额度"); return; }
+  if ([...text].length > 40) { toast("试听台词最多 40 字"); return; }
+  vvBusy.add(key); btn.disabled = true; btn.lastChild.textContent = "加载中…";
+  let csp = false; const onV = e => { if (String(e.blockedURI || "").startsWith("blob") && /^(media-src|default-src)/.test(e.effectiveDirective || e.violatedDirective || "")) csp = true; };
+  document.addEventListener("securitypolicyviolation", onV);
+  try {
+    const blob = await api.vvPreviewBlob(key, text);
+    vvStop(); vvUrl = URL.createObjectURL(blob); const a = new Audio(); a.preload = "none"; a.src = vvUrl; vvAudio = a;
+    let err = null; try { await a.play(); } catch (e) { err = e; }
+    if (err) {
+      for (let i = 0; i < 6 && !csp; i++) await new Promise(r => setTimeout(r, 50)); // violation 事件是异步派发的，等一小会儿
+      if (csp) { // 只有确实是 CSP 拦了 blob: 才回落同源地址：刚合成的这句已进后端缓存，命中不再计次
+        if (vvUrl) { URL.revokeObjectURL(vvUrl); vvUrl = null; }
+        a.src = "/api/fun/voices/preview?" + new URLSearchParams(text ? { id: key, text } : { id: key });
+        try { await a.play(); err = null; } catch (e2) { err = e2; } }
+      if (err) { if (err.name === "NotAllowedError") { vvHold(btn, key, a); return; } vvStop(); toast(VV_DECODE); btn.lastChild.textContent = "试听"; return; }
+    }
+    vvOn(btn, a);
+  } catch (x) { toast(x?.status != null ? vvErr(x) : VV_DECODE); btn.lastChild.textContent = "试听"; }
+  finally { document.removeEventListener("securitypolicyviolation", onV); btn.disabled = false; vvBusy.delete(key); }
+}
+async function voicesView(v) {
+  vvStop();
+  const head = top("音色", "拟人化 · 星野的声音库").replace('href="#/more" aria-label="返回更多"', 'href="#/humanlike" aria-label="返回拟人化"');
+  let L; try { L = await api.vvList(); } catch (x) {
+    paint(v, head + `<div class="card empty"><div class="em">🎙️</div><div>${notReady(x) ? "音色接口后台还没上线，上线后这里会显示音色手册" : "音色手册没读出来：" + vvE(x.message)}</div><button class="btn" data-vvre style="margin-top:14px">再试一次</button></div>`);
+    v.querySelector("[data-vvre]").onclick = () => route(); return;
+  }
+  const voices = Array.isArray(L?.voices) ? L.voices : [];
+  const have = new Set(voices.map(x => x.id));
+  const isDef = x => x.isDefault === true || (L?.default && x.alias === L.default);
+  const isLocked = x => x.locked === true;
+  const sorted = [...voices].sort((a, b) => isDef(b) - isDef(a));
+  const card = x => `<div class="card vv-item${isDef(x) ? " vv-def" : ""}">
+    <div class="vv-h">${vvCover(x.id, x.title || x.alias)}<b>${isDef(x) ? "⭐ " : ""}${vvE(x.title || x.alias)}</b><span class="vv-badges">${isDef(x) ? `<span class="pill vv-lock">默认</span>` : `<span class="pill">备用 · 仅点名</span>`}${isLocked(x) ? `<span class="pill vv-lock" title="默认音色，已锁定">🔒 已锁定</span>` : ""}</span></div>
+    <div class="vv-kv"><span>别名</span><code>${vvE(x.alias)}</code></div>
+    <div class="vv-kv"><span>中文叫法</span><em>${(x.nicknames || []).length ? (x.nicknames || []).map(vvE).join("、") : "—"}</em></div>
+    <div class="vv-kv"><span>Fish id</span><code class="vv-id">${vvE(x.id)}</code></div>
+    <div class="vv-kv"><span>素材语言</span><em>${esc(vvLangs(x.source_lang))}</em></div>
+    <div class="vv-kv"><span>可输出语言</span><em>${esc(vvLangs(x.output_langs))}</em></div>
+    <div class="vv-kv"><span>点赞</span><em>${vvNum(x.like_count ?? x.likes)}</em></div>
+    <div class="vv-kv"><span>使用次数</span><em>${vvNum(x.use_count ?? x.uses)}</em></div>
+    ${x.description ? `<div class="vv-kv"><span>用途说明</span><em>${vvE(x.description)}</em></div>` : ""}
+    <div class="vv-acts"><button class="btn vv-play" data-vvplay="${esc(x.alias)}" title="试听会消耗额度">${ic("play")}<span>试听</span></button>
+      <a class="btn" href="https://fish.audio/m/${esc(x.id)}" target="_blank" rel="noopener noreferrer">Fish 页面 ↗</a>
+      ${isLocked(x) ? "" : `<button class="btn danger" data-vvdel="${esc(x.alias)}">${ic("trash")}<span>删除</span></button>`}</div></div>`;
+  const root = paint(v, head + `<div class="vv-page">
+    <div class="hl-tip">ℹ️ 默认音色固定是星野中配（hoshino_zh）。这里添加的都是<b>备用音色，仅在点名时使用，默认音色不变</b>。改完下一条语音就生效。</div>
+    <label class="field vv-tt"><span>试听台词（选填，≤40 字；留空用默认台词）</span><input class="input" id="vvtext" maxlength="40" autocomplete="off" placeholder="老师，今天也要一起偷懒吗？"></label>
+    <p class="muted vv-quota">🔊 试听每次都会消耗 Fish 额度（同一句命中缓存不计），点了才会请求。</p>
+    <div class="section">音色手册（${voices.length}）</div>${sorted.map(card).join("") || `<div class="card empty">手册里还没有音色</div>`}
+    <div class="section">搜索 Fish 音色</div>
+    <div class="card"><label class="field"><span>按角色名搜索 Fish 社区</span><input class="input" id="vvq" type="search" maxlength="40" placeholder="比如：星野、Hoshino" autocomplete="off" enterkeyhint="search"></label>
+      <label class="field"><span>语言</span><select class="input" id="vvlang">${VV_LANGS.map(([k, t]) => `<option value="${k}">${t}</option>`).join("")}</select></label>
+      <button class="btn" data-vvgo style="width:100%">${ic("search")}<span>搜索 Fish 音色</span></button>
+      <div id="vvres" aria-live="polite"><p class="muted">输入角色名开始搜索</p></div></div>
+    <div class="section">直接贴 Fish 链接</div>
+    <div class="card"><label class="field"><span>fish.audio/m/… 链接或 32 位 id</span><input class="input" id="vvurl" autocomplete="off" inputmode="url" placeholder="https://fish.audio/m/…"></label>
+      <button class="btn primary" data-vvurl style="width:100%">${ic("plus")}<span>添加到音色库</span></button></div>
+    <details class="card vv-adv" data-vvadv><summary class="vv-advsum">高级</summary><p class="muted">添加和删除时会自动重建，这里只是备用。手改过 voices.json 之后，可以用它按音色库重写「音色手册.md」里的表格（只改表格，其余文字不动）。</p><button class="btn" data-vvregen style="width:100%">重建手册表格</button></details></div>`);
+  const tt = () => root.querySelector("#vvtext").value.trim();
+  root.addEventListener("error", e => { if (e.target?.matches?.(".vv-cov img")) e.target.remove(); }, true);
+  root.onclick = e => { const p = e.target.closest("[data-vvplay]"), a = e.target.closest("[data-vvadd]"); if (p && !p.disabled) vvPlay(p, p.dataset.vvplay, tt()); if (a) vvAddForm(a.dataset.vvadd); };
+  root.querySelectorAll("[data-vvdel]").forEach(b => b.onclick = async () => {
+    const a = b.dataset.vvdel; b.disabled = true;
+    try {
+      const pv = await api.vvDel(a, false); const rm = pv?.preview?.remove || {};
+      const ok = await confirmDialog({ title: `确认删除音色 ${vvT(a)}？`, danger: true, ok: "确认删除", body: `<b>${vvE(rm.title || a)}</b> · <code class="vv-id">${vvE(rm.id || "")}</code><br>手册表格删除这一行：<pre class="vv-row">${vvE(pv?.preview?.manualRowRemoved || "")}</pre>删除后还剩 ${esc(pv?.preview?.remaining ?? "?")} 个音色，旧文件会自动备份。` });
+      if (ok) { await api.vvDel(a, true); toast("已删除，旧手册已备份"); route(); return; }
+    } catch (x) { toast(vvErr(x)); }
+    b.disabled = false;
+  });
+  root.querySelector("[data-vvregen]").onclick = async e => {
+    const b = e.currentTarget; b.disabled = true;
+    try {
+      const pv = await api.vvRegen(false);
+      if (pv?.changed === false) { toast("手册表格已经是最新的，不用重建"); b.disabled = false; return; }
+      const rows = (Array.isArray(pv?.preview) ? pv.preview : []).map(vvE).join("\n");
+      if (await confirmDialog({ title: "重建手册表格？", ok: "重建", body: `会把表格数据行改成下面这样（旧手册自动备份）：<pre class="vv-row">${rows}</pre>` }) && await confirmDialog({ title: "确定重建吗？", ok: "确定重建", danger: true, body: "表头和其余说明文字不动。" })) { const r = await api.vvRegen(true); toast(r?.changed ? "已重建，旧手册已备份" : "没有变化"); }
+    } catch (x) { toast(vvErr(x)); }
+    b.disabled = false;
+  };
+  const res = root.querySelector("#vvres"), q = root.querySelector("#vvq"), lang = root.querySelector("#vvlang");
+  let seq = 0, tmr;
+  const draw = items => res.innerHTML = items.length ? items.map(x => `<div class="vv-r">
+      <div class="vv-h">${vvCover(x.id, x.title)}<b>${vvE(x.title || "（无名）")}</b>${x.author ? `<small class="muted">by ${vvE(x.author)}</small>` : ""}</div>
+      <div class="muted vv-meta">${esc(vvLangs(x.languages))} · 点赞 ${vvNum(x.like_count)} · 使用 ${vvNum(x.use_count)}</div>
+      ${x.description ? `<p class="muted vv-desc">${vvE(String(x.description).slice(0, 200))}</p>` : ""}
+      <div class="vv-acts"><button class="btn vv-play" data-vvplay="${esc(x.id)}" title="试听会消耗额度">${ic("play")}<span>试听</span></button>
+        ${have.has(x.id) || x.inLibrary ? `<span class="pill vv-in">已在库里</span>` : `<button class="btn primary" data-vvadd="${esc(x.id)}">${ic("plus")}<span>加入</span></button>`}
+        <a class="btn" href="https://fish.audio/m/${esc(x.id)}" target="_blank" rel="noopener noreferrer">fish.audio ↗</a></div></div>`).join("") : `<p class="muted">没搜到，换个名字或语言试试</p>`;
+  const search = async () => {
+    const t = q.value.trim(), my = ++seq; if (!t) { res.innerHTML = `<p class="muted">输入角色名开始搜索</p>`; return; }
+    res.innerHTML = `<p class="muted vv-loading">搜索中…</p>`;
+    try { const r = await api.vvSearch(t, lang.value, 20); if (my !== seq) return; draw((Array.isArray(r?.items) ? r.items : []).filter(x => VV_ID_RE.test(x?.id || ""))); }
+    catch (x) { if (my !== seq) return; res.innerHTML = `<div class="fun-warn vv-fail">搜索失败：${vvE(vvErr(x))}<br><button class="btn" data-vvretry style="margin-top:8px">重试</button></div>`; res.querySelector("[data-vvretry]").onclick = search; }
+  };
+  q.oninput = () => { clearTimeout(tmr); tmr = setTimeout(search, 450); };
+  q.onkeydown = e => { if (e.key === "Enter") { clearTimeout(tmr); search(); } };
+  lang.onchange = () => { clearTimeout(tmr); search(); };
+  root.querySelector("[data-vvgo]").onclick = () => { clearTimeout(tmr); search(); };
+  root.querySelector("[data-vvurl]").onclick = () => { const id = vvParse(root.querySelector("#vvurl").value); if (!id) { toast("链接格式不对：要 https://fish.audio/m/<32 位 id> 或直接 32 位 id"); return; } if (have.has(id)) { toast("这个音色已经在库里了"); return; } vvAddForm(id); };
+}
+function vvAddForm(id) {
+  const close = sheet(`<h2>添加到音色库</h2><p class="muted" style="font-size:14px">Fish id <code class="vv-id">${esc(id)}</code><br><b>仅在点名时使用，默认音色不变。</b></p>
+    <label class="field"><span>别名（英文，2–24 位）</span><input class="input" id="vva-al" maxlength="24" autocomplete="off" autocapitalize="off" placeholder="比如 shiroko_ja"></label>
+    <label class="field"><span>中文叫法（逗号分隔，最多 10 个）</span><input class="input" id="vva-nn" maxlength="200" autocomplete="off" placeholder="比如：白子，日配白子"></label>
+    <label class="field"><span>用途说明（选填，≤120 字）</span><input class="input" id="vva-de" maxlength="120" autocomplete="off"></label>
+    <div style="display:flex;gap:10px;margin-top:6px"><button class="btn" data-no style="flex:1">取消</button><button class="btn primary" data-yes style="flex:1">下一步：预览</button></div>`, el => {
+    el.querySelector("[data-no]").onclick = () => close();
+    const yes = el.querySelector("[data-yes]"), al = el.querySelector("#vva-al");
+    yes.onclick = async () => {
+      const alias = al.value.trim(), nicknames = [...new Set(el.querySelector("#vva-nn").value.split(/[,，、]/).map(x => x.trim()).filter(Boolean))], description = el.querySelector("#vva-de").value.trim();
+      const bad = vvNamesErr(alias, nicknames, description); if (bad) { toast(bad); al.focus(); return; }
+      const body = { id, alias, nicknames, description }; yes.disabled = true;
+      let pv; try { pv = await api.vvAdd(body, false); }
+      catch (x) { toast(x?.status === 409 && x.code !== "dup_id" ? vvErr(x) + "，换个别名或叫法吧" : vvErr(x)); yes.disabled = false; if (x?.status === 409 || x?.status === 400) { al.focus(); al.select(); } return; }
+      close();
+      const e = pv?.preview?.entry || {}, f = pv?.preview?.fish || {};
+      const ok = await confirmDialog({ title: "确认添加音色", ok: "确认添加", body: `<b>${vvE(e.title || f.title || alias)}</b>${f.author ? ` · by ${vvE(f.author)}` : ""}<br>别名 <code>${vvE(e.alias || alias)}</code>；中文叫法：${(e.nicknames || nicknames).map(vvE).join("、") || "—"}<br>素材语言：${esc(vvLangs(e.source_lang))}；可输出语言：${esc(vvLangs(e.output_langs))}<br>${e.style || description ? "用途说明：" + vvE(e.style || description) + "<br>" : ""}手册表格新增一行：<pre class="vv-row">${vvE(pv?.preview?.manualRow || "")}</pre><b>仅在点名时使用，默认音色不变。</b>` });
+      if (!ok) return;
+      try { await api.vvAdd(body, true); toast("已添加备用音色"); route(); } catch (x) { toast(vvErr(x)); }
+    };
+    setTimeout(() => al.focus(), 50);
+  });
+}
+async function voiceTtsView(v) {
+  const head = top("语音设置", "拟人化 · 星野的声音").replace('href="#/more" aria-label="返回更多"', 'href="#/humanlike" aria-label="返回拟人化"');
+  const [g, o, lb] = await Promise.allSettled([api.vtGet(), api.vtOptions(), api.vvList()]);
+  const libDef = lb.status === "fulfilled" && Array.isArray(lb.value?.voices) ? lb.value.voices.find(x => x?.isDefault === true) || null : null;
+  if (g.status === "rejected") { const x = g.reason; if (x?.status === 401) throw x;
+    const r0 = paint(v, head + `<div class="card empty vt"><b>🔈</b>${notReady(x) ? "语音设置的后台接口还没上线，上线后这里就能用" : "语音设置没读出来：" + esc(scrub(x?.message || "未知错误"))}<br><br><button type="button" class="btn" data-vtretry>再试一次</button></div>` + vtFreqLink());
+    r0.querySelector("[data-vtretry]").onclick = () => route(); return; }
+  const d = g.value || {}; let OPT = o.status === "fulfilled" && o.value && typeof o.value === "object" ? o.value : null; const optErr = OPT ? "" : (notReady(o.reason) ? "后台还没开放选项接口" : scrub(o.reason?.message || "未知错误"));
+  const K = d.keyPresent === true ? true : d.keyPresent === false ? false : null;
+  const clone = x => JSON.parse(JSON.stringify(x ?? {}));
+  const P0 = clone(d.params); for (const s of ["voiceEmotion", "fish", "mimo"]) if (!P0[s] || typeof P0[s] !== "object") P0[s] = {};
+  let P = clone(P0);
+  const eq = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
+  const changes = () => { const c = {}; if (!eq(P.provider, P0.provider)) c.provider = P.provider ?? null;
+    for (const s of ["voiceEmotion", "fish", "mimo"]) { const so = {}; for (const k of new Set([...Object.keys(P0[s]), ...Object.keys(P[s])])) { const a = P0[s][k], b = P[s][k]; const same = VT_BOOL.has(s + "." + k) ? (a === true) === (b === true) : eq(a, b); if (!same) so[k] = b === undefined ? null : b; } if (Object.keys(so).length) c[s] = so; }
+    return c; };
+  const sw = (key, on, lab) => `<span class="switch"><input type="checkbox" data-vb="${key}" ${on ? "checked" : ""} aria-label="${esc(lab)}"><i></i></span>`;
+  const swRow = (key, desc = "") => { const [s, k] = key.split("."); return `<label class="switchrow"><div class="grow"><b>${esc(VT_LABEL[key])}</b>${desc ? `<div class="faint fs">${desc}</div>` : ""}</div>${sw(key, P[s][k] === true, VT_LABEL[key])}</label>`; };
+  const sel = (key, items, cur) => { const has = items.some(([val]) => val === cur); const list = has || cur == null ? items : [[cur, (VT_CUR_LABEL[cur] || String(cur)) + "（当前）"], ...items];
+    return `<select class="input" data-vs="${key}" aria-label="${esc(VT_LABEL[key] || key)}" ${OPT ? "" : "disabled"}>${list.map(([val, t]) => `<option value="${esc(val)}" ${val === cur ? "selected" : ""}>${esc(t)}</option>`).join("")}</select>`; };
+  const tags = () => OPT && Array.isArray(OPT.emotionTags) ? OPT.emotionTags.map(String) : [];
+  const draw = () => { const y = scrollY, F = P.fish, E = P.voiceEmotion, fb = F.fallback;
+    const provs = OPT && Array.isArray(OPT.providers) ? OPT.providers.map(x => [String(x.id), String(x.label || VT_PROV[x.id] || x.id)]) : [];
+    const fbs = OPT && Array.isArray(OPT.fallbacks) ? OPT.fallbacks.map(x => [String(x), VT_FB[x] || String(x)]) : [];
+    const voices = OPT && Array.isArray(OPT.voices) ? OPT.voices.filter(x => x && /^[0-9a-f]{32}$/.test(x.id)) : [];
+    const knownVoice = voices.some(x => x.id === F.referenceId); const manual = root.dataset.manual === "1" || (!!F.referenceId && !knownVoice);
+    const map = F.emotionMap && typeof F.emotionMap === "object" ? F.emotionMap : {}; const mkeys = Object.keys(map); const marks = Array.isArray(E.markers) ? E.markers : [];
+    const fbTxt = fb === "none" ? "Fish 合成不了时就不发语音" : `会一直用 ${VT_FB[fb] || fb || "备用引擎"} 发`;
+    root.querySelector("#vtf").innerHTML = `
+      ${optErr ? `<div class="fun-warn vt-optwarn" role="status">⚠️ <b>选项没加载出来</b><span>${esc(optErr)}。引擎、音色、情绪标签这些下拉先只显示当前值、不能改，其它设置照常能改。</span><button type="button" class="btn sm" data-vtopt>重新加载选项</button></div>` : ""}
+      <div class="section">引擎</div><div class="card form">
+        <label class="field"><span>${VT_LABEL.provider}</span>${sel("provider", provs, P.provider)}</label>
+        <label class="field"><span>${VT_LABEL["fish.fallback"]}</span>${sel("fish.fallback", fbs, fb)}</label>
+        <div class="row vt-key"><div class="grow"><b>Fish 密钥</b><div class="faint fs">只显示有没有配置，密钥本身不会出现在这里，也不能在这里填</div></div><span class="pill ${K === true ? "ok" : K === false ? "warn" : ""}" data-vtkey="${K}">${K === true ? "已配置" : K === false ? "未配置（会一直回落）" : "未知"}</span></div>
+        ${libDef && typeof libDef.id === "string" && typeof F.referenceId === "string" && F.referenceId && libDef.id.toLowerCase() !== F.referenceId.toLowerCase() ? `<div class="hl-need" role="status" data-vtdefmis>⚠️ 默认音色和音色库标记的默认不一致<span class="faint fs" style="display:block">这里填的是 <code class="mono">${esc(F.referenceId)}</code>，音色库标记的默认是 ${vvE(libDef.title || libDef.alias || "")}（<code class="mono">${esc(libDef.id)}</code>）。不会自动改，也不影响保存。</span></div>` : ""}
+        ${K === false ? `<div class="hl-need" role="status">⚠️ Fish 密钥未配置，会一直用 ${esc(VT_FB[F.fallback] || VT_FB.xai)} 发</div>` : ""}
+      </div>
+      <div class="section">情绪标记 <span class="faint fs" style="font-weight:400">只在语音引擎是 Fish 时有声音效果，其它引擎会把认得的标记删掉再念</span></div>
+      <div class="card form fun-sec ${E.enabled === true ? "" : "off"}">
+        ${swRow("voiceEmotion.enabled", "关着时提示词与现在完全一样")}
+        ${P.provider !== "fish" && E.enabled === true ? `<div class="hl-need soft">ℹ️ 现在的引擎不是 Fish，情绪标记不会有声音效果</div>` : ""}
+        <div class="field"><span>${VT_LABEL["voiceEmotion.markers"]} <span class="faint fs">（${marks.length} / 30，一个都不选 = 用映射表全部）</span></span>
+          <div class="chips vt-chips">${mkeys.map(k => `<button type="button" class="chip" aria-pressed="${marks.includes(k)}" data-vmark="${esc(k)}" ${!marks.includes(k) && marks.length >= 30 ? "disabled" : ""}>${esc(k)}</button>`).join("") || `<span class="faint fs">映射表是空的</span>`}</div></div>
+        <label class="field"><span>${VT_LABEL["fish.defaultTag"]}</span>${sel("fish.defaultTag", [["", "无"], ...tags().map(t => [t, t])], F.defaultTag ?? "")}</label>
+        ${swRow("fish.emotionTags")}
+        <details class="vt-map"><summary>${VT_LABEL["fish.emotionMap"]} <span class="faint fs">（${mkeys.length} / 60 条，中文标记 → 标签）</span></summary>
+          <div class="vt-rows">${mkeys.map((k, i) => `<div class="inrow vt-mrow"><input class="input" value="${esc(k)}" maxlength="8" data-vmk="${i}" aria-label="第 ${i + 1} 条的中文标记" autocomplete="off"><span class="faint">→</span>${OPT ? `<select class="input" data-vmv="${i}" aria-label="第 ${i + 1} 条的标签">${[...new Set([...tags(), map[k]])].map(t => `<option value="${esc(t)}" ${t === map[k] ? "selected" : ""}>${esc(t)}</option>`).join("")}</select>` : `<span class="mono vt-tagro">${esc(map[k])}</span>`}<button type="button" class="btn sm vt-del" data-vmdel="${i}" aria-label="删除「${esc(k)}」">✕</button></div>`).join("")}</div>
+          ${mkeys.length < 60 && OPT ? `<div class="inrow vt-mrow vt-add"><input class="input" id="vtnk" maxlength="8" placeholder="新标记，1–8 字" autocomplete="off" aria-label="新标记"><span class="faint">→</span><select class="input" id="vtnv" aria-label="新标记的标签">${tags().map(t => `<option value="${esc(t)}">${esc(t)}</option>`).join("")}</select><button type="button" class="btn sm" data-vmadd>添加</button></div>` : ""}
+          <div class="fun-reset"><button type="button" class="btn sm" data-vmreset>↺ 映射表恢复默认…</button></div>
+        </details>
+      </div>
+      <div class="section">Fish 合成</div><div class="card form">
+        <label class="field"><span>${VT_LABEL["fish.model"]}</span><input class="input" value="${esc(F.model ?? "")}" maxlength="40" data-vt="fish.model" autocomplete="off" spellcheck="false"><div class="faint fs">字母数字 . _ -，最多 40 个。11-30 以后改用 s2.1-pro，按量付费。</div></label>
+        <label class="field"><span>${VT_LABEL["fish.referenceId"]}</span>${OPT ? `<select class="input" data-vs="fish.voice" aria-label="音色">${voices.map(x => `<option value="${esc(x.id)}" ${!manual && x.id === F.referenceId ? "selected" : ""}>${esc(x.title || x.alias || x.id)}${x.default ? "（默认）" : ""}</option>`).join("")}<option value="__manual" ${manual ? "selected" : ""}>手动填写 32 位 ID…</option></select>` : ""}
+          ${manual || !OPT ? `<input class="input mono" value="${esc(F.referenceId ?? "")}" maxlength="32" data-vt="fish.referenceId" placeholder="32 位十六进制" autocomplete="off" spellcheck="false" aria-label="音色 ID" style="margin-top:8px">` : ""}</label>
+        <label class="field"><span>${VT_LABEL["fish.temperature"]} <b class="tnum">${(+(F.temperature ?? 0)).toFixed(2)}</b></span><input type="range" class="range" min="0" max="1" step="0.05" value="${esc(F.temperature ?? 0.5)}" data-vr="fish.temperature"></label>
+        <label class="field"><span>${VT_LABEL["fish.topP"]} <b class="tnum">${(+(F.topP ?? 0)).toFixed(2)}</b></span><input type="range" class="range" min="0" max="1" step="0.05" value="${esc(F.topP ?? 0.6)}" data-vr="fish.topP"></label>
+        <label class="field"><span>${VT_LABEL["fish.timeoutSec"]}</span><div class="inrow"><input class="input" type="number" min="3" max="120" step="any" inputmode="decimal" value="${esc(F.timeoutSec ?? "")}" data-vn="fish.timeoutSec" data-min="3" data-max="120"><span class="faint">秒（3–120）</span></div></label>
+        ${swRow("fish.perSentence")}
+        ${swRow("fish.stripLeadingUm")}
+      </div>
+      <div class="section">MiMo（备用）</div><div class="card form">
+        <label class="field"><span>${VT_LABEL["mimo.model"]}</span><input class="input" value="${esc(P.mimo.model ?? "")}" maxlength="40" data-vt="mimo.model" autocomplete="off"></label>
+        <label class="field"><span>${VT_LABEL["mimo.voice"]}</span><input class="input" value="${esc(P.mimo.voice ?? "")}" maxlength="40" data-vt="mimo.voice" autocomplete="off"></label>
+      </div>
+      <button type="button" class="btn danger" data-vtall style="width:100%;margin-top:14px">全部恢复默认…</button>
+      ${vtFreqLink()}`;
+    root.querySelector("#vtsb").hidden = !Object.keys(changes()).length; scrollTo(0, y); };
+  const root = paint(v, head + `<div class="hl-need soft vt-tip">ℹ️ 改动下一次合成就生效；情绪标记提示约 5 秒内生效，不用重启。</div><div id="vtf" class="vt"></div>` + dirtyBar("vtsb", "保存语音设置"));
+  root.classList.add("vt-page");
+  const setF = (key, val) => { const [s, k] = key.split("."); if (!k) P[s] = val; else P[s] = { ...P[s], [k]: val }; };
+  const mapEntries = () => Object.entries(P.fish.emotionMap && typeof P.fish.emotionMap === "object" ? P.fish.emotionMap : {});
+  const bad = m => { toast(m); draw(); };
+  root.addEventListener("input", e => { const t = e.target; if (t.dataset.vr) { const n = Math.round(+t.value * 100) / 100; setF(t.dataset.vr, n); t.closest("label").querySelector(".tnum").textContent = n.toFixed(2); root.querySelector("#vtsb").hidden = !Object.keys(changes()).length; } });
+  root.addEventListener("change", e => { const t = e.target;
+    if (t.dataset.vb) { setF(t.dataset.vb, t.checked); return draw(); }
+    if (t.dataset.vs === "fish.voice") { if (t.value === "__manual") root.dataset.manual = "1"; else { root.dataset.manual = ""; setF("fish.referenceId", t.value); } return draw(); }
+    if (t.dataset.vs) { setF(t.dataset.vs, t.value); return draw(); }
+    if (t.dataset.vt) { const key = t.dataset.vt, s = t.value.trim();
+      if (key === "fish.model" && !/^[A-Za-z0-9._-]{1,40}$/.test(s)) return bad("模型名只能是 1–40 位字母数字 . _ -");
+      if (key === "fish.referenceId") { const id = s.toLowerCase(); if (!/^[0-9a-f]{32}$/.test(id)) return bad("音色 ID 要是 32 位十六进制"); setF(key, id); return draw(); }
+      if (key.startsWith("mimo.") && (!s || s.length > 40)) return bad("要是 1–40 字");
+      setF(key, s); return draw(); }
+    if (t.dataset.vn) { const s = t.value.trim(), n = Number(s), mn = +t.dataset.min, mx = +t.dataset.max; if (s === "" || !Number.isFinite(n) || n < mn || n > mx) return bad(`要在 ${mn}–${mx} 之间`); setF(t.dataset.vn, n); return draw(); }
+    if (t.dataset.vmk != null) { const i = +t.dataset.vmk, ent = mapEntries(), old = ent[i][0], s = t.value.trim();
+      if (!vtMarkOk(s)) return bad("标记要 1–8 字，不含【】[]"); if (s !== old && ent.some(([k]) => k === s)) return bad("映射表里已经有这个标记了");
+      ent[i] = [s, ent[i][1]]; setF("fish.emotionMap", Object.fromEntries(ent)); if (Array.isArray(P.voiceEmotion.markers)) setF("voiceEmotion.markers", P.voiceEmotion.markers.map(m => m === old ? s : m)); return draw(); }
+    if (t.dataset.vmv != null) { const ent = mapEntries(); ent[+t.dataset.vmv] = [ent[+t.dataset.vmv][0], t.value]; setF("fish.emotionMap", Object.fromEntries(ent)); return draw(); }
+  });
+  root.addEventListener("click", async e => { const b = e.target.closest("button"); if (!b) return;
+    if (b.dataset.vmark != null) { const k = b.dataset.vmark, m = Array.isArray(P.voiceEmotion.markers) ? P.voiceEmotion.markers : []; if (!m.includes(k) && m.length >= 30) return toast("最多选 30 个"); setF("voiceEmotion.markers", m.includes(k) ? m.filter(x => x !== k) : [...m, k]); return draw(); }
+    if (b.dataset.vmdel != null) { const ent = mapEntries(), [k] = ent[+b.dataset.vmdel]; ent.splice(+b.dataset.vmdel, 1); setF("fish.emotionMap", Object.fromEntries(ent)); const m = P.voiceEmotion.markers; if (Array.isArray(m) && m.includes(k)) { setF("voiceEmotion.markers", m.filter(x => x !== k)); toast(`「${k}」也从允许的标记里去掉了`); } return draw(); }
+    if (b.hasAttribute("data-vmadd")) { const k = root.querySelector("#vtnk").value.trim(), tg = root.querySelector("#vtnv").value, ent = mapEntries();
+      if (!vtMarkOk(k)) return toast("标记要 1–8 字，不含【】[]"); if (ent.some(([x]) => x === k)) return toast("映射表里已经有这个标记了"); if (ent.length >= 60) return toast("最多 60 条");
+      setF("fish.emotionMap", Object.fromEntries([...ent, [k, tg]])); draw(); root.querySelector(".vt-map").open = true; return; }
+    if (b.hasAttribute("data-vtopt")) { b.disabled = true; try { await api.vtOptions(); route(); } catch (x) { toast("还是没加载出来：" + scrub(x.message || "")); b.disabled = false; } return; }
+    if (b.hasAttribute("data-vmreset") || b.hasAttribute("data-vtall")) { const all = b.hasAttribute("data-vtall"), nm = all ? "全部语音设置" : "情绪映射表";
+      if (!await confirmDialog({ title: `${nm}恢复默认？`, body: all ? "引擎、情绪标记、Fish 和 MiMo 的设置都会回到默认值。" : "映射表会回到默认的 30 条；不在默认表里的「允许的标记」需要你重新选。", ok: "继续", danger: true })) return;
+      if (!await confirmDialog({ title: "确定恢复默认吗？", body: "旧设置会备份。其他还没保存的改动不会一起提交。", ok: "恢复默认", danger: true })) return;
+      try { const r = await api.vtSet(all ? { provider: null, voiceEmotion: null, fish: null, mimo: null } : { fish: { emotionMap: null }, ...(Array.isArray(P0.voiceEmotion.markers) && P0.voiceEmotion.markers.length ? { voiceEmotion: { markers: null } } : {}) }); toast(`${nm}已恢复默认${r?.backup ? "，旧设置已备份" : ""}`); route(); } catch (x) { toast(funErr(x)); } return; }
+    if (b.hasAttribute("data-reset")) { P = clone(P0); root.dataset.manual = ""; return draw(); }
+    if (b.hasAttribute("data-save")) { const c = changes(); if (!Object.keys(c).length) return;
+      const names = [...("provider" in c ? ["provider"] : []), ...["voiceEmotion", "fish", "mimo"].flatMap(s => Object.keys(c[s] || {}).map(k => s + "." + k))].map(k => VT_LABEL[k] || k);
+      if (!await confirmDialog({ title: "保存语音设置？", body: `会改这些：${esc(names.join("、"))}。下一次合成就生效。`, ok: "保存" })) return;
+      b.disabled = true; try { const r = await api.vtSet(c); toast(`已保存${r?.backup ? "，旧设置已备份" : ""}`); route(); } catch (x) { toast(funErr(x)); b.disabled = false; } }
+  });
+  draw();
+}
 VIEWS.config = async v => {
   const c = await api.config(); const cfg = c.config || {};
   const want = sessionStorage.getItem("hs-cfg"); sessionStorage.removeItem("hs-cfg"); const wantTop = want?.split(".")[0];
@@ -1184,6 +1614,7 @@ function confirmDialog({ title, body = "", ok = "确定", danger = false, typeTe
       yes.onclick = () => { fin(true); close(); };
     });
     [...document.querySelectorAll(".scrim")].at(-1)?.addEventListener("click", () => fin(false));
+    const host = [...document.querySelectorAll("[data-v3sheet]")].at(-1); if (host) host._onclose = () => fin(false);
   });
 }
 // 调用包装：接口没开放时温柔提示
@@ -1466,7 +1897,7 @@ VIEWS.digest = async (v, id) => {
     if (!e.target.closest("[data-x=runnow]")) return; const k = $("#rnk", root).value, nm = $("#rnk", root).selectedOptions[0]?.textContent;
     if (!await confirmDialog({ title: `现在就生成「${esc(nm)}」今天的群报？`, body: "会在后台生成，不会发到 QQ。", ok: "继续" })) return;
     if (!await confirmDialog({ title: "这会消耗额度", body: `立即生成要调用一次文字模型和一次配图模型，<b>会实打实消耗额度</b>。${(LIST || []).some(x => x.sessionKey === k && x.day === sgToday()) ? `<br><br>⚠️ 今天（${sgToday()}）这个会话<b>已经有一份群报了</b>，重新生成会<b>覆盖</b>它，并且<b>再扣一次额度</b>。` : ""}确定要现在生成吗？`, ok: "消耗额度并生成", danger: true })) return;
-    if (await act(() => api.digestRunNow(k), "已开始生成，稍等一会儿就会出现在列表里")) { drawList(); setTimeout(() => current === "digest" && !id && drawList(), 15000); }
+    if (await act(() => api.digestRunNow(k), "已开始生成，稍等一会儿就会出现在列表里")) { drawList(); setTimeout(() => (current === "groups" || current === "digest") && !id && drawList(), 15000); }
   });
   let LIST = []; const drawList = () => section($("#dgl", root), "最近的群报", () => api.digests(null, 30).then(r => (LIST = r.digests || [], r)), d => (d.digests || []).length ? `<div class="dg-list">${d.digests.map(x => `<a class="card dg-item" href="#/digest/${encodeURIComponent(x.id)}">${x.image ? `<img class="dg-thumb" src="${esc(api.digestImage(x.id))}" alt="" loading="lazy">` : `<div class="dg-thumb ph">📰</div>`}<div class="grow"><div class="dg-h"><b>${esc(aliasFor(x.sessionKey) || x.name || x.sessionKey)}</b>${dgPill(x.status)}</div><div class="faint" style="font-size:12.5px">${esc(x.day || "")}${x.messageCount != null ? ` · ${x.messageCount} 条消息` : ""}${x.durationMs ? " · 用时 " + tdur(x.durationMs) : ""}</div>${x.preview ? `<div class="dg-prev">${esc(x.preview)}</div>` : ""}</div></a>`).join("")}</div>${d.total > d.digests.length ? `<div class="faint" style="font-size:12.5px;margin-top:6px">共 ${d.total} 份，显示最近 ${d.digests.length} 份</div>` : ""}` : `<div class="card empty"><b>📰</b>还没有群报<br><span style="font-size:12.5px">打开总开关和想要的会话，到点就会自动生成</span></div>`);
   await drawSettings(); drawRun(); drawList();
@@ -1639,7 +2070,7 @@ async function voiceSection(host, d, groupsBase) {
   for (const k of new Set([...Object.keys(V?.perConversation || {}), ...Object.keys(VT.perConversation || {})])) if (keyOk(k) && !groups.some(g => g.k === k)) { const id = k.slice(6); groups.push({ k, name: aliasFor(id) || "群 " + shortId(id.toUpperCase()) }); }
   const val = (k) => V?.[k] ?? VD[k];
   const sw = (name, on) => `<span class="switch"><input type="checkbox" data-v="${name}" ${on ? "checked" : ""}><i></i></span>`;
-  const FIELDS = ["enabled", "probability", "cooldownReplies", "tz", "quietHours", "defaultEnabled", "maxChars", "dailyLimit", "exclusiveWithSticker"];
+  const FIELDS = ["enabled", "probability", "explicitRequestOverride", "cooldownReplies", "tz", "quietHours", "defaultEnabled", "maxChars", "dailyLimit", "exclusiveWithSticker"];
   const changes = () => { if (!V) return {}; const o = {}; for (const k of FIELDS) if (JSON.stringify(V[k] ?? null) !== JSON.stringify(V0?.[k] ?? null)) o[k] = V[k] ?? null;
     const a = V0?.perConversation || {}, b = V.perConversation || {}, pc = {};
     for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) if (JSON.stringify(a[k] ?? null) !== JSON.stringify(b[k] ?? null)) pc[k] = b[k] ? { enabled: b[k].enabled !== false, ...(b[k].probability != null ? { probability: b[k].probability } : {}) } : null;
@@ -1653,9 +2084,10 @@ async function voiceSection(host, d, groupsBase) {
       <div class="card form">
         <label class="switchrow"><div class="grow"><b>语音总开关</b><div class="faint fs">只管群聊里的语音</div></div>${sw("enabled", V.enabled !== false)}</label>
         <label class="field"><span>每轮发语音的概率 <b class="tnum" id="vpv">${pr}%</b></span><input type="range" min="0" max="100" step="1" value="${pr}" data-v="probability" class="range"></label>
+        <label class="switchrow"><div class="grow"><b>群里明确要语音时必发</b><div class="faint fs">开启后，群里有人明确要语音（如「发语音」「用贝利亚的声音说」「来段可莉语音」）时，这一轮跳过随机概率和冷却，不再改发表情包，直接发一句语音。总开关、本群开关、静默时段、每日上限仍然生效。关闭时行为与现在完全相同。</div></div>${sw("explicitRequestOverride", V.explicitRequestOverride === true)}</label>
         <label class="field"><span>冷却</span><div class="inrow"><input class="input" type="number" min="0" max="100" step="1" inputmode="numeric" value="${esc(V.cooldownReplies ?? "")}" data-v="cooldownReplies"><span class="faint">条回复内不再发</span></div></label>
         <div class="vc-est" id="vest">📈 <b>估算</b>：${esc(voiceEstTxt(V.probability, V.cooldownReplies, lim()))}<div class="faint fs">按每群每天约 ${VOICE_REPLIES_PER_DAY} 条回复估算，没算静默时段，只是个大概。</div></div>
-        <label class="field"><span>每群每天最多</span><div class="inrow"><input class="input" type="number" min="0" max="1000" step="1" inputmode="numeric" value="${esc(V.dailyLimit ?? "")}" data-v="dailyLimit"><span class="faint">条（0 = 不限）</span></div></label>
+        <label class="field"><span>每群每天最多 ${V.dailyLimit === 0 ? `<b class="pill ac">不限</b>` : ""}</span><div class="inrow"><input class="input" type="number" min="0" max="1000" step="1" inputmode="numeric" value="${esc(V.dailyLimit ?? "")}" data-v="dailyLimit"><span class="faint">条（0 = 不限）</span></div></label>
         <label class="field"><span>台词最长</span><div class="inrow"><input class="input" type="number" min="1" max="200" step="1" inputmode="numeric" value="${esc(V.maxChars ?? "")}" data-v="maxChars"><span class="faint">字，超过就改发文字</span></div></label>
         <label class="switchrow"><div class="grow"><b>和表情包二选一</b><div class="faint fs">${V.exclusiveWithSticker !== false ? "先掷语音，掷中了这一轮就不配表情" : "两边各掷各的，但每条消息最多带 1 个媒体"}</div></div>${sw("exclusiveWithSticker", V.exclusiveWithSticker !== false)}</label>
       </div>
@@ -1739,7 +2171,7 @@ async function stkParams(v, tabs) {
     const norm = m => Object.fromEntries(Object.entries(m || {}).sort(([a], [b]) => a < b ? -1 : 1).map(([k, v]) => [k, { enabled: v.enabled !== false, ...(v.probability != null ? { probability: v.probability } : {}) }]));
     if (JSON.stringify(norm(P0.sessions)) !== JSON.stringify(norm(P.sessions))) o.sessions = norm(P.sessions); return o; };
   const root = paint(v, top("表情库", "参数") + tabs + `<div id="pf"></div>` + dirtyBar("psb") + `<div id="vf"></div>`);
-  voiceSection(root.querySelector("#vf"), d, groups);
+  if (v.closest?.(".v3body")) root.querySelector("#vf").innerHTML = `<div class="section">语音</div><div class="card mlist"><a class="mrow" href="#/voice#rules"><span class="mic">${ic("play")}</span><span class="grow"><b>发语音的规则搬到了「语音」</b><small>概率、冷却、每日上限、静默时段、按群开关</small></span><span class="mchev">${ic("chev")}</span></a></div>`; else voiceSection(root.querySelector("#vf"), d, groups);
   root.addEventListener("input", e => { const t = e.target; if (t.dataset.p === "attachProbability") { P.attachProbability = +t.value / 100; root.querySelector("#prv").textContent = t.value + "%"; root.querySelector("#psb").hidden = !Object.keys(changes()).length; } });
   root.addEventListener("change", e => { const t = e.target, k = t.dataset.p;
     if (t.dataset.prob) { const v = t.value.trim(); const c = { ...P.sessions[t.dataset.prob] }; if (v === "") delete c.probability; else { const n = +v; if (!(n >= 0 && n <= 1)) { toast("概率要在 0 到 1 之间"); t.value = c.probability ?? ""; return; } c.probability = Math.round(n * 100) / 100; } P.sessions = { ...P.sessions, [t.dataset.prob]: c }; }
@@ -1922,8 +2354,206 @@ document.addEventListener("keydown", e => {
 
 // ---- 6 PWA ----
 if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) {
-  addEventListener("load", () => navigator.serviceWorker.register("/sw.js?v=20261022164516").catch(() => {}));
+  addEventListener("load", () => navigator.serviceWorker.register("/sw.js?v=20261101195157").catch(() => {}));
 }
+
+
+// ================= v3：一个主题一页（更多 → 主题页，最多两层） =================
+const OLDV = { ...VIEWS };
+const V3T = [
+  ["persona", "人设", "people", "技术模式 · 拟人化 · 小脾气 · 人设文件", [
+    ["tech", "技术模式", { fn: v3Tech }, "一眼看开没开"], ["humanlike", "拟人化", { v: "humanlike", s: "" }, "追问、主见、口癖、护短…"], ["followups", "待追问", { v: "humanlike", s: "followups" }, "过几天要问的事"],
+    ["fun", "小脾气", { v: "fun", s: "" }, "记仇、群梗、吃醋"], ["grudges", "记仇本", { v: "fun", s: "grudges" }, ""], ["gags", "群梗", { v: "fun", s: "gags" }, ""],
+    ["play", "玩梗（准备中）", { fn: v3Play }, "还没上线"], ["files", "人设文件", { v: "files", s: "" }, "人设、说话风格"], ["backup", "小脾气备份", { v: "fun", s: "trash" }, ""]]],
+  ["voice", "语音", "play", "发语音规则 · 合成 · 音色库", [
+    ["rules", "发语音规则", { fn: v3VoiceRules }, "概率、冷却、上限、静默、按群"], ["tts", "合成", { v: "humanlike", s: "voice" }, "合成服务和参数"], ["voices", "音色库", { v: "humanlike", s: "voices" }, "试听、添加、删除"]]],
+  ["stickers", "表情", "smile", "表情库 · 生成 · 参数 · 形象与分类", [
+    ["list", "表情库", { v: "stickers", s: "" }, ""], ["gen", "生成", { v: "stickers", s: "gen" }, ""], ["params", "发表情参数", { v: "stickers", s: "params" }, ""], ["manifest", "形象与分类", { v: "stickers", s: "manifest" }, ""], ["trash", "回收目录", { v: "stickers", s: "trash" }, ""]]],
+  ["memory", "记忆", "brain", "按人看 · 记错的 · 文件 · 备份", [
+    ["people", "按人看", { v: "memory", s: "" }, ""], ["flags", "记错的", { v: "memory", s: "flags" }, ""], ["files", "记忆文件", { v: "memory", s: "files" }, "只能看"], ["backups", "删除备份", { v: "memory", s: "backups" }, ""]]],
+  ["groups", "群", "people", "群报 · 互动统计 · 审批与配对", [
+    ["digest", "群报", { v: "digest", s: "" }, "每天到点自动生成"], ["stats", "互动统计", { v: "interactions", s: "" }, ""], ["approvals", "审批与配对", { v: "approvals", s: "" }, "需要你点头的事"]]],
+  ["abilities", "能力与任务", "plug", "插件与技能 · 工具 · 定时任务", [
+    ["plugins", "插件与技能", { v: "plugins", s: "" }, ""], ["tools", "工具与扩展", { v: "tools", s: "" }, ""], ["cron", "定时任务", { v: "cron", s: "" }, ""]]],
+  ["system", "系统维护", "gear", "渠道 · 审计与诊断 · 主动行为 · 配置", [
+    ["channels", "渠道", { v: "channels", s: "" }, "连接状态"], ["audit", "审计与诊断", { v: "audit", s: "" }, ""], ["behavior", "主动行为参数", { v: "behavior", s: "" }, "只读；要改主动搭话请去 人设 › 拟人化"], ["config", "配置", { v: "config", s: "" }, "网关配置"]]],
+];
+const V3G = [["她是谁", ["persona", "voice", "stickers", "memory"]], ["她在哪、做什么", ["groups", "abilities", "system"]]];
+const TOPIC = Object.fromEntries(V3T.map(([k, t, i, d, secs]) => [k, { k, t, i, d, secs: secs.map(([id, title, src, sum]) => ({ id, title, src, sum })) }]));
+// 侧栏/搜索/标题：底部导航页 + 主题页
+{ const keep = ROUTES.filter(r => TABS0.includes(r[0])); ROUTES.length = 0; ROUTES.push(...keep, ...V3T.map(([k, t, i]) => [k, t, i])); }
+
+// 旧路由 → 新锚点（d = 详情，用底部弹层打开）
+function v3alias(name, rest) {
+  const [a, ...b] = (rest || "").split("/"); const tail = b.join("/");
+  const M = {
+    humanlike: () => ({ "": ["persona", "humanlike"], followups: ["persona", "followups"], voice: ["voice", "tts"], voices: ["voice", "voices"] })[rest || ""],
+    fun: () => ({ "": ["persona", "fun"], grudges: ["persona", "grudges"], gags: ["persona", "gags"], trash: ["persona", "backup"] })[rest || ""],
+    files: () => rest ? ["persona", "files", { file: rest }] : ["persona", "files"],
+    stickers: () => ({ gen: ["stickers", "gen"], params: ["stickers", "params"], manifest: ["stickers", "manifest"], trash: ["stickers", "trash"] })[rest],
+    memory: () => a === "s" ? ["memory", "people", { v: "memory", s: rest, t: "这个人的记忆" }] : a === "files" ? (tail ? ["memory", "files", { v: "memory", s: rest, t: tail }] : ["memory", "files"]) : ({ flags: ["memory", "flags"], backups: ["memory", "backups"] })[rest],
+    digest: () => rest ? ["groups", "digest", { v: "digest", s: rest, t: "群报" }] : ["groups", "digest"],
+    interactions: () => rest ? ["groups", "stats", { v: "interactions", s: rest, t: "互动统计" }] : ["groups", "stats"],
+    approvals: () => ["groups", "approvals"], plugins: () => ["abilities", "plugins"], tools: () => ["abilities", "tools"], cron: () => ["abilities", "cron"],
+    channels: () => ["system", "channels"], audit: () => ["system", "audit"], behavior: () => ["system", "behavior"], config: () => ["system", "config"],
+  };
+  const r = M[name]?.(); return r ? { t: r[0], sec: r[1], d: r[2] } : null;
+}
+const v3parse = h => { const m = /^#\/([^#]*)(?:#(.*))?$/.exec(h || "") || []; const path = m[1] || "overview"; const [name, ...r] = path.split("/"); let rest = ""; try { rest = r.map(decodeURIComponent).join("/"); } catch { rest = r.join("/"); } return { name: name || "overview", rest, sec: m[2] || "" }; };
+
+// ---- 状态（sessionStorage）：展开的分区、滚动、展开全部、搜索词 ----
+const v3st = k => { try { return JSON.parse(sessionStorage.getItem("v3st:" + k)) || {}; } catch { return {}; } };
+const v3put = (k, o) => { try { sessionStorage.setItem("v3st:" + k, JSON.stringify({ ...v3st(k), ...o })); } catch {} };
+let V3 = null; // 当前主题页 { k, el, rendered:Set, lastSec }
+let v3hist = +(history.state?.i || 0), v3dir = 0;
+const v3stamp = () => { const i = history.state?.i; if (i == null) { const n = (+sessionStorage.getItem("v3i") || 0) + 1; sessionStorage.setItem("v3i", n); history.replaceState({ ...(history.state || {}), i: n }, ""); v3dir = 1; v3hist = n; } else { v3dir = i < v3hist ? -1 : i > v3hist ? 1 : 0; v3hist = i; } };
+const v3dirty = () => !!document.querySelector("#view .savebar:not([hidden])");
+function v3saveScroll() { if (V3 && document.contains(V3.el)) v3put(V3.k, { y: scrollY }); }
+for (const ev of ["wheel", "touchmove", "keydown", "pointerdown"]) addEventListener(ev, () => { if (V3?.pin) { V3.pin = null; V3.lock = 0; } }, { passive: true });
+addEventListener("scroll", () => { if (!V3 || !document.contains(V3.el)) return; clearTimeout(v3saveScroll.t); v3saveScroll.t = setTimeout(() => { v3saveScroll(); v3spy(); }, 120); }, { passive: true });
+
+// ---- 弹层接入历史：开弹层 pushState，返回键只关弹层 ----
+let v3pageHash = "";
+const v3closeAll = () => document.querySelectorAll("[data-v3sheet]").forEach(s => s.remove());
+addEventListener("popstate", e => {
+  const open = [...document.querySelectorAll("[data-v3sheet]")];
+  if (open.length) { const s = open.at(-1); if (s._v3dirty?.()) { history.pushState({ ...(history.state || {}), sheet: 1, i: v3hist }, ""); confirmDialog({ title: "还有改动没保存", body: "确定关掉吗？改动会丢掉。", ok: "关掉", danger: true }).then(ok => { if (ok) s.remove(); }); return; } s._v3close ? s._v3close() : s.remove(); return; }
+  // 弹层被界面关掉后留下的空历史：和当前页同一个地址时再退一步
+  if (e.state?.sheet && v3parse(location.hash).name === v3parse(v3pageHash).name && v3parse(location.hash).rest === v3parse(v3pageHash).rest) history.back();
+});
+
+// ---- 主题页 ----
+async function v3renderSec(T, s, body) {
+  body.dataset.v3sec = s.id; V3.rendered.add(s.id);
+  const st = v3st(T.k);
+  try { if (s.src.fn) await s.src.fn(body); else await OLDV[s.src.v](body, s.src.s); }
+  catch (e) { if (e.status === 401) throw e; body.innerHTML = `<div class="card empty"><b>😿</b>这一块没加载出来：${esc(scrub(e.message || ""))}<br><br><button class="btn" data-v3retry="${s.id}">再试一次</button></div>`; }
+  v3tidy(body, T.k, s.id);
+  const q = st.q?.[s.id]; const inp = body.querySelector('input[type="search"]'); if (q && inp && !inp.value) { inp.value = q; inp.dispatchEvent(new Event("input", { bubbles: true })); }
+}
+// 去掉旧页面自带的标题栏和分页条；长列表只显示前几条
+function v3tidy(body, k, sid) {
+  body.querySelectorAll(":scope > .view > header.top, :scope > .view > .toolbar:has(.stk-tabs)").forEach(x => x.remove());
+  const all = v3st(k).all || {};
+  body.querySelectorAll(":scope > .view > .list, :scope > .view .card > .list:not(.flat), :scope > .view .dg-list, :scope > .view .stk-grid").forEach((L, i) => {
+    const lim = L.classList.contains("stk-grid") ? 12 : 5, n = L.children.length, key = sid + ":" + i;
+    const nx = L.nextElementSibling?.classList.contains("v3all") ? L.nextElementSibling : null;
+    if (n <= lim || all[key]) { L.classList.remove("v3cut"); nx?.remove(); return; }
+    L.classList.add("v3cut"); L.style.setProperty("--v3lim", lim); L.dataset.v3lim = lim;
+    if (!nx) L.insertAdjacentHTML("afterend", `<button type="button" class="btn v3all" data-v3all="${esc(key)}">展开全部 ${n} 个</button>`);
+    else nx.textContent = `展开全部 ${n} 个`;
+  });
+}
+function v3observe(body, k, sid) { const mo = new MutationObserver(() => { mo.disconnect(); v3tidy(body, k, sid); mo.observe(body, { childList: true, subtree: true }); }); mo.observe(body, { childList: true, subtree: true }); }
+
+async function v3topic(T, sec, opts = {}) {
+  const v = $("#view"); const st = v3st(T.k);
+  // 同一个主题页：只滚到分区（或在原地重绘刚操作过的分区）
+  if (V3 && V3.k === T.k && document.contains(V3.el) && !opts.fresh) {
+    if (sec && sec !== V3.curSec && !opts.redraw) return v3goSec(sec, true);
+    const y = scrollY; const ids = V3.lastSec && V3.rendered.has(V3.lastSec) ? [V3.lastSec] : [...V3.rendered];
+    for (const id of ids) { const s = T.secs.find(x => x.id === id); const d = V3.el.querySelector(`#v3s-${id}`); if (s && d?.open) await v3renderSec(T, s, d.querySelector(".v3body")); }
+    scrollTo(0, y); return;
+  }
+  sessionStorage.setItem("v3last", T.k);
+  const open = new Set(st.open || [T.secs[0].id]); if (sec) open.add(sec);
+  const chips = T.secs.map(s => `<a class="v3chip" href="#/${T.k}#${s.id}" data-v3chip="${s.id}">${esc(s.title)}</a>`).join("");
+  const secs = T.secs.map(s => `<details class="v3sec card" id="v3s-${s.id}" data-sec="${s.id}" ${open.has(s.id) ? "open" : ""}><summary><b>${esc(s.title)}</b>${s.sum ? `<span class="v3sum">${esc(s.sum)}</span>` : ""}<span class="v3tg" aria-hidden="true"></span></summary><div class="v3body"></div></details>`).join("");
+  v.innerHTML = `<div class="view v3page" data-t="${T.k}"><div class="v3head"><div class="v3bc" aria-label="当前位置"><a href="#/more" data-v3back>更多</a> › <b>${esc(T.t)}</b><span id="v3bcs"></span></div>
+    <div class="v3row"><a class="v3back" href="#/more" data-v3back aria-label="返回更多">‹ 更多</a><h1>${esc(T.t)}</h1><button class="iconbtn" data-act="search" aria-label="全局搜索">${ic("search")}</button><button class="iconbtn" data-act="theme" aria-label="切换深浅色">${ic(isDark() ? "sun" : "moon")}</button></div>
+    <nav class="v3chips" aria-label="分区">${chips}</nav></div>${secs}</div>`;
+  V3 = { k: T.k, el: v.firstChild, rendered: new Set(), curSec: "", lastSec: "" };
+  document.title = `${T.t} · 星野控制台`;
+  const el = V3.el;
+  el.querySelectorAll("details.v3sec").forEach(d => { const s = T.secs.find(x => x.id === d.dataset.sec), body = d.querySelector(".v3body"); v3observe(body, T.k, s.id);
+    d.addEventListener("toggle", async () => { v3put(T.k, { open: [...el.querySelectorAll("details.v3sec[open]")].map(x => x.dataset.sec) }); if (d.open && !V3.rendered.has(s.id)) { body.innerHTML = `<div class="skel"></div>`; await v3renderSec(T, s, body); } }); });
+  await Promise.all([...el.querySelectorAll("details.v3sec[open]")].map(d => v3renderSec(T, T.secs.find(x => x.id === d.dataset.sec), d.querySelector(".v3body"))));
+  if (!document.contains(el)) return;
+  if (sec) v3goSec(sec, false); else if (v3dir < 0 || opts.restore) scrollTo(0, st.y || 0); else scrollTo(0, 0);
+  v3spy(); for (const t of [500, 1400]) setTimeout(() => { if (V3?.el === el) { if (!sec && (v3dir < 0 || opts.restore) && Math.abs(scrollY - (st.y || 0)) > 4) scrollTo(0, st.y || 0); v3spy(); } }, t);
+}
+async function v3goSec(id, smooth) {
+  const d = V3?.el.querySelector(`#v3s-${CSS.escape(id)}`); if (!d) return;
+  if (!d.open) d.open = true; // toggle 事件负责渲染
+  V3.lock = Date.now() + 2400; V3.pin = id;
+  history.replaceState(history.state, "", `#/${V3.k}#${id}`); v3pageHash = location.hash;
+  await new Promise(r => setTimeout(r, 30));
+  const go = b => { if (!V3 || !document.contains(d)) return; const y = d.getBoundingClientRect().top + scrollY - (V3.el.querySelector(".v3head").offsetHeight + 8); scrollTo({ top: Math.max(0, y), behavior: b }); };
+  V3.lock = Date.now() + 2400; const el = V3.el;
+  go(smooth && !matchMedia("(prefers-reduced-motion: reduce)").matches ? "smooth" : "auto");
+  v3mark(id);
+  // 上面的分区异步加载会把位置顶走，内容到齐后再对齐一次
+  for (const t of [450, 1100, 2000]) setTimeout(() => { if (V3?.el === el && V3.curSec === id && Date.now() < V3.lock + 200) go("auto"); }, t);
+}
+function v3mark(id) { if (!V3) return; V3.curSec = id; V3.el.querySelectorAll("[data-v3chip]").forEach(c => c.classList.toggle("on", c.dataset.v3chip === id)); const s = TOPIC[V3.k].secs.find(x => x.id === id); const b = V3.el.querySelector("#v3bcs"); if (b) b.textContent = s ? " › " + s.title : "";
+  const c = V3.el.querySelector(`[data-v3chip="${id}"]`); if (c) { const n = c.parentElement; const l = c.offsetLeft - n.clientWidth / 2 + c.offsetWidth / 2; n.scrollTo({ left: Math.max(0, l) }); } }
+function v3spy() { if (!V3 || !document.contains(V3.el) || V3.pin || Date.now() < (V3.lock || 0)) return; const h = V3.el.querySelector(".v3head").getBoundingClientRect().bottom + 12; let cur = null;
+  for (const d of V3.el.querySelectorAll("details.v3sec")) { if (d.getBoundingClientRect().top <= h) cur = d.dataset.sec; }
+  if (!cur) cur = V3.el.querySelector("details.v3sec")?.dataset.sec || null;
+  // 刚定位过去的分区（太靠底、滚不到顶）只要还在屏幕上半部分就保持高亮
+  const k = V3.curSec && V3.el.querySelector(`#v3s-${CSS.escape(V3.curSec)}`); if (k && cur !== V3.curSec) { const r = k.getBoundingClientRect(); if (r.top <= innerHeight * 0.45 && r.bottom > h) cur = V3.curSec; }
+  if (cur !== (V3.curSec || null)) { v3mark(cur || ""); history.replaceState(history.state, "", `#/${V3.k}${cur ? "#" + cur : ""}`); v3pageHash = location.hash; } }
+
+// 主题页里的点击：芯片、展开全部、返回、旧链接（同主题时原地处理）
+document.addEventListener("click", async e => {
+  const a = e.target.closest("a[href^='#/']");
+  if (V3 && document.contains(V3.el) && e.target.closest("#view")) { const sd = e.target.closest("details.v3sec"); if (sd) V3.lastSec = sd.dataset.sec; }
+  const chip = e.target.closest("[data-v3chip]"); if (chip) { e.preventDefault(); return v3goSec(chip.dataset.v3chip, true); }
+  const all = e.target.closest("[data-v3all]"); if (all) { const k = V3?.k; if (!k) return; const st = v3st(k); v3put(k, { all: { ...(st.all || {}), [all.dataset.v3all]: true } }); const L = all.previousElementSibling; L?.classList.remove("v3cut"); all.remove(); return; }
+  const rt = e.target.closest("[data-v3retry]"); if (rt && V3) { const s = TOPIC[V3.k].secs.find(x => x.id === rt.dataset.v3retry); const body = rt.closest(".v3body"); return v3renderSec(TOPIC[V3.k], s, body); }
+  if (!a || e.defaultPrevented || e.button || e.metaKey || e.ctrlKey) return;
+  const href = a.getAttribute("href"); const p = v3parse(href);
+  // 返回「更多」：上一条历史就是「更多」时退回去，否则替换，不多留历史
+  if (a.hasAttribute("data-v3back")) { e.preventDefault(); if (!await v3leaveOk()) return; if (sessionStorage.getItem("v3prev") === "more" && history.length > 1) history.back(); else location.replace("#/more"); return; }
+  if (a.closest(".sheet") && !a.closest("[data-v3sheet]")) return; // 其他弹层自己处理
+  const al = !TOPIC[p.name] || p.rest ? v3alias(p.name, p.rest) : null;
+  const tk = al ? al.t : TOPIC[p.name] ? p.name : null;
+  if (tk && V3 && V3.k === tk && document.contains(V3.el)) { e.preventDefault(); a.closest("[data-v3sheet]")?._v3close?.(true); const sec = al ? al.sec : p.sec; if (sec) await v3goSec(sec, true); if (al?.d) v3detail(al.d); return; }
+  if (v3dirty() && !a.closest("[data-v3sheet]")) { e.preventDefault(); if (await v3leaveOk()) { v3skip = true; location.hash = href; } }
+}, true);
+let v3skip = false;
+async function v3leaveOk() { if (!v3dirty()) return true; const ok = await confirmDialog({ title: "还有改动没保存", body: "确定离开吗？没保存的改动会丢掉。", ok: "离开", danger: true }); if (ok) v3skip = true; return ok; }
+
+// 详情：底部弹层
+function v3detail(d) {
+  if (d.file) return fileEditor(d.file);
+  sheet(`<div class="v3dh"><b>${esc(d.t || "详情")}</b><button type="button" class="btn sm" data-v3x>关闭</button></div><div class="v3dbody"><div class="skel"></div></div>`, async (el, close) => {
+    el.classList.add("wide", "v3d"); el.querySelector("[data-v3x]").onclick = () => close();
+    const body = el.querySelector(".v3dbody"); const mo = new MutationObserver(() => body.querySelectorAll("header.top").forEach(x => x.remove())); mo.observe(body, { childList: true, subtree: true });
+    try { await OLDV[d.v](body, d.s); } catch (x) { if (x.status === 401) throw x; body.innerHTML = `<div class="card empty"><b>😿</b>${esc(scrub(x.message || ""))}</div>`; }
+  }, "v3detail");
+}
+
+// 分区：技术模式
+async function v3Tech(body) {
+  const d = await api.hlGet(); const tm = d.params?.techMode || {}; const on = tm.enabled === true;
+  body.innerHTML = `<div class="view"><div class="card form"><label class="switchrow"><div class="grow"><b>技术模式 ${on ? pill("开着", "ac") : pill("关着")}</b><div class="faint fs">聊代码、日志、报错时，所有拟人效果全关。${tm.stickyMin != null ? `最后一条技术消息后保持 ${esc(tm.stickyMin)} 分钟。` : ""}</div></div><span class="switch"><input type="checkbox" data-v3tm ${on ? "checked" : ""} aria-label="开启技术模式"><i></i></span></label>
+    <div class="faint fs">关键词、口令等完整参数在下面「拟人化」分区的第一张卡里。</div></div></div>`;
+  body.querySelector("[data-v3tm]").onchange = async e => { const want = e.target.checked;
+    if (!await confirmDialog({ title: want ? "打开技术模式？" : "关掉技术模式？", body: want ? "打开后拟人效果全部暂停，直到你关掉。" : "关掉后，聊技术话题时拟人效果也会照常出现。", ok: want ? "打开" : "关掉", danger: !want })) { e.target.checked = !want; return; }
+    if (await act(() => api.hlSet({ techMode: { enabled: want } }), want ? "技术模式已打开" : "技术模式已关闭")) { V3.lastSec = "tech"; route(); } else e.target.checked = !want; };
+}
+// 分区：玩梗（只预留，不发任何新字段）
+async function v3Play(body) {
+  body.innerHTML = `<div class="view"><div class="card empty v3play"><b>🧪</b>黑客梗、简短回复、嘴硬这三个功能还在准备，凛点头后才上线。<br><span class="faint fs">到时这里会有：总开关、概率、每日上限、按群开关、技术聊天里不玩梗的安全锁。</span></div></div>`;
+}
+// 分区：发语音规则（从表情参数里搬出来）
+async function v3VoiceRules(body) {
+  const [d, ss] = await Promise.all([api.stickerParams(), api.sessions().catch(() => ({ sessions: [] }))]); await loadAliases();
+  const groups = (ss.sessions || []).map(x => ({ x, t: qqTarget(x.key) })).filter(o => o.t?.kind === "group").map(o => ({ k: "group:" + o.t.id.toLowerCase(), name: sessName(o.x) }));
+  body.innerHTML = `<div class="view"><div id="vf"></div></div>`; await voiceSection(body.querySelector("#vf"), d, groups);
+}
+
+// 「更多」：主题入口 + 刚才进去的那一行高亮
+VIEWS.more = async v => {
+  const last = sessionStorage.getItem("v3last");
+  const row = (href, icon, t, d, extra = "", tag = "") => `<a class="mrow" href="${href}" ${extra}><span class="mic">${ic(icon)}</span><span class="grow"><b>${esc(t)}</b>${d ? `<small>${esc(d)}</small>` : ""}</span>${tag}<span class="mchev">${ic("chev")}</span></a>`;
+  const body = V3G.map(([g, ks]) => `<div class="section">${esc(g)}</div><div class="card mlist">${ks.map(k => { const T = TOPIC[k]; return row(`#/${k}`, T.i, T.t, T.d, `data-v3t="${k}"`, k === "persona" ? `<span class="pill" id="v3tmtag" hidden></span>` : ""); }).join("")}</div>`).join("");
+  const root = paint(v, top("更多") + body + `<div class="section">外观与账号</div><div class="card mlist">${row("#", isDark() ? "sun" : "moon", isDark() ? "切换到浅色" : "切换到深色", "跟随你的选择保存在这台设备", 'data-mx="theme"')}${row("#", "out", "退出登录", "", 'data-mx="out"')}</div>`);
+  root.addEventListener("click", e => { const a = e.target.closest("[data-mx]"); if (!a) return; e.preventDefault(); if (a.dataset.mx === "theme") { toggleTheme(); route(); } else logout(); });
+  api.hlGet().then(d => { const t = root.querySelector("#v3tmtag"); if (!t) return; const on = d.params?.techMode?.enabled === true; t.hidden = false; t.className = "pill" + (on ? " ac" : ""); t.textContent = "技术模式 " + (on ? "开" : "关"); }).catch(() => {});
+  if (last) { const r = root.querySelector(`[data-v3t="${last}"]`); if (r) { setTimeout(() => { r.scrollIntoView({ block: "nearest" }); r.classList.add("v3hl"); setTimeout(() => r.classList.remove("v3hl"), 1600); }, 30); } sessionStorage.removeItem("v3last"); }
+};
 
 // ---------- 启动 ----------
 setUnauthedHandler(() => showLogin());

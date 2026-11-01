@@ -34,6 +34,23 @@ export const api = {
   funTrash: () => get("/api/fun/trash"),
   hlGet: () => get("/api/fun/humanlike"),
   hlSet: params => post("/api/fun/humanlike/set", { params, confirm: true }),
+  vtGet: () => get("/api/fun/voice-tts"),
+  vtOptions: () => get("/api/fun/voice-tts/options"),
+  vtSet: params => post("/api/fun/voice-tts/set", { params, confirm: true }),
+  // 音色库（预览两步：先不带 confirm 拿预览，确认后带 confirm:true）
+  vvList: () => get("/api/fun/voices"),
+  vvSearch: (title, language, page_size = 20) => get("/api/fun/voices/search", { title, language, page_size }),
+  vvAdd: (b, confirm) => post("/api/fun/voices/add", confirm ? { ...b, confirm: true } : b),
+  vvDel: (alias, confirm) => post("/api/fun/voices/delete", confirm ? { alias, confirm: true } : { alias }),
+  vvRegen: confirm => post("/api/fun/voices/regen-manual", confirm ? { confirm: true } : {}),
+  // 试听（每次真合成都花 Fish 额度）：只在用户点击时调用；fetch 拿 blob，失败读 JSON 中文提示（429 rate_session/hour/day）
+  vvPreviewBlob: async (id, text) => {
+    const url = "/api/fun/voices/preview?" + new URLSearchParams(text ? { id, text } : { id });
+    let r; try { r = await fetch(url, { credentials: "include", cache: "no-store", headers: { ...CSRF } }); } catch { throw new ApiError("网络好像断开了，稍后再试试", 0); }
+    if (r.status === 401) onUnauthed();
+    if (!r.ok) { let d = null; try { d = await r.json(); } catch {} throw new ApiError(d?.error || `试听失败（${r.status}）`, r.status, d?.code); }
+    return r.blob();
+  },
   hlFollowups: () => get("/api/fun/humanlike/followups"),
   // v2.9 原生 CLI
   cliTools: refresh => get("/api/cli/tools", refresh ? { refresh: 1 } : null),

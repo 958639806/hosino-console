@@ -501,7 +501,7 @@ const R = {
   },
   "POST /api/abort": async (u, b) => call("chat.abort", { sessionKey: b.key }),
   "POST /api/patch": async (u, b) => { const p = { key: b.key }; for (const k of ["model", "agentRuntime", "thinkingLevel", "label", "pinned", "fastMode"]) if (k in b) p[k] = b[k]; cache.clear(); return call("sessions.patch", p); },
-  "GET /api/models": async () => cached("models", 60e3, async () => { const r = await call("models.list"); return { models: r.models.map(m => ({ id: m.id, name: m.name, alias: m.alias, provider: m.provider, contextWindow: m.contextWindow, reasoning: m.reasoning, tags: m.tags, available: m.available, runtime: m.agentRuntime?.id, thinkingDefault: m.thinkingDefault })) }; }),
+  "GET /api/models": async () => cached("models", 60e3, async () => { /* HOSINO-MODELS-UNKNOWN v1：includeDetails 让网关保留三态（available 缺省=未知，如 OAuth 令牌过期待刷新）；未知按可选，只有网关明确 false 才置灰 */ let r; try { r = await call("models.list", { includeDetails: true }); } catch (e) { if (e?.code !== "INVALID_REQUEST") throw e; r = await call("models.list"); } if (!Array.isArray(r?.models)) throw new Error("网关未返回模型列表"); return { models: r.models.map(m => ({ id: m.id, name: m.name, alias: m.alias, provider: m.provider, contextWindow: m.contextWindow, reasoning: m.reasoning, tags: m.tags, available: m.available !== false, availability: m.available === false ? "unavailable" : m.available === true ? "available" : "unknown", ...(m.available === false && ["missing-auth", "auth-failed", "cooldown"].includes(m.unavailableReason) ? { unavailableReason: m.unavailableReason } : {}), runtime: m.agentRuntime?.id, thinkingDefault: m.thinkingDefault })) }; }),
   "GET /api/usage": async () => cached("usage", 120e3, async () => { const [u, c, mi] = await Promise.all([call("usage.status").then(redact), claudeUsage(), mimoUsage()]); const providers = (u.providers || []).filter(p => p.provider !== "anthropic"); providers.push(c); const xi = providers.findIndex(p => p.provider === "xiaomi-token-plan"); if (xi >= 0) providers[xi] = { ...providers[xi], ...mi }; else providers.push({ provider: "xiaomi-token-plan", displayName: "Xiaomi MiMo Token Plan", ...mi }); return { ...u, providers }; }),
   "GET /api/vpn": async () => vpnStatus(),
   "GET /api/link": async () => vpnStatus(), // 线路状态（与旧接口同一份数据）
@@ -520,7 +520,7 @@ const R = {
 };
 
 // ---------- v2.6：每日群报 / 星野日记 / 互动统计 / 表情库 / 主动行为参数 ----------
-// 全部不向 QQ 发送：不调用 chat.send / send / qq 相关写方法。生图与总结走本机 CLI `openclaw infer`（一次性推理，无会话、无投递）。
+// 生成阶段不向 QQ 发送（生图与总结走本机 CLI `openclaw infer`，一次性推理、无会话、无投递）。v2.13 起新增“投递”阶段，见下方 HS-DIGEST-DELIVER v1：只发送已生成好的群报，开关默认开，可在 digest-settings.json / API 调整。
 const WORKSPACE = process.env.OPENCLAW_WORKSPACE || "/home/ubuntu/.openclaw/workspace";
 const OPENCLAW_BIN = process.env.OPENCLAW_BIN || "/home/ubuntu/.npm-global/bin/openclaw";
 const DIGEST_IMAGE_MODEL = process.env.DIGEST_IMAGE_MODEL || "openai/gpt-6-luna";
@@ -530,18 +530,18 @@ const DIGEST_DIR = path.join(DATA, "digests");
 const sgParts = (ms = Date.now()) => { const p = Object.fromEntries(new Intl.DateTimeFormat("en-CA", { timeZone: TZ, year: "numeric", month: "2-digit", day: "2-digit", hour: "2-digit", minute: "2-digit", hourCycle: "h23" }).formatToParts(ms).map(x => [x.type, x.value])); return { day: `${p.year}-${p.month}-${p.day}`, hm: `${p.hour}:${p.minute}` }; };
 const sgDayOf = ms => sgParts(ms).day;
 const atomicWrite = (f, data) => { fs.mkdirSync(path.dirname(f), { recursive: true, mode: 0o700 }); const tmp = f + ".tmp-" + process.pid; fs.writeFileSync(tmp, data, { mode: 0o600 }); fs.renameSync(tmp, f); fs.chmodSync(f, 0o600); };
-const digestSettings = jsonStore("digest-settings.json", () => ({ enabled: true, time: "22:00", sessions: {}, lastRun: {} }));
+const digestSettings = jsonStore("digest-settings.json", () => ({ enabled: true, time: "22:00", sessions: {}, lastRun: {}, deliver: { enabled: true, sessions: {} } }));
 const isHM = s => /^([01]\d|2[0-3]):[0-5]\d$/.test(String(s || ""));
 const runCli = (args, t) => new Promise(r => execFile(OPENCLAW_BIN, args, { timeout: t, maxBuffer: 8 << 20, env: { ...process.env, NO_COLOR: "1" } }, (e, o, er) => r({ e: e ? String(er || e.message).trim().slice(-400) : null, o: o || "" })));
 const lastJson = s => { const i = s.indexOf("{"); if (i < 0) return null; try { return JSON.parse(s.slice(i)); } catch { for (const l of s.trim().split("\n").reverse()) { try { return JSON.parse(l); } catch {} } return null; } };
 const usageOf = j => { if (!j || typeof j !== "object") return null; const u = j.usage || j.result?.usage || j.meta?.usage || j.attempts?.find?.(a => a.usage)?.usage || null; const cost = j.cost ?? j.usage?.cost ?? j.meta?.cost ?? null; return u || cost != null ? { ...(u || {}), ...(cost != null ? { cost } : {}) } : null; };
 const textOfJson = j => j?.outputs?.map?.(o => o?.text).filter(Boolean).join("\n") || j?.text || j?.output || j?.payloads?.map?.(p => p.text).filter(Boolean).join("\n") || j?.result?.text || null;
 const digestRunning = new Set();
-async function runDigest(key, day) {
+async function runDigest(key, day, opts = {}) {
   if (digestRunning.has(key + day)) throw httpErr(409, "该会话当天群报正在生成");
   digestRunning.add(key + day); const t0 = Date.now();
   const id = `${day}__${crypto.createHash("sha1").update(key).digest("hex").slice(0, 10)}`;
-  const rec = { id, sessionKey: key, name: aliasFor(key) || key, day, startedAt: t0, status: "running", messageCount: 0, text: null, image: null, usage: { text: null, image: null }, errors: [] };
+  const rec = { id, sessionKey: key, name: aliasFor(key) || key, day, startedAt: t0, trigger: opts.trigger === "schedule" ? "schedule" : "manual", status: "running", messageCount: 0, text: null, image: null, usage: { text: null, image: null }, errors: [] };
   const save = () => atomicWrite(path.join(DIGEST_DIR, id + ".json"), JSON.stringify(rec, null, 1));
   try {
     const raw = await call("chat.history", { sessionKey: key, limit: 1000 }, 20000);
@@ -579,10 +579,94 @@ setInterval(async () => {
     for (const [key, on] of Object.entries(s.sessions || {})) {
       if (!on || s.lastRun?.[key] === day) continue;
       const cur = digestSettings.load(); digestSettings.save({ ...cur, lastRun: { ...(cur.lastRun || {}), [key]: day } });
-      await runDigest(key, day);
+      await runDigest(key, day, { trigger: "schedule" });
     }
   } catch (e) { console.error("digest tick", e.message); } finally { digestTick = false; }
 }, 60e3).unref();
+// ---------- HS-DIGEST-DELIVER v1（v2.13）：把当天已生成的群报（图片 + 文字）发到对应 QQ 群 ----------
+// 通道：网关 RPC `send`（控制台“QQ 直发”同一条已验证的路径，target=qqbot:group:<大写ID>）；图片用 base64 buffer 随 RPC 传入（不经本地路径，因此消息里绝不会出现路径或 MEDIA:）。
+// 开关：digest-settings.json 的 deliver.enabled（默认 true）+ deliver.sessions[key]=false 可单独关某个群；不依赖 QQ_SEND_ENABLED（那是手动直发的闸）。
+// 防重：data/digest-delivery.json，每个 日期+群（= 群报 id）一条记录，图片/文字分别记 sent，已 sent 的步骤永不重发。
+// 失败：每次 tick 最多尝试一次，最多 DIGEST_DELIVER_MAX_ATTEMPTS 次（默认 3，间隔 1/3/5 分钟），之后标 failed 停止（手动 /api/digests/deliver 可 force 重试）；失败写 ops.log，不影响生成。
+// 只投递 trigger=schedule 的群报（手动“立即生成”不会自动发群）；没有 trigger 字段的旧记录，若生成时间不早于设定时间点，也按定时处理（兼容部署当天由旧代码生成的群报）。
+// DIGEST_DELIVER_DRY=1：只打印目标与内容、不调用网关（staging 用）。
+const DIGEST_DELIVER_DRY = /^(1|true|on|yes)$/i.test(process.env.DIGEST_DELIVER_DRY || "");
+const DIGEST_DELIVER_MAX = Math.max(1, Math.min(5, Math.floor(+process.env.DIGEST_DELIVER_MAX_ATTEMPTS) || 3));
+const DIGEST_DELIVER_BACKOFF = [60e3, 180e3, 300e3, 300e3, 300e3].map(x => x * (+process.env.DIGEST_DELIVER_BACKOFF_SCALE || 1));
+const DIGEST_IMG_MAX = 12 << 20;
+const digestDelivery = jsonStore("digest-delivery.json", () => ({ records: {} }));
+const digestDeliverCfg = s => ({ enabled: s?.deliver?.enabled !== false, sessions: s?.deliver?.sessions && typeof s.deliver.sessions === "object" ? s.deliver.sessions : {} });
+const digestTargetOf = key => { const m = /^agent:[^:]+:qqbot:group:([0-9a-fA-F]{32})$/.exec(String(key || "")); return m ? `qqbot:group:${m[1].toUpperCase()}` : null; };
+// 发给群的文字：去掉本地路径、MEDIA: 行、markdown 图片/本地链接、qqmedia 标签；限长
+function digestSafeText(text) {
+  let t = String(text || "");
+  t = t.replace(/!\[[^\]]*\]\([^)]*\)/g, "").replace(/\[([^\]]*)\]\((?:\/|file:|~)[^)]*\)/g, "$1").replace(/<\/?qqmedia>/gi, "");
+  t = t.split("\n").filter(l => !/^\s*MEDIA:/i.test(l)).join("\n").replace(/MEDIA:\S*/gi, "");
+  t = t.replace(/(?:file:\/\/)?\S*\/\S+\.(?:png|jpe?g|gif|webp|mp3|wav|silk)\b/gi, "").replace(/(?:file:\/\/)?\/(?:home|opt|tmp|root|var|srv|etc|workspace)\/[^\s)）]+/g, "");
+  t = t.replace(/[ \t]+\n/g, "\n").replace(/\n{3,}/g, "\n\n").trim();
+  return t.length > 1800 ? t.slice(0, 1800).replace(/\s+\S*$/, "") + "…" : t;
+}
+const digestScheduled = (d, s) => d.trigger === "schedule" || (d.trigger == null && sgParts(d.startedAt).hm >= (s?.time || "22:00") && sgDayOf(d.startedAt) === d.day);
+const digestDeliverable = d => !!d && (d.status === "ok" || d.status === "partial") && typeof d.text === "string" && d.text.trim() && !!digestTargetOf(d.sessionKey);
+const digestSleep = ms => new Promise(r => setTimeout(r, ms));
+const digestDelivering = new Set();
+function digestPlan(d) {
+  const to = digestTargetOf(d.sessionKey); const text = digestSafeText(d.text);
+  let file = null, bytes = 0;
+  if (d.image && /^\d{4}-\d\d-\d\d__[0-9a-f]{10}\.png$/.test(String(d.image))) { const f = path.join(DIGEST_DIR, d.image); try { const st = fs.statSync(f); if (st.isFile() && st.size > 0 && st.size <= DIGEST_IMG_MAX) { file = f; bytes = st.size; } } catch {} }
+  return { to, text, file, bytes };
+}
+// 一次投递尝试（只做还没 sent 的步骤）。返回 { done, rec }。opt.send 可注入（单元测试用）
+async function digestDeliverOnce(d, opt = {}) {
+  const callFn = opt.call || call; const store = digestDelivery.load(); const recs = (store.records ||= {});
+  const r = (recs[d.id] ||= { id: d.id, day: d.day, sessionKey: d.sessionKey, status: "pending", attempts: 0, image: d.image ? "pending" : "none", text: "pending", createdAt: Date.now() });
+  const plan = digestPlan(d); const last = r.attempts + 1 >= DIGEST_DELIVER_MAX || opt.force === true;
+  if (!plan.to) { r.status = "skipped"; r.reason = "not-qq-group"; digestDelivery.save(store); return { done: true, rec: r }; }
+  r.attempts += 1; r.lastAttemptAt = Date.now(); r.errors = r.errors || [];
+  let to = plan.to, accountId = "default", sessionKey;
+  try { const ss = (await callFn("sessions.list", { limit: 500 }, 15000)).sessions || []; const s = ss.find(x => x.key === d.sessionKey); const dc = s?.deliveryContext || {}; if (s && (dc.channel || s.channel) === "qqbot" && dc.to && /^qqbot:group:[A-Za-z0-9_-]{6,80}$/.test(dc.to)) { to = dc.to; accountId = dc.accountId || "default"; sessionKey = s.key; } } catch {}
+  const fail = (step, e) => { const m = `${step}: ${String(e?.message || e).slice(0, 200)}`; r.errors.push(m); if (r.errors.length > 8) r.errors.shift(); r.lastError = m; };
+  try {
+    if (r.image === "pending") {
+      if (!plan.file) { r.image = "none"; r.errors.push("image: 文件缺失或过大，仅发文字"); }
+      else {
+        try { const buf = fs.readFileSync(plan.file); await callFn("send", { to, channel: "qqbot", accountId, buffer: buf.toString("base64"), filename: "digest.png", contentType: "image/png", idempotencyKey: `digest-${d.id}-image` }, 60000); r.image = "sent"; r.imageAt = Date.now(); await digestSleep(opt.gapMs ?? 1500); }
+        catch (e) { fail("image", e); if (!last) { r.status = "retry"; r.nextAt = Date.now() + DIGEST_DELIVER_BACKOFF[Math.min(r.attempts - 1, DIGEST_DELIVER_BACKOFF.length - 1)]; digestDelivery.save(store); return { done: false, rec: r }; } }
+      }
+    }
+    if (r.text === "pending") {
+      try { await callFn("send", { to, channel: "qqbot", accountId, message: plan.text, ...(sessionKey ? { sessionKey } : {}), idempotencyKey: `digest-${d.id}-text` }, 30000); r.text = "sent"; r.textAt = Date.now(); }
+      catch (e) { fail("text", e); }
+    }
+  } finally {
+    const ok = r.text === "sent" && (r.image === "sent" || r.image === "none");
+    if (ok) { r.status = "delivered"; r.deliveredAt = Date.now(); delete r.nextAt; delete r.lastError; }
+    else if (r.attempts >= DIGEST_DELIVER_MAX || opt.force === true) { r.status = "failed"; delete r.nextAt; }
+    else { r.status = "retry"; r.nextAt = Date.now() + DIGEST_DELIVER_BACKOFF[Math.min(r.attempts - 1, DIGEST_DELIVER_BACKOFF.length - 1)]; }
+    try { digestDelivery.save(store); } catch (e) { console.error("digest-delivery save", e.message); }
+    opLog(null, "digest.deliver", `${d.id} -> ${plan.to} attempt=${r.attempts} image=${r.image} text=${r.text} status=${r.status}`, r.status === "delivered", r.status === "delivered" ? null : r.lastError);
+  }
+  return { done: r.status === "delivered" || r.status === "failed", rec: r };
+}
+// 预演：只返回/打印将要发送的内容与目标，不调用网关
+function digestDryRun(d) {
+  const p = digestPlan(d); const out = { dry: true, id: d.id, sessionKey: d.sessionKey, target: p.to, imageAttached: !!p.file, imageBytes: p.bytes, imageAs: p.file ? "base64 buffer（附件，不带路径）" : null, textLength: p.text.length, text: p.text };
+  console.log("[digest-deliver DRY]", JSON.stringify({ id: out.id, target: out.target, imageAttached: out.imageAttached, imageBytes: out.imageBytes, textLength: out.textLength, textPreview: p.text.slice(0, 120) }));
+  return out;
+}
+async function digestDeliverTick() {
+  const s = digestSettings.load(); const cfg = digestDeliverCfg(s); if (!s.enabled || !cfg.enabled) return; const today = sgParts().day; const store = digestDelivery.load();
+  for (const d of listDigests().filter(x => x.day === today && !digestRunning.has(x.sessionKey + x.day))) {
+    if (!digestDeliverable(d) || !digestScheduled(d, s) || cfg.sessions[d.sessionKey] === false || !s.sessions?.[d.sessionKey]) continue;
+    const r = store.records?.[d.id]; if (r && (r.status === "delivered" || r.status === "failed" || r.status === "skipped")) continue; if (r?.nextAt && r.nextAt > Date.now()) continue;
+    if (digestDelivering.has(d.id)) continue;
+    if (DIGEST_DELIVER_DRY) { if (!r) { digestDryRun(d); store.records[d.id] = { id: d.id, day: d.day, sessionKey: d.sessionKey, status: "dry-run", attempts: 0, image: "none", text: "pending", createdAt: Date.now() }; digestDelivery.save(store); } continue; }
+    digestDelivering.add(d.id);
+    try { await digestDeliverOnce(d); } catch (e) { console.error("digest deliver", e.message); opLog(null, "digest.deliver", d.id, false, e.message); } finally { digestDelivering.delete(d.id); }
+  }
+}
+let digestDeliverBusy = false;
+setInterval(async () => { if (digestDeliverBusy) return; digestDeliverBusy = true; try { await digestDeliverTick(); } catch (e) { console.error("digest deliver tick", e.message); } finally { digestDeliverBusy = false; } }, +process.env.DIGEST_DELIVER_TICK_MS || 60e3).unref();
 const listDigests = () => { let fsx = []; try { fsx = fs.readdirSync(DIGEST_DIR).filter(f => f.endsWith(".json")); } catch {} return fsx.map(f => { try { return JSON.parse(fs.readFileSync(path.join(DIGEST_DIR, f), "utf8")); } catch { return null; } }).filter(Boolean).sort((a, b) => b.startedAt - a.startedAt); };
 const isDigestId = s => /^\d{4}-\d\d-\d\d__[0-9a-f]{10}$/.test(String(s || ""));
 
@@ -634,18 +718,37 @@ Object.assign(R, {
   "GET /api/digest/settings": async () => {
     const s = digestSettings.load(); let ss = []; try { ss = (await cached("hist-sess", 30e3, () => call("sessions.list", { limit: 500 }))).sessions || []; } catch {}
     const keys = new Set([...ss.map(x => x.key), ...Object.keys(s.sessions || {})]);
-    return { enabled: !!s.enabled, time: s.time, timeZone: TZ, imageModel: DIGEST_IMAGE_MODEL, sessions: [...keys].map(k => ({ sessionKey: k, name: aliasFor(k) || ss.find(x => x.key === k)?.displayName || k, kind: /:group:/.test(k) && !/:c2c:/.test(k) ? "group" : "other", enabled: !!s.sessions?.[k], lastRunDay: s.lastRun?.[k] || null })) };
+    const dc = digestDeliverCfg(s), dl = digestDelivery.load().records || {}; return { enabled: !!s.enabled, time: s.time, timeZone: TZ, imageModel: DIGEST_IMAGE_MODEL, deliver: { enabled: dc.enabled, dry: DIGEST_DELIVER_DRY, maxAttempts: DIGEST_DELIVER_MAX }, sessions: [...keys].map(k => { const last = Object.values(dl).filter(x => x.sessionKey === k).sort((a, b) => b.day.localeCompare(a.day))[0]; return { sessionKey: k, name: aliasFor(k) || ss.find(x => x.key === k)?.displayName || k, kind: /:group:/.test(k) && !/:c2c:/.test(k) ? "group" : "other", enabled: !!s.sessions?.[k], lastRunDay: s.lastRun?.[k] || null, deliver: dc.sessions[k] !== false, canDeliver: !!digestTargetOf(k), lastDelivery: last ? { day: last.day, status: last.status, image: last.image, text: last.text, attempts: last.attempts, at: last.deliveredAt || last.lastAttemptAt || null } : null }; }) };
   },
-  "POST /api/digest/settings/set": W("digest.settings.set", b => `${b.sessionKey || "global"} enabled=${b.enabled} time=${b.time ?? ""} global=${b.globalEnabled ?? ""}`, async b => {
+  "POST /api/digest/settings/set": W("digest.settings.set", b => `${b.sessionKey || "global"} enabled=${b.enabled} time=${b.time ?? ""} global=${b.globalEnabled ?? ""} deliver=${b.deliverEnabled ?? ""}`, async b => {
     const s = { ...digestSettings.load() }; s.sessions = { ...(s.sessions || {}) };
+    if (b.deliverEnabled != null) { /* HS-DIGEST-DELIVER v1 */
+      if (typeof b.deliverEnabled !== "boolean") throw httpErr(400, "deliverEnabled 必须是布尔值");
+      s.deliver = { enabled: s.deliver?.enabled !== false, ...(s.deliver || {}), sessions: { ...(s.deliver?.sessions || {}) } };
+      if (b.sessionKey != null) { if (typeof b.sessionKey !== "string" || !b.sessionKey || b.sessionKey.length > 300) throw httpErr(400, "sessionKey 无效"); if (b.deliverEnabled) delete s.deliver.sessions[b.sessionKey]; else s.deliver.sessions[b.sessionKey] = false; }
+      else s.deliver.enabled = b.deliverEnabled;
+      digestSettings.save(s); return { ok: true, deliver: digestDeliverCfg(s) };
+    }
     if (b.time != null) { if (!isHM(b.time)) throw httpErr(400, "time 格式应为 HH:MM（24 小时制）"); s.time = b.time; }
     if (b.globalEnabled != null) { if (typeof b.globalEnabled !== "boolean") throw httpErr(400, "globalEnabled 必须是布尔值"); s.enabled = b.globalEnabled; }
     if (b.sessionKey != null) { if (typeof b.sessionKey !== "string" || !b.sessionKey || b.sessionKey.length > 300) throw httpErr(400, "sessionKey 无效"); if (typeof b.enabled !== "boolean") throw httpErr(400, "enabled 必须是布尔值"); if (b.enabled) s.sessions[b.sessionKey] = true; else delete s.sessions[b.sessionKey]; }
     if (b.sessionKey == null && b.time == null && b.globalEnabled == null) throw httpErr(400, "没有要修改的项");
     digestSettings.save(s); return { ok: true, enabled: s.enabled, time: s.time, sessions: s.sessions };
   }, { confirm: true }),
-  "GET /api/digests": async u => { const k = u.searchParams.get("key"); const all = listDigests().filter(d => !k || d.sessionKey === k); const lim = qi(u, "limit", 30, 200); return { digests: all.slice(0, lim).map(({ text, ...d }) => ({ ...d, preview: String(text || "").slice(0, 120) })), total: all.length }; },
+  "GET /api/digests": async u => { const k = u.searchParams.get("key"); const all = listDigests().filter(d => !k || d.sessionKey === k); const lim = qi(u, "limit", 30, 200); const dl = digestDelivery.load().records || {}; return { digests: all.slice(0, lim).map(({ text, ...d }) => ({ ...d, delivery: dl[d.id] ? { status: dl[d.id].status, image: dl[d.id].image, text: dl[d.id].text, attempts: dl[d.id].attempts, at: dl[d.id].deliveredAt || dl[d.id].lastAttemptAt || null, error: dl[d.id].lastError || null } : null, preview: String(text || "").slice(0, 120) })), total: all.length }; },
   "POST /api/digests/run-now": W("digest.run-now", b => b.sessionKey, async b => { need(b, "sessionKey"); if (!digestSettings.load().sessions?.[b.sessionKey]) throw httpErr(400, "该会话没有开启群报"); const day = sgParts().day; runDigest(b.sessionKey, day).catch(() => {}); return { ok: true, started: true, day }; }, { confirm: true }),
+  "POST /api/digests/deliver": W("digest.deliver", b => `${b.id} dry=${!!b.dry} force=${!!b.force}`, async b => { /* HS-DIGEST-DELIVER v1：手动投递/预演；dry 不发送；force 才会对已 delivered/failed 的重发 */
+    need(b, "id"); if (!isDigestId(b.id)) throw httpErr(400, "id 无效");
+    let d; try { d = JSON.parse(fs.readFileSync(path.join(DIGEST_DIR, b.id + ".json"), "utf8")); } catch { throw httpErr(404, "群报不存在"); }
+    if (!digestDeliverable(d)) throw httpErr(400, "该群报没有可发送的内容，或不是 QQ 群会话");
+    if (b.dry === true || DIGEST_DELIVER_DRY) return digestDryRun(d);
+    if (!digestSettings.load().sessions?.[d.sessionKey]) throw httpErr(400, "该会话没有开启群报");
+    const store = digestDelivery.load(); const r0 = store.records?.[b.id];
+    if (r0?.status === "delivered" && b.force !== true) throw httpErr(409, "该群报已投递过（防重复）；确需重发请带 force:true");
+    if (b.force === true && r0) { r0.status = "pending"; r0.image = d.image ? "pending" : "none"; r0.text = "pending"; r0.attempts = 0; delete r0.nextAt; digestDelivery.save(store); }
+    if (digestDelivering.has(b.id)) throw httpErr(409, "正在投递中");
+    digestDelivering.add(b.id); try { const r = await digestDeliverOnce(d, { force: true }); return { ok: r.rec.status === "delivered", status: r.rec.status, image: r.rec.image, text: r.rec.text, attempts: r.rec.attempts, error: r.rec.lastError || null }; } finally { digestDelivering.delete(b.id); }
+  }, { confirm: true }),
   "GET /api/digests/get": async u => { const id = u.searchParams.get("id"); if (!isDigestId(id)) throw httpErr(400, "id 无效"); try { return JSON.parse(fs.readFileSync(path.join(DIGEST_DIR, id + ".json"), "utf8")); } catch { throw httpErr(404, "群报不存在"); } },
   "GET /api/diary": async () => cached("diary", 60e3, async () => { const r = await call("doctor.memory.dreamDiary", { agentId: "main" }, 15000); return { agentId: r.agentId || "main", found: !!r.found, path: r.path || null, content: r.content || "", updatedAtMs: r.updatedAtMs || null }; }),
   "GET /api/interactions": async u => {
@@ -704,14 +807,14 @@ function stkGenState() { const p = stkParams(); const tz = p.quietHours?.tz || "
 function stkGenBump() { const g = stkGenState(); const f = path.join(STICKER_DIR, ".gen-state.json"), t = f + ".tmp-c"; fs.writeFileSync(t, JSON.stringify({ day: g.day, count: g.count + 1 })); fs.renameSync(t, f); }
 // ---------- v2.11：语音参数（params.json 的 voice 段，HOSINO-VOICE-PARAMS v1） ----------
 const QQ_MT_STATE = path.join(path.dirname(WORKSPACE), "qqbot", "media-tag-state.json");
-const VOICE_DEFAULTS = { enabled: true, probability: 0.12, cooldownReplies: 4, tz: "Asia/Singapore", quietHours: [{ start: "00:00", end: "08:00" }], defaultEnabled: false, perConversation: {}, maxChars: 40, dailyLimit: 20, exclusiveWithSticker: true };
+const VOICE_DEFAULTS = { enabled: true, probability: 0.12, cooldownReplies: 4, tz: "Asia/Singapore", quietHours: [{ start: "00:00", end: "08:00" }], defaultEnabled: false, perConversation: {}, maxChars: 40, dailyLimit: 20, exclusiveWithSticker: true, explicitRequestOverride: false };
 const isTZ = s => { try { new Intl.DateTimeFormat("en-CA", { timeZone: s }); return true; } catch { return false; } };
 function voiceMerge(cur, v) {
   if (v === null) return null; // 传 null = 删除 voice 段，回到旧行为（模型自己决定）
   if (!v || typeof v !== "object" || Array.isArray(v)) throw httpErr(400, "voice 必须是对象或 null");
   const o = { ...VOICE_DEFAULTS, ...(cur && typeof cur === "object" ? cur : {}) };
   for (const [k, x] of Object.entries(v)) {
-    if (["enabled", "defaultEnabled", "exclusiveWithSticker"].includes(k)) { if (typeof x !== "boolean") throw httpErr(400, `voice.${k} 必须是布尔值`); o[k] = x; }
+    if (["enabled", "defaultEnabled", "exclusiveWithSticker", "explicitRequestOverride"].includes(k)) { if (typeof x !== "boolean") throw httpErr(400, `voice.${k} 必须是布尔值`); o[k] = x; }
     else if (k === "probability") { if (typeof x !== "number" || !(x >= 0 && x <= 1)) throw httpErr(400, "voice.probability 应在 0–1"); o[k] = x; }
     else if (k === "cooldownReplies") { if (!Number.isInteger(x) || x < 0 || x > 100) throw httpErr(400, "voice.cooldownReplies 应为 0–100 的整数"); o[k] = x; }
     else if (k === "maxChars") { if (!Number.isInteger(x) || x < 1 || x > 200) throw httpErr(400, "voice.maxChars 应为 1–200 的整数"); o[k] = x; }
@@ -1233,9 +1336,494 @@ async function upRoute(req, res, u) {
   return send(res, 404, { error: "接口不存在" });
 }
 
+// ---------- v2.12：小脾气参数（记仇小本本 / 群梗回旋镖 / 吃醋；写 workspace/fun：params.json / grudges.json / gags.json / .trash/；需要单元 drop-in 40-fun-rw.conf） ----------
+// 注意：消费这些参数的技能、脚本和 gate 补丁还没做；在它们上线前，这里只负责存设置，不改变星野的行为。
+const FUN_DIR = process.env.HS_FUN_DIR || path.join(WORKSPACE, "fun");
+const FUN_TRASH = path.join(FUN_DIR, ".trash");
+const FUN_GK = /^group:[0-9a-f]{32}$/;
+const FUN_PID = /^[0-9A-F]{32}$/;
+const FUN_FEATS = ["grudge", "gag", "jealousy", "lexicon"];
+const FUN_DEFAULTS = {
+  enabled: false, killPhrase: "星野正经点", killOwnerOnly: true, optOutAllPhrase: "别整我", optOut: {},
+  grudge: { enabled: false, defaultEnabled: false, perGroup: {}, recallProbability: 0.10, recallCooldownDays: 7, maxEntriesPerPerson: 20, maxQuoteChars: 40, optOutPhrase: "别记我仇", clearPhrase: "撕本本" },
+  gag: { enabled: false, defaultEnabled: false, perGroup: {}, minScore: 4, minDistinctPeople: 2, windowMin: 3, requireApproval: true, cooldownDays: 3, maxUses: 5, perGroupDailyCap: 2, optOutPhrase: "别拿我的话玩梗", deletePhrase: "这梗删了" },
+  jealousy: { enabled: false, tierA: true, tierB: false, tierBProbability: 0.3, defaultEnabled: false, perGroup: {}, otherBots: [{ id: "OTHER_BOT_OPENID", name: "芙宁娜" }], perPersonDailyCap: 1, personCooldownMin: 30, groupCooldownMin: 120, optOutPhrase: "星野别吃醋" },
+  lexicon: { enabled: false, defaultEnabled: false, perGroup: {}, maxSlang: 3, maxNames: 3, includeDerogatory: false },
+};
+// 类型：b=布尔 p=0–1 i:min:max=整数 s:max=非空短文本
+const FUN_SPEC = {
+  grudge: { enabled: "b", defaultEnabled: "b", recallProbability: "p", recallCooldownDays: "i:1:365", maxEntriesPerPerson: "i:1:200", maxQuoteChars: "i:10:200", optOutPhrase: "s:20", clearPhrase: "s:20" },
+  gag: { enabled: "b", defaultEnabled: "b", minScore: "i:1:50", minDistinctPeople: "i:1:20", windowMin: "i:1:60", requireApproval: "b", cooldownDays: "i:0:365", maxUses: "i:1:100", perGroupDailyCap: "i:0:50", optOutPhrase: "s:20", deletePhrase: "s:20" },
+  jealousy: { enabled: "b", tierA: "b", tierB: "b", tierBProbability: "p", defaultEnabled: "b", perPersonDailyCap: "i:0:20", personCooldownMin: "i:0:1440", groupCooldownMin: "i:0:1440", optOutPhrase: "s:20" },
+  lexicon: { enabled: "b", defaultEnabled: "b", maxSlang: "i:0:10", maxNames: "i:0:10", includeDerogatory: "b" },
+};
+// 按群覆盖允许改的字段（enabled 必填）
+const FUN_GROUP_KEYS = { grudge: ["recallProbability", "recallCooldownDays"], gag: ["minScore", "minDistinctPeople", "requireApproval", "perGroupDailyCap"], jealousy: ["tierA", "tierB", "tierBProbability", "groupCooldownMin"], lexicon: ["maxSlang", "maxNames"] };
+function funVal(where, t, x) {
+  const [k, a, b] = t.split(":");
+  if (k === "b") { if (typeof x !== "boolean") throw httpErr(400, `${where} 必须是布尔值`); return x; }
+  if (k === "p") { if (typeof x !== "number" || !(x >= 0 && x <= 1)) throw httpErr(400, `${where} 应在 0–1`); return x; }
+  if (k === "i") { if (!Number.isInteger(x) || x < +a || x > +b) throw httpErr(400, `${where} 应为 ${a}–${b} 的整数`); return x; }
+  if (k === "s") { if (typeof x !== "string" || !x.trim() || x.length > +a || /[\r\n]/.test(x)) throw httpErr(400, `${where} 应为 1–${a} 字的单行文本`); return x.trim(); }
+  throw httpErr(500, "spec 错误");
+}
+function funReadJ(name, init) { try { return JSON.parse(fs.readFileSync(path.join(FUN_DIR, name), "utf8")); } catch (e) { if (e.code === "ENOENT") return init(); throw httpErr(500, name + " 读取失败：" + e.message); } }
+function funTrashCopy(name, tag) { const f = path.join(FUN_DIR, name); if (!fs.existsSync(f)) return null; fs.mkdirSync(FUN_TRASH, { recursive: true, mode: 0o755 }); const ts = new Date().toISOString().replace(/[:.]/g, "-"); for (let n = 0; ; n++) { const dst = path.join(FUN_TRASH, `${ts}${n ? "-" + n : ""}-${tag ? tag + "-" : ""}${name}`); try { fs.copyFileSync(f, dst, fs.constants.COPYFILE_EXCL); return path.basename(dst); } catch (e) { if (e.code !== "EEXIST" || n >= 50) throw e; } } }
+function funWriteJ(name, obj, tag) {
+  fs.mkdirSync(FUN_DIR, { recursive: true, mode: 0o755 });
+  const backup = funTrashCopy(name, tag); // 先备份，备份失败直接报错，不写
+  obj.updatedAt = Date.now(); const f = path.join(FUN_DIR, name), tmp = path.join(FUN_DIR, `.${name}.tmp-${process.pid}`);
+  fs.writeFileSync(tmp, JSON.stringify(obj, null, 1), { mode: 0o644 }); fs.renameSync(tmp, f); return backup;
+}
+const funStored = () => funReadJ("params.json", () => ({ version: 1 }));
+function funEffective(s) {
+  const o = { ...FUN_DEFAULTS, ...s, optOut: { ...(s.optOut || {}) } };
+  for (const f of FUN_FEATS) o[f] = { ...FUN_DEFAULTS[f], ...(s[f] && typeof s[f] === "object" ? s[f] : {}) };
+  delete o.updatedAt; return o;
+}
+function funMergeFeat(f, cur, v) {
+  if (v === null) return undefined; // null = 删除整段，回到默认（默认关闭）
+  if (!v || typeof v !== "object" || Array.isArray(v)) throw httpErr(400, `${f} 必须是对象或 null`);
+  const o = { ...(cur && typeof cur === "object" ? cur : {}) };
+  for (const [k, x] of Object.entries(v)) {
+    if (k === "perGroup") {
+      if (!x || typeof x !== "object" || Array.isArray(x)) throw httpErr(400, `${f}.perGroup 必须是对象`); const pg = { ...(o.perGroup || {}) };
+      for (const [gk, gv] of Object.entries(x)) {
+        if (!FUN_GK.test(gk)) throw httpErr(400, `群键应为 group:<32位小写hex>：${gk}`);
+        if (gv === null) { delete pg[gk]; continue; }
+        if (!gv || typeof gv !== "object" || typeof gv.enabled !== "boolean") throw httpErr(400, `${f}.perGroup.${gk}.enabled 必须是布尔值`);
+        const e = { enabled: gv.enabled };
+        for (const [gk2, gx] of Object.entries(gv)) { if (gk2 === "enabled" || gx == null) continue; if (!FUN_GROUP_KEYS[f].includes(gk2)) throw httpErr(400, `${f} 的按群覆盖不支持：${gk2}`); e[gk2] = funVal(`${f}.perGroup.${gk}.${gk2}`, FUN_SPEC[f][gk2], gx); }
+        pg[gk] = e;
+      }
+      o.perGroup = pg;
+    } else if (f === "jealousy" && k === "otherBots") {
+      if (x === null) { delete o.otherBots; continue; } // 回到默认（芙宁娜）
+      if (!Array.isArray(x) || x.length > 20) throw httpErr(400, "jealousy.otherBots 应为最多 20 项的数组 [{id,name}]，或 null");
+      const seen = new Set(); o.otherBots = x.map((b, i) => { const id = String(b?.id || "").toUpperCase(); if (!FUN_PID.test(id)) throw httpErr(400, `jealousy.otherBots[${i}].id 应为 32 位 QQ openid`); if (seen.has(id)) throw httpErr(400, `jealousy.otherBots 里 id 重复：${id}`); seen.add(id); return { id, name: funVal(`jealousy.otherBots[${i}].name`, "s:20", b?.name) }; });
+    } else if (FUN_SPEC[f][k]) { if (x === null) delete o[k]; else o[k] = funVal(`${f}.${k}`, FUN_SPEC[f][k], x); }
+    else throw httpErr(400, `不支持的 ${f} 参数：${k}`);
+  }
+  return o;
+}
+function funMerge(stored, inP) {
+  if (!inP || typeof inP !== "object" || Array.isArray(inP)) throw httpErr(400, "需要 params 对象");
+  const s = { ...stored };
+  for (const [k, v] of Object.entries(inP)) {
+    if (FUN_FEATS.includes(k)) { const m = funMergeFeat(k, s[k], v); if (m === undefined) delete s[k]; else s[k] = m; }
+    else if (k === "enabled" || k === "killOwnerOnly") { if (v === null) delete s[k]; else s[k] = funVal(k, "b", v); }
+    else if (k === "killPhrase" || k === "optOutAllPhrase") { if (v === null) delete s[k]; else s[k] = funVal(k, "s:20", v); }
+    else if (k === "optOut") {
+      if (!v || typeof v !== "object" || Array.isArray(v)) throw httpErr(400, "optOut 必须是对象 {<openid>: [\"all\"|\"grudge\"|\"gag\"|\"jealousy\"] | null}");
+      const oo = { ...(s.optOut || {}) };
+      for (const [pid0, list] of Object.entries(v)) {
+        const pid = pid0.toUpperCase(); if (!FUN_PID.test(pid)) throw httpErr(400, `optOut 的键应为 32 位 QQ openid：${pid0}`);
+        if (list === null) { delete oo[pid]; continue; }
+        if (!Array.isArray(list) || !list.length || list.some(x => !["all", ...FUN_FEATS].includes(x))) throw httpErr(400, `optOut.${pid} 应为非空数组，元素取 all/grudge/gag/jealousy/lexicon`);
+        oo[pid] = list.includes("all") ? ["all"] : [...new Set(list)];
+      }
+      s.optOut = oo;
+    } else throw httpErr(400, "不支持的参数：" + k);
+  }
+  // 交叉检查：同一功能里的各口令不能重复
+  const e = funEffective(s); const ph = [e.killPhrase, e.optOutAllPhrase, e.grudge.optOutPhrase, e.grudge.clearPhrase, e.gag.optOutPhrase, e.gag.deletePhrase, e.jealousy.optOutPhrase];
+  const phn = ph.map(x => String(x).replace(/\s+/g, "").toLowerCase()); if (new Set(phn).size !== phn.length) throw httpErr(400, "各口令不能重复");
+  return s;
+}
+const funGrudges = () => funReadJ("grudges.json", () => ({ version: 1, people: {} }));
+const funGags = () => funReadJ("gags.json", () => ({ version: 1, groups: {} }));
+// gate 补丁已装（fun-context.mjs 存在且 index.js 带标记）→ consumers:true；网关重启后才真正生效
+function funConsumers() { try { const d = path.join(WORKSPACE, "..", "plugins", "qq-group-followup-gate"); return fs.existsSync(path.join(d, "fun-context.mjs")) && fs.readFileSync(path.join(d, "index.js"), "utf8").includes("HOSINO-FUN-CONTEXT v"); } catch { return false; } }
+// 未安装 gate 补丁时：说明什么都还不生效；已安装：只保留纯信息（候选统计这类还没做的周边），不写“不生效”
+const FUN_REQUIRES_PENDING = { "all": "gate 补丁 HOSINO-FUN-CONTEXT 还没安装，这里的设置暂时只保存" };
+const FUN_INFO = {
+  "gag": "提示：梗的候选统计（ref-index 扫描）还没做，回旋镖只会用 gags.json 里已有的条目",
+  "lexicon": "提示：黑话/称呼的候选统计和确认页还没做；gate 读取 /opt/hosino-console/data/lexicon/<群hex>.json（有这个文件才会注入）",
+};
+const funRequires = () => (funConsumers() ? FUN_INFO : FUN_REQUIRES_PENDING);
+function funPidArg(b) { const p = String(b?.person || "").toUpperCase(); if (!FUN_PID.test(p)) throw httpErr(400, "person 应为 32 位 QQ openid"); return p; }
+
+Object.assign(R, {
+  "GET /api/fun/params": async () => { const s = funStored(); return { params: funEffective(s), stored: s, defaults: FUN_DEFAULTS, requires: funRequires(), ...(funConsumers() ? { consumers: true, note: "gate 补丁已安装，改参数约 5 秒内生效" } : { consumers: false, note: "技能、脚本和 gate 补丁还没上线，这里的设置暂时只存不生效" }) }; },
+  "POST /api/fun/params/set": W("fun.params.set", b => Object.keys(b.params || {}).join(","), async b => {
+    const s = funMerge(funStored(), b.params); s.version = 1; const backup = funWriteJ("params.json", s);
+    return { ok: true, params: funEffective(s), requires: funRequires(), backup };
+  }, { confirm: true }),
+  "GET /api/fun/grudges": async () => {
+    const g = funGrudges(), oo = funEffective(funStored()).optOut;
+    return { people: Object.entries(g.people || {}).map(([id, p]) => ({ id, name: p.name || null, entries: (p.entries || []).map(e => ({ id: e.id, group: e.group, quote: e.quote, at: e.at, count: e.count || 1 })), lastRecallAt: p.lastRecallAt || null, optOut: !!(oo[id] && (oo[id].includes("all") || oo[id].includes("grudge"))) })), updatedAt: g.updatedAt || null };
+  },
+  "POST /api/fun/grudges/delete": W("fun.grudges.delete", b => `${b.person} ${b.entryId}`, async b => {
+    const pid = funPidArg(b); if (typeof b.entryId !== "string" || !b.entryId) throw httpErr(400, "需要 entryId");
+    const g = funGrudges(); const p = g.people?.[pid]; const i = (p?.entries || []).findIndex(e => e.id === b.entryId); if (i < 0) throw httpErr(404, "条目不存在");
+    p.entries.splice(i, 1); if (!p.entries.length) delete g.people[pid]; const backup = funWriteJ("grudges.json", g, "delete");
+    return { ok: true, backup };
+  }, { confirm: true }),
+  // 撕本本：清空某人的全部条目
+  "POST /api/fun/grudges/clear": W("fun.grudges.clear", b => String(b.person), async b => {
+    const pid = funPidArg(b); const g = funGrudges(); const n = g.people?.[pid]?.entries?.length || 0; if (!g.people?.[pid]) throw httpErr(404, "这个人的本本是空的");
+    delete g.people[pid]; const backup = funWriteJ("grudges.json", g, "clear"); return { ok: true, removed: n, backup };
+  }, { confirm: true }),
+  "GET /api/fun/gags": async u => {
+    const grp = u.searchParams.get("group"); if (grp && !FUN_GK.test(grp)) throw httpErr(400, "group 应为 group:<32位小写hex>");
+    const gg = funGags().groups || {}; const keys = grp ? [grp] : Object.keys(gg);
+    return { groups: keys.map(k => ({ group: k, items: (gg[k]?.items || []).map(x => ({ id: x.id, quote: x.quote, context: x.context, keywords: x.keywords || [], score: x.score, addedAt: x.addedAt, uses: x.uses || 0, lastUsedAt: x.lastUsedAt || null, retired: !!x.retired, promotedToSlang: !!x.promotedToSlang })) })) };
+  },
+  "POST /api/fun/gags/delete": W("fun.gags.delete", b => `${b.group} ${b.id}`, async b => {
+    if (!FUN_GK.test(String(b.group || ""))) throw httpErr(400, "group 应为 group:<32位小写hex>"); if (typeof b.id !== "string" || !b.id) throw httpErr(400, "需要 id");
+    const g = funGags(); const arr = g.groups?.[b.group]?.items || []; const i = arr.findIndex(x => x.id === b.id); if (i < 0) throw httpErr(404, "梗不存在");
+    arr.splice(i, 1); const backup = funWriteJ("gags.json", g, "delete"); return { ok: true, backup };
+  }, { confirm: true }),
+  "GET /api/fun/trash": async () => { let fs_ = []; try { fs_ = fs.readdirSync(FUN_TRASH).filter(f => !f.startsWith(".")).sort().reverse(); } catch {} return { items: fs_.map(f => { let s = null; try { s = fs.statSync(path.join(FUN_TRASH, f)); } catch {} return { file: f, size: s?.size ?? null, mtime: s?.mtimeMs ?? null }; }) }; },
+});
+
+// ---------- v2.12：拟人化参数（写 workspace/fun/humanlike.json；和小脾气共用 .trash/ 与 40-fun-rw.conf） ----------
+const HL_FEATS = ["techMode", "followup", "opinion", "dontKnow", "proactive", "quirk", "mood", "sensitive", "protect", "morning", "robotBit", "mbti"];
+const HL_QUIRK_SUGGESTIONS = ["嗯……怎么说呢", "算了不说了", "就那种感觉你懂吧"];
+const HL_DEFAULTS = {
+  enabled: false, optOutPhrase: "别拟人", optOut: {}, perGroup: {},
+  techMode: { enabled: true, stickyMin: 10, keywords: ["报错", "error", "Traceback", "日志", "ssh", "systemctl", "npm", "```"], ownerPhraseOn: "技术模式", ownerPhraseOff: "聊天模式", allowPersonaLine: true },
+  followup: { enabled: false, perPersonDailyCap: 1, onceOnly: true, minWaitHours: 12, maxAgeDays: 14 },
+  opinion: { enabled: false, strength: "gentle", yieldWhenCares: true, techDisagree: true },
+  dontKnow: { enabled: false, maxHedgePerReply: 1, inTechMode: true },
+  proactive: { mode: "off", quietThresholdMin: 180, triggerProbability: 0.2, minIntervalMin: 180, perGroupDailyCap: 2, requireReason: true, backoffAfterIgnored: 2, quietHoursStart: 1, quietHoursEnd: 8, heartbeatIntervalMin: 60 },
+  quirk: { enabled: false, probability: 0.067, phrases: [], selfCorrect: false, trailOff: false },
+  mood: { enabled: false, perPersonDailyCap: 1, deviation: 0.6, minBaselineMsgs: 30 },
+  sensitive: { mode: "never", topics: ["医疗", "生病", "分手", "去世", "裁员", "考试挂科"] },
+  protect: { enabled: false, roastWindowMin: 5, roastMinHits: 3, roastMinPeople: 1, probability: 0.5, perGroupDailyCap: 2, perTargetDailyCap: 1, mediateRealFights: true, roastKeywords: ["菜", "笨", "丑", "胖", "废物", "滚"], fightKeywords: ["闭嘴", "有病", "拉黑", "真生气了", "别说了"] },
+  morning: { enabled: false, mode: "passive", greetingKeywords: ["早", "早安", "早上好", "早啊", "morning"], windowStartHour: 5, windowEndHour: 11, habitWindowDays: 14, habitMinDays: 4, perGroupDailyCap: 1, heartbeatHour: 7 },
+  robotBit: { enabled: false, keywords: ["人机", "机器人吧", "你是AI吧", "bot吧"], sincereKeywords: ["你是真人吗", "说真的你是不是AI", "认真问", "你到底是不是人"], segmentGapMin: 30, perGroupDailyCap: 3 },
+  mbti: { enabled: false, includeZodiac: false, minPublicMsgs: 20, perPersonDailyCap: 1, perGroupDailyCap: 5, forbiddenTopics: ["健康", "疾病", "性取向", "宗教", "政治", "家庭", "收入"] },
+};
+// 类型：b p i:min:max s:max e:a|b l:最多条数:每条最长（字符串数组，去重忽略空白/大小写）
+const HL_SPEC = {
+  techMode: { enabled: "b", stickyMin: "i:0:240", keywords: "l:50:40", ownerPhraseOn: "s:20", ownerPhraseOff: "s:20", allowPersonaLine: "b" },
+  followup: { enabled: "b", perPersonDailyCap: "i:0:5", onceOnly: "b", minWaitHours: "i:0:168", maxAgeDays: "i:1:90" },
+  opinion: { enabled: "b", strength: "e:gentle|firm", yieldWhenCares: "b", techDisagree: "b" },
+  dontKnow: { enabled: "b", maxHedgePerReply: "i:1:3", inTechMode: "b" },
+  proactive: { mode: "e:off|passive|heartbeat", quietThresholdMin: "i:10:4320", triggerProbability: "p", minIntervalMin: "i:10:4320", perGroupDailyCap: "i:0:10", requireReason: "b", backoffAfterIgnored: "i:0:10", quietHoursStart: "i:0:23", quietHoursEnd: "i:0:23", heartbeatIntervalMin: "i:10:1440" },
+  quirk: { enabled: "b", probability: "p", phrases: "l:10:20", selfCorrect: "b", trailOff: "b" },
+  mood: { enabled: "b", perPersonDailyCap: "i:0:3", deviation: "p", minBaselineMsgs: "i:5:500" },
+  sensitive: { mode: "e:never|dmOnly|always", topics: "l:50:20" },
+  protect: { enabled: "b", roastWindowMin: "i:1:60", roastMinHits: "i:1:20", roastMinPeople: "i:1:10", probability: "p", perGroupDailyCap: "i:0:10", perTargetDailyCap: "i:0:5", mediateRealFights: "b", roastKeywords: "l:50:20", fightKeywords: "l:50:20" },
+  morning: { enabled: "b", mode: "e:passive|heartbeat", greetingKeywords: "l:20:20", windowStartHour: "i:0:23", windowEndHour: "i:1:24", habitWindowDays: "i:3:60", habitMinDays: "i:1:60", perGroupDailyCap: "i:0:1", heartbeatHour: "i:0:23" },
+  robotBit: { enabled: "b", keywords: "l:30:20", sincereKeywords: "l:30:30", segmentGapMin: "i:5:720", perGroupDailyCap: "i:0:20" },
+  mbti: { enabled: "b", includeZodiac: "b", minPublicMsgs: "i:0:500", perPersonDailyCap: "i:0:5", perGroupDailyCap: "i:0:20", forbiddenTopics: "l:30:20" },
+};
+const HL_GROUP_KEYS = ["followup", "opinion", "dontKnow", "proactive", "quirk", "mood", "protect", "morning", "robotBit", "mbti"];
+const hlNorm = x => String(x).replace(/\s+/g, "").toLowerCase();
+function hlVal(where, t, x) {
+  const [k, a, b] = t.split(":");
+  if (k === "e") { const opts = a.split("|"); if (!opts.includes(x)) throw httpErr(400, `${where} 只能取 ${opts.join("/")}`); return x; }
+  if (k === "l") {
+    if (!Array.isArray(x) || x.length > +a) throw httpErr(400, `${where} 应为最多 ${a} 条的数组`);
+    const out = x.map((y, i) => funVal(`${where}[${i}]`, "s:" + b, y)); const n = out.map(hlNorm);
+    if (new Set(n).size !== n.length) throw httpErr(400, `${where} 有重复项（忽略空白和大小写）`); return out;
+  }
+  return funVal(where, t, x);
+}
+function hlEffective(s) {
+  const o = { ...HL_DEFAULTS, ...s, optOut: { ...(s.optOut || {}) }, perGroup: { ...(s.perGroup || {}) } };
+  for (const f of HL_FEATS) o[f] = { ...HL_DEFAULTS[f], ...(s[f] && typeof s[f] === "object" ? s[f] : {}) };
+  return o;
+}
+const hlStored = () => funReadJ("humanlike.json", () => ({ version: 1 }));
+function hlMerge(stored, inP) {
+  if (!inP || typeof inP !== "object" || Array.isArray(inP)) throw httpErr(400, "需要 params 对象");
+  const s = { ...stored };
+  for (const [k, v] of Object.entries(inP)) {
+    if (HL_FEATS.includes(k)) {
+      if (v === null) { delete s[k]; continue; }
+      if (typeof v !== "object" || Array.isArray(v)) throw httpErr(400, `${k} 必须是对象或 null`);
+      const o = { ...(s[k] || {}) };
+      for (const [kk, x] of Object.entries(v)) { if (!HL_SPEC[k][kk]) throw httpErr(400, `${k} 不支持的参数：${kk}`); if (x === null) delete o[kk]; else o[kk] = hlVal(`${k}.${kk}`, HL_SPEC[k][kk], x); }
+      if (Object.keys(o).length) s[k] = o; else delete s[k];
+    } else if (k === "enabled") { if (v === null) delete s[k]; else s[k] = funVal(k, "b", v); }
+    else if (k === "optOutPhrase") { if (v === null) delete s[k]; else s[k] = funVal(k, "s:20", v); }
+    else if (k === "perGroup") {
+      if (!v || typeof v !== "object" || Array.isArray(v)) throw httpErr(400, "perGroup 必须是对象 {group:<hex>: {enabled, 各功能开关} | null}");
+      const pg = { ...(s.perGroup || {}) };
+      for (const [gk, gv] of Object.entries(v)) {
+        if (!FUN_GK.test(gk)) throw httpErr(400, `群键应为 group:<32位小写hex>：${gk}`);
+        if (gv === null) { delete pg[gk]; continue; }
+        if (!gv || typeof gv.enabled !== "boolean") throw httpErr(400, `perGroup.${gk}.enabled 必填（布尔）`);
+        const e = { enabled: gv.enabled };
+        for (const [f, x] of Object.entries(gv)) { if (f === "enabled" || x == null) continue; if (!HL_GROUP_KEYS.includes(f)) throw httpErr(400, `按群覆盖不支持：${f}`); e[f] = funVal(`perGroup.${gk}.${f}`, "b", x); }
+        pg[gk] = e;
+      }
+      s.perGroup = pg;
+    } else if (k === "optOut") {
+      if (!v || typeof v !== "object" || Array.isArray(v)) throw httpErr(400, "optOut 必须是对象 {<openid>: [\"all\"|功能名] | null}");
+      const oo = { ...(s.optOut || {}) };
+      for (const [pid0, list] of Object.entries(v)) {
+        const pid = pid0.toUpperCase(); if (!FUN_PID.test(pid)) throw httpErr(400, `optOut 的键应为 32 位 QQ openid：${pid0}`);
+        if (list === null) { delete oo[pid]; continue; }
+        if (!Array.isArray(list) || !list.length || list.some(x => !["all", ...HL_GROUP_KEYS].includes(x))) throw httpErr(400, `optOut.${pid} 应为非空数组，元素取 all/${HL_GROUP_KEYS.join("/")}`);
+        oo[pid] = list.includes("all") ? ["all"] : [...new Set(list)];
+      }
+      s.optOut = oo;
+    } else throw httpErr(400, "不支持的参数：" + k);
+  }
+  const e = hlEffective(s);
+  if (e.proactive.quietHoursStart === e.proactive.quietHoursEnd && s.proactive && ("quietHoursStart" in s.proactive || "quietHoursEnd" in s.proactive)) throw httpErr(400, "proactive.quietHoursStart 和 quietHoursEnd 不能相同");
+  if (e.morning.windowStartHour >= e.morning.windowEndHour) throw httpErr(400, "morning.windowStartHour 必须小于 windowEndHour");
+  if (e.morning.habitMinDays > e.morning.habitWindowDays) throw httpErr(400, "morning.habitMinDays 不能大于 habitWindowDays");
+  { const a = e.robotBit.keywords.map(hlNorm), b2 = e.robotBit.sincereKeywords.map(hlNorm); if (a.some(x => b2.includes(x))) throw httpErr(400, "robotBit.keywords 和 sincereKeywords 不能有相同项"); }
+  const ph = [e.optOutPhrase, e.techMode.ownerPhraseOn, e.techMode.ownerPhraseOff].map(hlNorm);
+  if (new Set(ph).size !== ph.length) throw httpErr(400, "各口令不能重复（忽略空白和大小写）");
+  try { const fp = funEffective(funStored()); const others = [fp.killPhrase, fp.optOutAllPhrase, fp.grudge.optOutPhrase, fp.grudge.clearPhrase, fp.gag.optOutPhrase, fp.gag.deletePhrase, fp.jealousy.optOutPhrase].map(hlNorm); if (ph.some(p => others.includes(p))) throw httpErr(400, "拟人化口令不能和小脾气口令重复"); } catch (err) { if (err.http === 400) throw err; }
+  return s;
+}
+const HL_REQUIRES_PENDING = { "all": "gate 补丁 HOSINO-FUN-CONTEXT 还没安装，这里的设置暂时只保存" };
+const HL_INFO = {
+  "proactive.mode=heartbeat": "提示：心跳模式由 gate 自带的定时器按 heartbeatIntervalMin 检查，条件都满足才跑一次心跳轮（会用一次模型调用），没理由就不说话；没开时不产生任何调用",
+  "morning.mode=heartbeat": "提示：心跳模式到 heartbeatHour 时由 gate 直接发一句固定的“早！（今天我第一）”类短句（不调用模型）；当天已经有人说过早就不发",
+  "robotBit": "提示：认真问是不是真人时一律如实回答，不受开关影响",
+};
+const hlRequires = () => (funConsumers() ? HL_INFO : HL_REQUIRES_PENDING);
+function hlView(s) { return { params: hlEffective(s), stored: s, defaults: HL_DEFAULTS, suggestions: { quirkPhrases: HL_QUIRK_SUGGESTIONS }, requires: hlRequires(), ...(funConsumers() ? { consumers: true, note: "gate 补丁已安装，改参数约 5 秒内生效；不提供任何延迟类设置" } : { consumers: false, note: "技能和 gate 补丁还没上线，这里的设置暂时只存不生效；不提供任何延迟类设置" }) }; }
+Object.assign(R, {
+  "GET /api/fun/humanlike": async () => hlView(hlStored()),
+  "POST /api/fun/humanlike/set": W("fun.humanlike.set", b => Object.keys(b.params || {}).join(","), async b => {
+    const s = hlMerge(hlStored(), b.params); s.version = 1; const backup = funWriteJ("humanlike.json", s);
+    return { ok: true, ...hlView(s), backup };
+  }, { confirm: true }),
+  "GET /api/fun/humanlike/followups": async () => { const d = funReadJ("followups.json", () => ({ version: 1, items: [] })); return { items: Array.isArray(d.items) ? d.items : [], updatedAt: d.updatedAt ?? null }; },
+});
+
+// ---------- HOSINO-VOICE-TTS v1：语音设置（写 workspace/fun/voice-tts.json；xingye_tts.py 每次合成读，gate 5 秒内读） ----------
+const VT_TAGS = ["playful", "tsundere", "annoyed", "gentle", "calm", "shy", "proud", "whispering", "sleepy", "sad", "excited"];
+const VT_EMAP = { "委屈": "sad", "难过": "sad", "伤心": "sad", "哭": "sad", "傲娇": "tsundere", "哼": "tsundere", "嘴硬": "tsundere", "生气": "annoyed", "不满": "annoyed", "烦": "annoyed", "炸毛": "annoyed", "温柔": "gentle", "安慰": "gentle", "撒娇": "playful", "调皮": "playful", "坏笑": "playful", "平静": "calm", "认真": "calm", "害羞": "shy", "脸红": "shy", "得意": "proud", "骄傲": "proud", "小声": "whispering", "悄悄": "whispering", "困": "sleepy", "犯困": "sleepy", "打哈欠": "sleepy", "开心": "excited", "兴奋": "excited", "惊喜": "excited" };
+const VT_DEFAULTS = {
+  provider: "xai",
+  voiceEmotion: { enabled: false, markers: [] },
+  fish: { model: "s2.1-pro-free", referenceId: "e0dea986fcf54303a0eda1d57db88e27", temperature: 0.5, topP: 0.6, timeoutSec: 30, perSentence: true, stripLeadingUm: true, emotionTags: true, defaultTag: "", emotionMap: VT_EMAP, fallback: "xai" },
+  mimo: { model: "mimo-v2.5-tts", voice: "冰糖" },
+};
+const VT_KEYFILE = process.env.HS_FISH_ENV || "/home/ubuntu/.config/hosino/fish.env";
+const vtStored = () => funReadJ("voice-tts.json", () => ({ version: 1 }));
+function vtEffective(s) {
+  const o = { ...VT_DEFAULTS, ...s };
+  for (const k of ["voiceEmotion", "fish", "mimo"]) o[k] = { ...VT_DEFAULTS[k], ...(s[k] && typeof s[k] === "object" ? s[k] : {}) };
+  delete o.updatedAt; delete o.version; return o;
+}
+function vtNum(where, x, lo, hi) { if (typeof x !== "number" || !Number.isFinite(x) || x < lo || x > hi) throw httpErr(400, `${where} 应在 ${lo}–${hi}`); return x; }
+function vtBool(where, x) { if (typeof x !== "boolean") throw httpErr(400, `${where} 必须是布尔值`); return x; }
+function vtMarker(where, k) { if (typeof k !== "string" || !k.trim() || k.length > 8 || /[【】\[\]]/.test(k)) throw httpErr(400, `${where} 标记应为 1–8 字，不含括号`); return k.trim(); }
+function vtMerge(stored, inP) {
+  if (!inP || typeof inP !== "object" || Array.isArray(inP)) throw httpErr(400, "需要 params 对象");
+  const s = { ...stored };
+  for (const [k, v] of Object.entries(inP)) {
+    if (k === "provider") { if (v === null) { delete s.provider; continue; } if (!["xai", "fish", "mimo"].includes(v)) throw httpErr(400, "provider 只能取 xai/fish/mimo"); s.provider = v; continue; }
+    if (!["voiceEmotion", "fish", "mimo"].includes(k)) throw httpErr(400, "不支持的参数：" + k);
+    if (v === null) { delete s[k]; continue; }
+    if (typeof v !== "object" || Array.isArray(v)) throw httpErr(400, `${k} 必须是对象或 null`);
+    const o = { ...(s[k] && typeof s[k] === "object" ? s[k] : {}) };
+    for (const [kk, x] of Object.entries(v)) {
+      const w = `${k}.${kk}`;
+      if (x === null) { delete o[kk]; continue; }
+      if (k === "voiceEmotion") {
+        if (kk === "enabled") o[kk] = vtBool(w, x);
+        else if (kk === "markers") { if (!Array.isArray(x) || x.length > 30) throw httpErr(400, `${w} 应为最多 30 条的数组`); const m = x.map((y, i) => vtMarker(`${w}[${i}]`, y)); if (new Set(m).size !== m.length) throw httpErr(400, `${w} 有重复项`); o[kk] = m; }
+        else throw httpErr(400, `${k} 不支持的参数：${kk}`);
+      } else if (k === "fish") {
+        if (kk === "model") { if (typeof x !== "string" || !/^[A-Za-z0-9._-]{1,40}$/.test(x)) throw httpErr(400, `${w} 只能是 1–40 位字母数字 . _ -`); o[kk] = x; }
+        else if (kk === "referenceId") { if (typeof x !== "string" || !/^[0-9a-f]{32}$/.test(x)) throw httpErr(400, `${w} 应为 32 位小写十六进制`); o[kk] = x; }
+        else if (kk === "temperature" || kk === "topP") o[kk] = vtNum(w, x, 0, 1);
+        else if (kk === "timeoutSec") o[kk] = vtNum(w, x, 3, 120);
+        else if (["perSentence", "stripLeadingUm", "emotionTags"].includes(kk)) o[kk] = vtBool(w, x);
+        else if (kk === "defaultTag") { if (x !== "" && !VT_TAGS.includes(x)) throw httpErr(400, `${w} 只能为空或 ${VT_TAGS.join("/")}`); o[kk] = x; }
+        else if (kk === "fallback") { if (!["xai", "mimo", "none"].includes(x)) throw httpErr(400, `${w} 只能取 xai/mimo/none`); o[kk] = x; }
+        else if (kk === "emotionMap") {
+          if (typeof x !== "object" || Array.isArray(x) || Object.keys(x).length > 60) throw httpErr(400, `${w} 应为最多 60 项的对象 {中文标记: 标签}`);
+          const m = {}; for (const [mk, mv] of Object.entries(x)) { const kk2 = vtMarker(`${w} 的键`, mk); if (!VT_TAGS.includes(mv)) throw httpErr(400, `${w}.${mk} 只能取 ${VT_TAGS.join("/")}`); m[kk2] = mv; } o[kk] = m;
+        } else throw httpErr(400, `${k} 不支持的参数：${kk}`);
+      } else {
+        if (kk === "model" || kk === "voice") { if (typeof x !== "string" || !x.trim() || x.length > 40) throw httpErr(400, `${w} 应为 1–40 字`); o[kk] = x.trim(); }
+        else throw httpErr(400, `${k} 不支持的参数：${kk}`);
+      }
+    }
+    if (Object.keys(o).length) s[k] = o; else delete s[k];
+  }
+  const e = vtEffective(s);
+  if (e.voiceEmotion.markers.length) { const mk = Object.keys(e.fish.emotionMap); const bad = e.voiceEmotion.markers.filter(m => !mk.includes(m)); if (bad.length) throw httpErr(400, `voiceEmotion.markers 里这些不在情绪映射表中：${bad.join("、")}`); }
+  return s;
+}
+function vtKeyPresent() { try { const st = fs.statSync(VT_KEYFILE); return st.isFile() && st.size > "FISH_API_KEY=".length + 1; } catch (e) { return e.code === "ENOENT" ? false : null; } }
+function vtVoices() { try { const d = JSON.parse(fs.readFileSync(path.join(WORKSPACE, "voices", "voices.json"), "utf8")); return (Array.isArray(d.voices) ? d.voices : []).filter(v => v && /^[0-9a-f]{32}$/.test(v.id)).map(v => ({ alias: String(v.alias || ""), id: v.id, title: String(v.title || v.alias || v.id), default: !!v.default })); } catch { return []; } }
+function vtView(s) { return { params: vtEffective(s), stored: s, defaults: VT_DEFAULTS, keyPresent: vtKeyPresent(), note: "Fish 密钥只在服务器环境变量里，这里只显示是否已配置；改动下一次合成即生效，情绪标记提示约 5 秒内生效" }; }
+Object.assign(R, {
+  "GET /api/fun/voice-tts": async () => vtView(vtStored()),
+  "GET /api/fun/voice-tts/options": async () => ({ providers: [{ id: "xai", label: "Grok" }, { id: "fish", label: "Fish Audio" }, { id: "mimo", label: "小米 MiMo" }], fallbacks: ["xai", "mimo", "none"], emotionTags: VT_TAGS, voices: vtVoices(), voiceParams: "GET /api/stickers/params 的 voice 段（概率/冷却/每日上限/静音时段），用 POST /api/stickers/params/set 修改" }),
+  "POST /api/fun/voice-tts/set": W("fun.voicetts.set", b => Object.keys(b.params || {}).join(","), async b => {
+    const s = vtMerge(vtStored(), b.params); s.version = 1; const backup = funWriteJ("voice-tts.json", s);
+    return { ok: true, ...vtView(s), backup };
+  }, { confirm: true }),
+});
+
+// ---------- HOSINO-VOICES v1：音色库（读写 workspace/voices/voices.json + 音色手册.md 表格；Fish 搜索/试听/封面代理） ----------
+const VV_DIR = process.env.HS_VOICES_DIR || path.join(WORKSPACE, "voices");
+const VV_FILE = path.join(VV_DIR, "voices.json"), VV_MANUAL = path.join(VV_DIR, "音色手册.md"), VV_TRASH = path.join(VV_DIR, ".trash");
+const VV_DATA = process.env.HS_VOICES_DATA || "/opt/hosino-console/data/voices";
+const VV_FISH = process.env.HS_FISH_API || "https://api.fish.audio";
+const VV_LIM = { sessionGapMs: 10e3, perHour: 30, perDay: 100, textMax: 40, cacheMaxBytes: 50e6, coverMaxBytes: 2e6, coverCacheMaxBytes: 30e6, searchPageMax: 20, timeoutMs: 15e3, metaTtlMs: 24 * 3600e3, searchTtlMs: 10 * 60e3 };
+const VV_DEFAULT_TEXT = "老师，今天也要一起偷懒吗？";
+const VV_ID = /^[0-9a-f]{32}$/, VV_ALIAS = /^[a-z][a-z0-9_]{1,23}$/;
+const vvFetch = (...a) => (globalThis.__vvFetch || fetch)(...a);
+function vvKey() {
+  if (process.env.FISH_API_KEY) return process.env.FISH_API_KEY;
+  try { const m = /^\s*FISH_API_KEY\s*=\s*["']?([^"'\s]+)/m.exec(fs.readFileSync(VT_KEYFILE, "utf8")); if (m) return m[1]; } catch {}
+  throw httpErr(503, "服务器没有配置 Fish 密钥");
+}
+async function vvFish(p, opt = {}) {
+  let r; try { r = await vvFetch(VV_FISH + p, { ...opt, headers: { Authorization: "Bearer " + vvKey(), ...(opt.headers || {}) }, signal: AbortSignal.timeout(VV_LIM.timeoutMs) }); }
+  catch (e) { if (e.http) throw e; throw httpErr(502, "连接 Fish 失败：" + (e.name === "TimeoutError" ? "超时" : "网络错误")); }
+  if (r.status === 404) throw httpErr(404, "Fish 上找不到这个音色");
+  if (!r.ok) throw httpErr(502, "Fish 返回错误 " + r.status);
+  return r;
+}
+// ---- voices.json 读写（单进程串行锁 + 备份 + tmp/rename） ----
+let vvChain = Promise.resolve();
+const vvLocked = fn => { const p = vvChain.then(fn, fn); vvChain = p.catch(() => {}); return p; };
+function vvRead() { let d; try { d = JSON.parse(fs.readFileSync(VV_FILE, "utf8")); } catch (e) { throw httpErr(500, "voices.json 读取失败：" + (e.code || e.message)); } if (!d || !Array.isArray(d.voices)) throw httpErr(500, "voices.json 格式不对"); return d; }
+function vvBackup(f, tag) { if (!fs.existsSync(f)) return null; fs.mkdirSync(VV_TRASH, { recursive: true, mode: 0o755 }); const ts = new Date().toISOString().replace(/[:.]/g, "-"); const dst = path.join(VV_TRASH, `${ts}-${tag}-${path.basename(f)}`); fs.copyFileSync(f, dst, fs.constants.COPYFILE_EXCL); return path.basename(dst); }
+function vvAtomic(f, text) { const tmp = path.join(path.dirname(f), `.${path.basename(f)}.tmp-${process.pid}`); fs.writeFileSync(tmp, text, { mode: 0o644 }); fs.renameSync(tmp, f); }
+const vvDefAlias = d => d.default || (d.voices.find(v => v.default) || {}).alias;
+const vvRow = (v, def) => `| ${v.alias === def ? "⭐ " : ""}\`${v.alias}\` | ${v.title || ""} | ${(v.nicknames || []).join(" / ")} | \`${v.id}\` | ${[].concat(v.source_lang || []).join("/") || "?"} | ${[].concat(v.output_langs || []).join("/")} | ${v.alias === def ? "默认" : "备用（仅点名）"} |`;
+function vvManualText(md, d) {
+  const L = md.split("\n"), h = L.findIndex(l => /^\|\s*alias\s*\|/.test(l));
+  if (h < 0 || !/^\|[-| ]+\|$/.test(L[h + 1] || "")) throw httpErr(500, "音色手册.md 找不到音色表格");
+  let e = h + 2; while (e < L.length && L[e].startsWith("|")) e++;
+  const def = vvDefAlias(d); return [...L.slice(0, h + 2), ...d.voices.map(v => vvRow(v, def)), ...L.slice(e)].join("\n");
+}
+function vvValidate(d) {
+  const ids = new Set(), names = new Map(); const def = vvDefAlias(d);
+  for (const v of d.voices) {
+    if (!VV_ID.test(v.id) || ids.has(v.id)) throw httpErr(500, "voices.json id 无效或重复：" + v.id); ids.add(v.id);
+    for (const n of [v.alias, ...(v.nicknames || [])].map(x => String(x).toLowerCase())) { if (names.has(n) && names.get(n) !== v.alias) throw httpErr(409, `名字「${n}」和 ${names.get(n)} 冲突`); names.set(n, v.alias); }
+  }
+  if (!d.voices.some(v => v.alias === def)) throw httpErr(500, "默认音色丢失");
+}
+function vvCommit(d, tag) {
+  vvValidate(d); const md = fs.readFileSync(VV_MANUAL, "utf8"), md2 = vvManualText(md, d);
+  const b1 = vvBackup(VV_FILE, tag), b2 = vvBackup(VV_MANUAL, tag);
+  vvAtomic(VV_FILE, JSON.stringify(d, null, 2) + "\n"); vvAtomic(VV_MANUAL, md2);
+  return { voicesBackup: b1, manualBackup: b2 };
+}
+// ---- Fish 元数据缓存 ----
+const vvMeta = new Map(), vvSearchC = new Map();
+async function vvMetaGet(id) {
+  const c = vvMeta.get(id); if (c && c.at > Date.now() - VV_LIM.metaTtlMs) return c.m;
+  const j = await (await vvFish("/model/" + id)).json();
+  const m = { id: j._id || id, title: String(j.title || ""), description: String(j.description || "").slice(0, 300), languages: Array.isArray(j.languages) ? j.languages.map(String) : [], like_count: j.like_count ?? null, use_count: j.task_count ?? null, cover: typeof j.cover_image === "string" ? j.cover_image : "", author: j.author?.nickname ? String(j.author.nickname) : "", visibility: j.visibility || "" };
+  vvMeta.set(id, { at: Date.now(), m }); return m;
+}
+const vvCoverUrl = id => `/api/fun/voices/cover?id=${id}`;
+async function vvList() {
+  const d = vvRead(), def = vvDefAlias(d);
+  return { default: def, voices: await Promise.all(d.voices.map(async v => {
+    let like = v.like_count ?? null, use = v.use_count ?? null, src = "stored";
+    if (like == null || use == null) { try { const m = await vvMetaGet(v.id); like ??= m.like_count; use ??= m.use_count; src = "fish"; } catch { src = "unknown"; } }
+    return { alias: v.alias, title: v.title || "", nicknames: v.nicknames || [], id: v.id, description: v.style || "", source_lang: [].concat(v.source_lang || []), output_langs: [].concat(v.output_langs || []), like_count: like, use_count: use, countsFrom: src, isDefault: v.alias === def, locked: v.alias === def || v.alias === "hoshino_zh", coverUrl: vvCoverUrl(v.id), previewUrl: `/api/fun/voices/preview?id=${v.alias}` };
+  })) };
+}
+function vvResolve(x) {
+  const s = String(x || "").trim().toLowerCase(); if (!s) throw httpErr(400, "缺少参数：id");
+  if (VV_ID.test(s)) return s;
+  const v = vvRead().voices.find(v => [v.alias, v.title, ...(v.nicknames || [])].some(n => String(n).toLowerCase() === s)); if (!v) throw httpErr(404, "音色库里没有：" + x); return v.id;
+}
+function vvParseId(b) { const raw = String(b?.id || b?.url || "").trim(); const m = /^(?:https?:\/\/(?:www\.)?fish\.audio\/(?:[a-z-]+\/)?m\/)?([0-9a-f]{32})\/?(?:[?#].*)?$/i.exec(raw); if (!m) throw httpErr(400, "id 应为 32 位十六进制，或 https://fish.audio/m/<id> 链接"); return m[1].toLowerCase(); }
+// ---- 试听：限流 + 磁盘缓存 ----
+const vvRate = { last: new Map(), hits: [] };
+function vvRateCheck(sid) {
+  const now = Date.now(), l = vvRate.last.get(sid) || 0;
+  if (now - l < VV_LIM.sessionGapMs) throw Object.assign(httpErr(429, `试听太频繁了，请 ${Math.ceil((VV_LIM.sessionGapMs - now + l) / 1e3)} 秒后再试`), { code: "rate_session" });
+  vvRate.hits = vvRate.hits.filter(t => t > now - 86400e3);
+  if (vvRate.hits.filter(t => t > now - 3600e3).length >= VV_LIM.perHour) throw Object.assign(httpErr(429, `这一小时试听次数已用完（上限 ${VV_LIM.perHour} 次）`), { code: "rate_hour" });
+  if (vvRate.hits.length >= VV_LIM.perDay) throw Object.assign(httpErr(429, `今天试听次数已用完（上限 ${VV_LIM.perDay} 次）`), { code: "rate_day" });
+  const prev = vvRate.last.get(sid); vvRate.last.set(sid, now); vvRate.hits.push(now);
+  return () => { const i = vvRate.hits.lastIndexOf(now); if (i >= 0) vvRate.hits.splice(i, 1); if (vvRate.last.get(sid) === now) { if (prev === undefined) vvRate.last.delete(sid); else vvRate.last.set(sid, prev); } };
+}
+function vvCacheTrim(dir, max) { try { const fl = fs.readdirSync(dir).map(f => { const s = fs.statSync(path.join(dir, f)); return { f, s: s.size, t: s.mtimeMs }; }).sort((a, b) => a.t - b.t); let tot = fl.reduce((a, x) => a + x.s, 0); for (const x of fl) { if (tot <= max) break; fs.rmSync(path.join(dir, x.f), { force: true }); tot -= x.s; } } catch {} }
+async function vvPreview(q, req) {
+  const id = vvResolve(q.id ?? q.alias); let text = String(q.text ?? "").replace(/[\r\n]+/g, " ").trim() || VV_DEFAULT_TEXT;
+  if ([...text].length > VV_LIM.textMax) throw httpErr(400, `试听台词最多 ${VV_LIM.textMax} 字`);
+  const model = vtEffective(vtStored()).fish.model, dir = path.join(VV_DATA, "preview");
+  const f = path.join(dir, crypto.createHash("sha256").update(`${model}\0${id}\0${text}`).digest("hex").slice(0, 40) + ".mp3");
+  try { const buf = fs.readFileSync(f); const now = new Date(); fs.utimesSync(f, now, now); return { __raw: { type: "audio/mpeg", buf, headers: { "x-voice-cache": "hit" } } }; } catch {}
+  vvKey(); // 没有密钥时直接 503，不占试听额度
+  const undo = vvRateCheck(cookieSid(req) || "?");
+  let buf;
+  try {
+    const r = await vvFish("/v1/tts", { method: "POST", headers: { "Content-Type": "application/json", model }, body: JSON.stringify({ text, reference_id: id, format: "mp3", temperature: 0.5, top_p: 0.6 }) });
+    buf = Buffer.from(await r.arrayBuffer()); if (buf.length < 200) throw httpErr(502, "Fish 返回的音频为空");
+  } catch (e) { undo(); throw e; } // 合成失败退回这次额度
+  try { fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); vvAtomic(f, buf); vvCacheTrim(dir, VV_LIM.cacheMaxBytes); } catch {}
+  return { __raw: { type: "audio/mpeg", buf, headers: { "x-voice-cache": "miss" } } };
+}
+async function vvCover(id) {
+  if (!VV_ID.test(id || "")) throw httpErr(400, "id 无效"); const dir = path.join(VV_DATA, "cover");
+  for (const ext of ["png", "jpeg", "webp", "gif"]) { const f = path.join(dir, `${id}.${ext}`); try { return { __raw: { type: "image/" + ext, buf: fs.readFileSync(f), headers: { "cache-control": "private, max-age=86400" } } }; } catch {} }
+  const m = await vvMetaGet(id); if (!m.cover) throw httpErr(404, "这个音色没有封面");
+  const url = /^https:\/\//.test(m.cover) ? m.cover : "https://public-platform.r2.fish.audio/" + m.cover.replace(/^\/+/, "");
+  if (!/^https:\/\/([a-z0-9-]+\.)*fish\.audio\//.test(url)) throw httpErr(502, "封面地址不在 fish.audio");
+  let r; try { r = await vvFetch(url, { signal: AbortSignal.timeout(VV_LIM.timeoutMs) }); } catch { throw httpErr(502, "封面下载失败"); }
+  const ct = String(r.headers.get("content-type") || "").split(";")[0].trim(), ext = { "image/png": "png", "image/jpeg": "jpeg", "image/webp": "webp", "image/gif": "gif" }[ct];
+  if (!r.ok || !ext) throw httpErr(502, "封面不是图片");
+  const buf = Buffer.from(await r.arrayBuffer()); if (buf.length > VV_LIM.coverMaxBytes) throw httpErr(502, "封面太大");
+  try { fs.mkdirSync(dir, { recursive: true, mode: 0o700 }); vvAtomic(path.join(dir, `${id}.${ext}`), buf); vvCacheTrim(dir, VV_LIM.coverCacheMaxBytes); } catch {}
+  return { __raw: { type: ct, buf, headers: { "cache-control": "private, max-age=86400" } } };
+}
+function vvNames(b) {
+  const alias = String(b?.alias || "").trim(); if (!VV_ALIAS.test(alias)) throw httpErr(400, "alias 应为 2–24 位小写字母/数字/下划线，字母开头");
+  const nn = b?.nicknames == null ? [] : b.nicknames; if (!Array.isArray(nn) || nn.length > 10) throw httpErr(400, "nicknames 应为最多 10 个的数组");
+  const nick = [...new Set(nn.map(x => String(x).trim()))]; if (nick.some(x => !x || x.length > 16 || /[|`\r\n]/.test(x))) throw httpErr(400, "每个中文叫法 1–16 字，不能含 | 或 `");
+  const desc = String(b?.description ?? "").trim(); if (desc.length > 120 || /[\r\n|]/.test(desc)) throw httpErr(400, "description 最多 120 字的单行文本，不能含 |");
+  return { alias, nick, desc };
+}
+Object.assign(R, {
+  "GET /api/fun/voices": async () => vvList(),
+  "GET /api/fun/voices/search": async u => {
+    const q = u.searchParams, title = (q.get("title") || "").trim().slice(0, 40), ps = Math.min(Math.max(parseInt(q.get("page_size") || "10", 10) || 10, 1), VV_LIM.searchPageMax), page = Math.min(Math.max(parseInt(q.get("page_number") || "1", 10) || 1, 1), 50);
+    const sort = ["score", "task_count", "created_at"].includes(q.get("sort_by")) ? q.get("sort_by") : "score", lang = /^[a-z]{2}$/.test(q.get("language") || "") ? q.get("language") : "";
+    const p = new URLSearchParams({ page_size: ps, page_number: page, sort_by: sort }); if (title) p.set("title", title); if (lang) p.set("language", lang);
+    const k = p.toString(), c = vvSearchC.get(k); if (c && c.at > Date.now() - VV_LIM.searchTtlMs) return { ...c.v, cached: true };
+    const j = await (await vvFish("/model?" + k)).json(); const have = new Set(vvRead().voices.map(v => v.id));
+    const v = { total: j.total ?? null, page, pageSize: ps, items: (Array.isArray(j.items) ? j.items : []).filter(x => VV_ID.test(x?._id || "")).map(x => ({ id: x._id, title: String(x.title || ""), description: String(x.description || "").slice(0, 200), languages: Array.isArray(x.languages) ? x.languages : [], like_count: x.like_count ?? null, use_count: x.task_count ?? null, author: x.author?.nickname ? String(x.author.nickname) : "", coverUrl: vvCoverUrl(x._id), inLibrary: have.has(x._id), fishUrl: `https://fish.audio/m/${x._id}` })) };
+    if (vvSearchC.size > 200) vvSearchC.clear(); vvSearchC.set(k, { at: Date.now(), v }); return { ...v, cached: false };
+  },
+  "GET /api/fun/voices/preview": async (u, b, req) => vvPreview({ id: u.searchParams.get("id"), text: u.searchParams.get("text") }, req),
+  "POST /api/fun/voices/preview": async (u, b, req) => vvPreview(b || {}, req),
+  "GET /api/fun/voices/cover": async u => vvCover(u.searchParams.get("id")),
+  "POST /api/fun/voices/add": W("fun.voices.add", b => `${b?.alias} ${b?.id || b?.url}${b?.confirm === true ? "" : " preview"}`, async b => vvLocked(async () => {
+    const id = vvParseId(b), { alias, nick, desc } = vvNames(b), d = vvRead();
+    if (d.voices.some(v => v.id === id)) throw Object.assign(httpErr(409, "这个音色已经在库里了：" + d.voices.find(v => v.id === id).alias), { code: "dup_id" });
+    const taken = new Map(); for (const v of d.voices) for (const n of [v.alias, v.id, v.title, ...(v.nicknames || [])]) taken.set(String(n).toLowerCase(), v.alias);
+    for (const n of [alias, ...nick]) if (taken.has(n.toLowerCase())) throw Object.assign(httpErr(409, `名字「${n}」已被 ${taken.get(n.toLowerCase())} 使用`), { code: "dup_name" });
+    const m = await vvMetaGet(id);
+    const entry = { alias, id, title: m.title || alias, nicknames: nick, like_count: m.like_count, use_count: m.use_count, style: desc, note: "", default: false, source_lang: m.languages.length ? m.languages : ["zh"], output_langs: ["zh", "ja", "en"], lang_note: "控制台添加；非母语发音需人耳确认" };
+    const row = vvRow(entry, vvDefAlias(d));
+    if (b.confirm !== true) return { ok: false, needConfirm: true, preview: { entry, manualRow: row, fish: { title: m.title, author: m.author, visibility: m.visibility }, coverUrl: vvCoverUrl(id) }, note: "确认无误后带 confirm:true 再提交一次" };
+    d.voices.push(entry); const bk = vvCommit(d, "add-" + alias); return { ok: true, added: entry, ...bk, count: d.voices.length };
+  })),
+  "POST /api/fun/voices/delete": W("fun.voices.delete", b => `${b?.alias}${b?.confirm === true ? "" : " preview"}`, async b => vvLocked(async () => {
+    const d = vvRead(), def = vvDefAlias(d), a = String(b?.alias || "").trim(); if (!a) throw httpErr(400, "缺少参数：alias");
+    const v = d.voices.find(v => v.alias === a); if (!v) throw httpErr(404, "音色库里没有：" + a);
+    if (a === def || a === "hoshino_zh" || v.default) throw Object.assign(httpErr(423, "默认音色（星野）已锁定，不能删除"), { code: "locked" });
+    if (b.confirm !== true) return { ok: false, needConfirm: true, preview: { remove: v, manualRowRemoved: vvRow(v, def), remaining: d.voices.length - 1 }, note: "确认无误后带 confirm:true 再提交一次" };
+    d.voices = d.voices.filter(x => x.alias !== a); const bk = vvCommit(d, "del-" + a); return { ok: true, deleted: a, ...bk, count: d.voices.length };
+  })),
+  "POST /api/fun/voices/regen-manual": W("fun.voices.regen", () => "manual", async b => vvLocked(async () => {
+    const d = vvRead(); vvValidate(d); const md = fs.readFileSync(VV_MANUAL, "utf8"), md2 = vvManualText(md, d);
+    if (b?.confirm !== true) return { ok: false, needConfirm: true, changed: md !== md2, preview: md2.split("\n").filter(l => l.startsWith("| ")).slice(1) };
+    if (md === md2) return { ok: true, changed: false };
+    const manualBackup = vvBackup(VV_MANUAL, "regen"); vvAtomic(VV_MANUAL, md2); return { ok: true, changed: true, manualBackup };
+  })),
+});
+
 function send(res, code, obj, h = {}) { const b = JSON.stringify(obj); res.writeHead(code, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...h }); res.end(b); }
 const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".webmanifest": "application/manifest+json" };
-const SEC = { "x-content-type-options": "nosniff", "x-frame-options": "DENY", "referrer-policy": "no-referrer", "strict-transport-security": "max-age=31536000", "content-security-policy": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'" };
+const SEC = { "x-content-type-options": "nosniff", "x-frame-options": "DENY", "referrer-policy": "no-referrer", "strict-transport-security": "max-age=31536000", "content-security-policy": "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'" };
 const body = req => new Promise((r, j) => { let d = ""; req.on("data", c => { d += c; if (d.length > 2e5) { j(new Error("请求过大")); req.destroy(); } }); req.on("end", () => { try { r(d ? JSON.parse(d) : {}); } catch { j(new Error("JSON 无效")); } }); });
 
 http.createServer(async (req, res) => {
@@ -1269,7 +1857,8 @@ http.createServer(async (req, res) => {
       if (u.pathname.startsWith("/api/cli/")) { if (req.method === "DELETE" && req.headers["x-hs"] !== "1") return send(res, 403, { error: "拒绝跨站请求" }); return await cliRoute(req, res, u); }
       const pm = req.method === "GET" && /^\/api\/profiles\/([^/]+)$/.exec(u.pathname); const h = pm ? (u2 => R["GET /api/profiles/:id"](u2, decodeURIComponent(pm[1]))) : R[req.method + " " + u.pathname]; if (!h) return send(res, 404, { error: "接口不存在" });
       const b = req.method === "POST" ? await body(req) : null;
-      return send(res, 200, await h(u, b, req));
+      const out = await h(u, b, req); if (out?.__raw) { res.writeHead(200, { "content-type": out.__raw.type, "content-length": out.__raw.buf.length, "cache-control": "no-store", "x-content-type-options": "nosniff", ...out.__raw.headers }); return res.end(out.__raw.buf); } /* HOSINO-VOICES v1 raw audio/image */
+      return send(res, 200, out);
     }
     let p = path.normalize(u.pathname).replace(/^(\.\.[/\\])+/, ""); if (p === "/" || !path.extname(p)) p = "/index.html";
     const fp = path.join(PUB, p); if (!fp.startsWith(PUB)) return send(res, 403, {});

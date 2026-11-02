@@ -1,5 +1,5 @@
-import { api, setUnauthedHandler, notReady, mediaOf } from "./api.js?v=2026.11.3";
-import { md } from "./md.js?v=2026.11.3";
+import { api, setUnauthedHandler, notReady, mediaOf } from "./api.js?v=2026.11.3.1";
+import { md } from "./md.js?v=2026.11.3.1";
 
 // ---------- 小工具 ----------
 const $ = (s, el = document) => el.querySelector(s);
@@ -289,6 +289,7 @@ async function route() {
     if (generation !== routeGeneration) return;
     if (!closed) { history.replaceState(history.state, "", v3pageHash); return; }
   }
+  { const mv = !p.rest && V4MOVE[p.name + "#" + p.sec]; if (mv) { history.replaceState(history.state, "", `#/${mv[0]}#${mv[1]}`); return route(); } }
   if (TOPIC[p.name] && !p.rest) { const redraw = h === v3pageHash; current = p.name; renderChrome(); clearTimers(); v3pageHash = h; return v3topic(TOPIC[p.name], p.sec, { redraw }); }
   const al = v3alias(p.name, p.rest);
   if (al) { history.replaceState(history.state, "", `#/${al.t}#${al.sec}`); const same = V3?.k === al.t && document.contains(V3?.el); current = al.t; renderChrome(); if (!same) clearTimers(); v3pageHash = location.hash; await v3topic(TOPIC[al.t], al.sec); if (generation === routeGeneration && al.d) v3detail(al.d); return; }
@@ -1348,15 +1349,16 @@ const HL_SEC = [
 const HL_TOP = ["enabled", "optOutPhrase"];
 const hlKey = s => String(s).replace(/\s+/g, "").toLowerCase();
 VIEWS.humanlike = async (v, sub) => {
-  if (sub === "voice") return voiceTtsView(v); if (sub === "voices") return voicesView(v);
+  const only = String(sub || "").startsWith("only:") ? sub.slice(5) : ""; // v4：技术模式 / 主动搭话 单独成分区
   const tab = sub === "followups" ? "followups" : "";
+  const SECS = HL_SEC.filter(x => only ? x[0] === only : x[0] !== "techMode" && x[0] !== "proactive");
   const tabs = `<div class="toolbar"><div class="seg stk-tabs" role="tablist">${[["", "设置"], ["followups", "待追问"]].map(([k, t]) => `<a role="tab" href="#/humanlike${k ? "/" + k : ""}" aria-pressed="${k === tab}">${t}</a>`).join("")}</div></div>`;
   const [d, ss] = await Promise.all([api.hlGet(), api.sessions().catch(() => ({ sessions: [] })), loadAliases()]);
   const req = d.requires || {}; const HLS = new Set(HL_SEC.map(x => x[0]));
   const reqTop = Object.entries(req).filter(([k]) => !k.includes("=") && !HLS.has(k.split(".")[0]));
   const reqCard = sec => Object.entries(req).filter(([k]) => !k.includes("=") && k.split(".")[0] === sec);
   const banner = d.consumers === false || reqTop.length ? `<div class="fun-warn" role="status">🚧 <b>${d.consumers === false ? "暂未生效：功能还没上线，这里只保存设置" : "部分取值有前置条件"}</b>${d.note ? `<span>${esc(scrub(d.note))}</span>` : ""}${reqTop.length ? `<ul class="hl-req">${reqTop.map(([k, t]) => `<li><code>${esc(k)}</code>：${esc(scrub(t))}</li>`).join("")}</ul>` : ""}</div>` : "";
-  const head = top("拟人化", "让星野更像人") + banner + tabs;
+  const head = only ? banner : top("拟人化", "让星野更像人") + banner + tabs;
   const groups0 = (ss.sessions || []).map(x => ({ x, t: qqTarget(x.key) })).filter(o => o.t?.kind === "group").map(o => ({ k: "group:" + o.t.id.toLowerCase(), name: sessName(o.x) }));
   if (tab === "followups") { const f = await api.hlFollowups().catch(() => ({ items: [] })); const it = f.items || [];
     return paint(v, head + `<div class="faint fs" style="margin-bottom:8px">以后由技能写进来的「改天问问」事件，这里只读。${f.updatedAt ? "更新于 " + fmtTime(f.updatedAt) : ""}</div>` + (it.length ? `<div class="list">${it.map(x => `<div class="row"><div class="grow"><div class="t">${esc(x.topic || "（没写事件）")}</div><div class="d">${esc([x.name || (x.person ? funName(x.person) : ""), x.group ? funGroupName(String(x.group).startsWith("group:") ? String(x.group).toLowerCase() : "group:" + String(x.group).toLowerCase(), groups0) : "私聊"].filter(Boolean).join(" · "))}</div><div class="d">${esc(["记下 " + (x.createdAt ? fmtTime(x.createdAt) : "—"), "该问 " + (x.dueAt ? fmtTime(x.dueAt) : "—")].join(" · "))}</div></div>${x.askedAt ? `<span class="pill ok" title="${esc(fmtTime(x.askedAt))}">已问 ${esc(fmtTime(x.askedAt))}</span>` : `<span class="pill">还没问</span>`}</div>`).join("")}</div>` : `<div class="card empty"><b>🗓️</b>还没有待追问的事件</div>`)); }
@@ -1382,9 +1384,9 @@ VIEWS.humanlike = async (v, sub) => {
     return `<div class="section">${esc(t)} <span class="faint fs" style="font-weight:400">${esc(desc)}</span></div><div class="card form fun-sec ${on ? "" : "off"}">${fs.map(f => ctl(sec, f)).join("")}${sec === "robotBit" ? `<div class="hl-fixed">🔒 有人认真问是不是真人时一律如实回答，不受开关影响</div>` : ""}${reqCard(sec).map(([, t]) => `<div class="hl-need soft">ℹ️ ${esc(scrub(t))}</div>`).join("")}<div class="fun-reset"><button type="button" class="btn sm" data-hreset="${sec}">↺ 恢复默认…</button></div></div>`; };
   const KINDS = { all: "全部", ...HL_FEAT };
   const draw = () => { const y = scrollY;
-    root.querySelector("#hf").innerHTML = `<div class="card form"><label class="switchrow"><div class="grow"><b>拟人化总开关</b><div class="faint fs">关掉后下面所有效果都不生效（技术模式除外，它只负责关效果）</div></div>${sw(`data-ht="enabled"`, H.enabled)}</label>
+    root.querySelector("#hf").innerHTML = only ? SECS.map(secCard).join("") : `<div class="card form"><label class="switchrow"><div class="grow"><b>拟人化总开关</b><div class="faint fs">关掉后下面所有效果都不生效（技术模式除外，它只负责关效果）</div></div>${sw(`data-ht="enabled"`, H.enabled)}</label>
         <label class="field"><span>群友一句话退出全部拟人效果的口令</span><input class="input" maxlength="20" value="${esc(H.optOutPhrase ?? "")}" data-ht="optOutPhrase" autocomplete="off"></label><div class="faint fs">所有口令 1–20 字，不能重复，也不能和小脾气的口令重复。</div></div>
-      ${HL_SEC.map(secCard).join("")}
+      ${SECS.map(secCard).join("")}
       <div class="section">各个群</div><div class="card form"><div class="list flat">${groups.map(g => g.k).concat(Object.keys(H.perGroup || {}).filter(k => !groups.some(g => g.k === k))).map(gk => { const c = H.perGroup?.[gk], nm = funGroupName(gk, groups);
         return `<div class="fun-g"><div class="row"><div class="grow"><div class="t">${esc(nm)}</div><div class="d">${c ? "单独设置" + (Object.keys(c).filter(k => k !== "enabled" && c[k] === false).length ? ` · 关了 ${Object.keys(c).filter(k => k !== "enabled" && c[k] === false).map(k => HL_FEAT[k]).join("、")}` : "") : "跟随总开关"}</div></div>${c ? `<button type="button" class="btn sm" data-hgunset="${esc(gk)}">恢复默认</button>` : ""}${sw(`data-hg="${esc(gk)}"`, c ? c.enabled !== false : true, nm)}</div>
           ${c ? `<details class="fun-ov"><summary>这个群单独关掉某些功能</summary><div class="fun-ovs">${Object.entries(HL_FEAT).map(([f, t]) => `<label class="tg">${sw(`data-hgf="${esc(gk)}" data-f="${f}"`, c[f] !== false, t)}${esc(t)}</label>`).join("")}</div></details>` : ""}</div>`; }).join("") || `<div class="faint">还没有群会话</div>`}</div></div>
@@ -1398,7 +1400,7 @@ VIEWS.humanlike = async (v, sub) => {
     for (const m of ["optOut", "perGroup"]) { const x = {}; for (const id of new Set([...Object.keys(H0[m] || {}), ...Object.keys(H[m] || {})])) if (!eq(H[m]?.[id], H0[m]?.[id])) x[id] = H[m]?.[id] ?? null; if (Object.keys(x).length) o[m] = x; }
     for (const [sec] of HL_SEC) { const a = H0[sec] || {}, b = H[sec] || {}, so = {}; for (const k of Object.keys(b)) if (!eq(a[k], b[k])) so[k] = b[k]; if (Object.keys(so).length) o[sec] = so; }
     return o; };
-  const root = paint(v, head + `<div class="card mlist vt-entry"><a class="mrow" href="#/humanlike/voice"><span class="mic">${ic("tune")}</span><span class="grow"><b>语音设置</b><small>语音引擎、情绪标记、Fish 和 MiMo 的声音</small></span><span class="mchev">${ic("chev")}</span></a><a class="mrow" href="#/humanlike/voices"><span class="mic">${ic("play")}</span><span class="grow"><b>音色</b><small>音色手册、在线找音色、添加备用音色</small></span><span class="mchev">${ic("chev")}</span></a></div>` + `<div id="hf"></div>` + dirtyBar("hsb", "保存设置"));
+  const root = paint(v, head + `<div id="hf"></div>` + dirtyBar("hsb", "保存设置"));
   const addTag = (sec, k, raw) => { const s = String(raw || "").trim(); const spec = HL_SEC.find(x => x[0] === sec)[3].find(f => f[0] === k); if (!s) return; if ([...s].length > spec[4] || /\n/.test(s)) return toast(`每条最多 ${spec[4]} 字，一行`); const list = H[sec][k] || []; if (list.length >= spec[3]) return toast(`最多 ${spec[3]} 条`); if (list.some(x => hlKey(x) === hlKey(s))) return toast("已经有了"); H[sec] = { ...H[sec], [k]: [...list, s] }; draw(); };
   root.addEventListener("keydown", e => { const t = e.target; if (t.dataset?.tagin && e.key === "Enter" && !e.isComposing) { e.preventDefault(); addTag(t.dataset.tagin, t.dataset.k, t.value); } });
   root.addEventListener("change", e => { const t = e.target, sec = t.dataset.hs, k = t.dataset.k;
@@ -1438,7 +1440,6 @@ const VT_BOOL = new Set(["voiceEmotion.enabled", "fish.emotionTags", "fish.perSe
 const VT_LABEL = { provider: "语音引擎", "fish.fallback": "Fish 失败时改用", "voiceEmotion.enabled": "让星野给语音加情绪标记", "voiceEmotion.markers": "允许的标记", "fish.emotionMap": "情绪映射表", "fish.defaultTag": "没有标记时用", "fish.emotionTags": "给每句加情绪标签", "fish.model": "Fish 模型", "fish.referenceId": "音色", "fish.temperature": "温度 temperature", "fish.topP": "top_p", "fish.timeoutSec": "每句超时", "fish.perSentence": "逐句合成再拼接", "fish.stripLeadingUm": "去掉开头的「嗯……」", "mimo.model": "MiMo 模型", "mimo.voice": "MiMo 音色" };
 // 与后端校验一致：标记 1–8 字、不含【】[]
 const vtMarkOk = k => typeof k === "string" && !!k.trim() && k.trim().length <= 8 && !/[【】\[\]]/.test(k);
-const vtFreqLink = () => `<div class="section">发语音的频率</div><div class="card mlist vt-freq"><a class="mrow" href="#/voice#rules"><span class="mic">${ic("tune")}</span><span class="grow"><b>语音频率设置</b><small>概率、冷却、每日上限、静默时段、单句字数都在「表情库 → 参数」的语音那一段，这里不重复</small></span><span class="mchev">${ic("chev")}</span></a></div>`;
 // ---------- 音色页（#/humanlike/voices），规格 staging/fish/voices-console-spec.md ----------
 const VV_LANGS = [["", "全部语言"], ["zh", "中文"], ["ja", "日语"], ["en", "英语"], ["ko", "韩语"], ["fr", "法语"], ["de", "德语"], ["es", "西语"]];
 const VV_LN = Object.fromEntries(VV_LANGS.filter(x => x[0]));
@@ -1490,7 +1491,7 @@ async function vvPlay(btn, key, text) {
 }
 async function voicesView(v) {
   vvStop();
-  const head = top("音色", "拟人化 · 星野的声音库").replace('href="#/more" aria-label="返回更多"', 'href="#/humanlike" aria-label="返回拟人化"');
+  const head = top("音色库", "语音");
   let L; try { L = await api.vvList(); } catch (x) {
     paint(v, head + `<div class="card empty"><div class="em">🎙️</div><div>${notReady(x) ? "音色接口后台还没上线，上线后这里会显示音色手册" : "音色手册没读出来：" + vvE(x.message)}</div><button class="btn" data-vvre style="margin-top:14px">再试一次</button></div>`);
     v.querySelector("[data-vvre]").onclick = () => route(); return;
@@ -1594,7 +1595,7 @@ function vvAddForm(id) {
   });
 }
 async function voiceTtsView(v) {
-  const head = top("语音设置", "拟人化 · 星野的声音").replace('href="#/more" aria-label="返回更多"', 'href="#/humanlike" aria-label="返回拟人化"');
+  const head = top("合成", "语音");
   const [g, o, lb] = await Promise.allSettled([api.vtGet(), api.vtOptions(), api.vvList()]);
   const libDef = lb.status === "fulfilled" && Array.isArray(lb.value?.voices) ? lb.value.voices.find(x => x?.isDefault === true) || null : null;
   if (g.status === "rejected") { const x = g.reason; if (x?.status === 401) throw x;
@@ -1659,7 +1660,7 @@ async function voiceTtsView(v) {
         <label class="field"><span>${VT_LABEL["mimo.voice"]}</span><input class="input" value="${esc(P.mimo.voice ?? "")}" maxlength="40" data-vt="mimo.voice" autocomplete="off"></label>
       </div>
       <button type="button" class="btn danger" data-vtall style="width:100%;margin-top:14px">全部恢复默认…</button>
-      ${vtFreqLink()}`;
+      `;
     root.querySelector("#vtsb").hidden = !Object.keys(changes()).length; scrollTo(0, y); };
   const root = paint(v, head + `<div class="hl-need soft vt-tip">ℹ️ 改动下一次合成就生效；情绪标记提示约 5 秒内生效，不用重启。</div><div id="vtf" class="vt"></div>` + dirtyBar("vtsb", "保存语音设置"));
   root.classList.add("vt-page");
@@ -2285,7 +2286,7 @@ async function stkParams(v, tabs) {
     const norm = m => Object.fromEntries(Object.entries(m || {}).sort(([a], [b]) => a < b ? -1 : 1).map(([k, v]) => [k, { enabled: v.enabled !== false, ...(v.probability != null ? { probability: v.probability } : {}) }]));
     if (JSON.stringify(norm(P0.sessions)) !== JSON.stringify(norm(P.sessions))) o.sessions = norm(P.sessions); return o; };
   const root = paint(v, top("表情库", "参数") + tabs + `<div id="pf"></div>` + dirtyBar("psb") + `<div id="vf"></div>`);
-  if (v.closest?.(".v3body")) root.querySelector("#vf").innerHTML = `<div class="section">语音</div><div class="card mlist"><a class="mrow" href="#/voice#rules"><span class="mic">${ic("play")}</span><span class="grow"><b>发语音的规则搬到了「语音」</b><small>概率、冷却、每日上限、静默时段、按群开关</small></span><span class="mchev">${ic("chev")}</span></a></div>`; else voiceSection(root.querySelector("#vf"), d, groups);
+  api.behavior().then(b => { const el = root.querySelector("#vf"); if (!el || !b || !("lurkSticker" in b)) return; el.innerHTML = `<div class="section">潜水表情 <span class="faint fs" style="font-weight:400">网关当前值，只读</span></div><div class="card bh">${typeof b.lurkSticker === "object" && b.lurkSticker ? bval(b.lurkSticker, "lurkSticker") : `<div>${bval(b.lurkSticker, "lurkSticker")}</div>`}</div>`; }).catch(() => {});
   root.addEventListener("input", e => { const t = e.target; if (t.dataset.p === "attachProbability") { P.attachProbability = +t.value / 100; root.querySelector("#prv").textContent = t.value + "%"; root.querySelector("#psb").hidden = !Object.keys(changes()).length; } });
   root.addEventListener("change", e => { const t = e.target, k = t.dataset.p;
     if (t.dataset.prob) { const v = t.value.trim(); const c = { ...P.sessions[t.dataset.prob] }; if (v === "") delete c.probability; else { const n = +v; if (!(n >= 0 && n <= 1)) { toast("概率要在 0 到 1 之间"); t.value = c.probability ?? ""; return; } c.probability = Math.round(n * 100) / 100; } P.sessions = { ...P.sessions, [t.dataset.prob]: c }; }
@@ -2468,31 +2469,32 @@ document.addEventListener("keydown", e => {
 
 // ---- 6 PWA ----
 if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) {
-  addEventListener("load", () => navigator.serviceWorker.register("/sw.js?v=2026.11.3").catch(() => {}));
+  addEventListener("load", () => navigator.serviceWorker.register("/sw.js?v=2026.11.3.1").catch(() => {}));
 }
 
 
 // ================= v3：一个主题一页（更多 → 主题页，最多两层） =================
 const OLDV = { ...VIEWS };
 const V3T = [
-  ["persona", "人设", "people", "技术模式 · 拟人化 · 小脾气 · 人设文件", [
-    ["tech", "技术模式", { fn: v3Tech }, "一眼看开没开"], ["humanlike", "拟人化", { v: "humanlike", s: "" }, "追问、主见、口癖、护短…"], ["followups", "待追问", { v: "humanlike", s: "followups" }, "过几天要问的事"],
-    ["fun", "小脾气", { v: "fun", s: "" }, "记仇、群梗、吃醋"], ["grudges", "记仇本", { v: "fun", s: "grudges" }, ""], ["gags", "群梗", { v: "fun", s: "gags" }, ""],
-    ["play", "玩梗（准备中）", { fn: v3Play }, "还没上线"], ["files", "人设文件", { v: "files", s: "" }, "人设、说话风格"], ["backup", "小脾气备份", { v: "fun", s: "trash" }, ""]]],
+  ["persona", "性格", "people", "人设 · 拟人化 · 主动搭话 · 小脾气", [
+    ["files", "人设文件", { v: "files", s: "" }, "人设、说话风格"], ["humanlike", "拟人化", { v: "humanlike", s: "" }, "追问、主见、口癖、护短…"], ["proactive", "主动搭话", { fn: v4Proactive }, "冷场后接一句 · 网关心跳"],
+    ["followups", "待追问", { v: "humanlike", s: "followups" }, "过几天要问的事"], ["fun", "小脾气", { v: "fun", s: "" }, "记仇、群梗、吃醋"], ["grudges", "记仇本", { v: "fun", s: "grudges" }, ""], ["gags", "群梗", { v: "fun", s: "gags" }, ""],
+    ["play", "玩梗（准备中）", { fn: v3Play }, "还没上线"], ["backup", "性格备份", { v: "fun", s: "trash" }, "小脾气和拟人化的备份"]]],
   ["voice", "语音", "play", "发语音规则 · 合成 · 音色库", [
-    ["rules", "发语音规则", { fn: v3VoiceRules }, "概率、冷却、上限、静默、按群"], ["tts", "合成", { v: "humanlike", s: "voice" }, "合成服务和参数"], ["voices", "音色库", { v: "humanlike", s: "voices" }, "试听、添加、删除"]]],
+    ["rules", "发语音规则", { fn: v3VoiceRules }, "概率、冷却、上限、静默、按群"], ["tts", "合成", { fn: b => voiceTtsView(b) }, "引擎、回退、情绪标记"], ["voices", "音色库", { fn: b => voicesView(b) }, "试听、添加、删除、维护"]]],
   ["stickers", "表情", "smile", "表情库 · 生成 · 参数 · 形象与分类", [
-    ["list", "表情库", { v: "stickers", s: "" }, ""], ["gen", "生成", { v: "stickers", s: "gen" }, ""], ["params", "发表情参数", { v: "stickers", s: "params" }, ""], ["manifest", "形象与分类", { v: "stickers", s: "manifest" }, ""], ["trash", "回收目录", { v: "stickers", s: "trash" }, ""]]],
+    ["list", "表情库", { v: "stickers", s: "" }, ""], ["gen", "生成", { v: "stickers", s: "gen" }, ""], ["params", "发表情参数", { v: "stickers", s: "params" }, "概率、冷却、按群"], ["manifest", "形象与分类", { v: "stickers", s: "manifest" }, ""], ["trash", "回收目录", { v: "stickers", s: "trash" }, ""]]],
   ["memory", "记忆", "brain", "按人看 · 记错的 · 文件 · 备份", [
     ["people", "按人看", { v: "memory", s: "" }, ""], ["flags", "记错的", { v: "memory", s: "flags" }, ""], ["files", "记忆文件", { v: "memory", s: "files" }, "只能看"], ["backups", "删除备份", { v: "memory", s: "backups" }, ""]]],
-  ["groups", "群", "people", "群报 · 互动统计 · 审批与配对", [
-    ["digest", "群报", { v: "digest", s: "" }, "每天到点自动生成"], ["stats", "互动统计", { v: "interactions", s: "" }, ""], ["approvals", "审批与配对", { v: "approvals", s: "" }, "需要你点头的事"]]],
+  ["groups", "群", "people", "群报 · 互动统计 · 各群一览", [
+    ["digest", "群报", { v: "digest", s: "" }, "每天到点自动生成"], ["stats", "互动统计", { v: "interactions", s: "" }, ""], ["overview", "各群一览", { fn: v4Overview }, "这个群开了什么（只看，点了去改）"]]],
   ["abilities", "能力与任务", "plug", "插件与技能 · 工具 · 定时任务", [
     ["plugins", "插件与技能", { v: "plugins", s: "" }, ""], ["tools", "工具与扩展", { v: "tools", s: "" }, ""], ["cron", "定时任务", { v: "cron", s: "" }, ""]]],
-  ["system", "系统维护", "gear", "渠道 · 审计与诊断 · 主动行为 · 配置", [
-    ["channels", "渠道", { v: "channels", s: "" }, "连接状态"], ["audit", "审计与诊断", { v: "audit", s: "" }, ""], ["behavior", "主动行为参数", { v: "behavior", s: "" }, "只读；要改主动搭话请去 人设 › 拟人化"], ["config", "配置", { v: "config", s: "" }, "网关配置"]]],
+  ["system", "系统与权限", "gear", "技术模式 · 渠道 · 审批与配对 · 诊断 · 配置", [
+    ["tech", "技术模式", { fn: v3Tech }, "回复模式开关和关键词"], ["channels", "渠道", { v: "channels", s: "" }, "连接状态"], ["approvals", "审批与配对", { v: "approvals", s: "" }, "需要你点头的事"], ["audit", "审计与诊断", { v: "audit", s: "" }, ""], ["config", "配置", { v: "config", s: "" }, "网关配置"]]],
 ];
-const V3G = [["她是谁", ["persona", "voice", "stickers", "memory"]], ["她在哪、做什么", ["groups", "abilities", "system"]]];
+const V4HUE = { persona: 14, voice: 172, stickers: 38, memory: 268, groups: 214, abilities: 140, system: 225 };
+const V3G = [["她怎么表达", ["persona", "voice", "stickers"]], ["她知道什么、在哪里", ["memory", "groups"]], ["后台", ["abilities", "system"]]];
 const TOPIC = Object.fromEntries(V3T.map(([k, t, i, d, secs]) => [k, { k, t, i, d, secs: secs.map(([id, title, src, sum]) => ({ id, title, src, sum })) }]));
 // 侧栏/搜索/标题：底部导航页 + 主题页
 { const keep = ROUTES.filter(r => TABS0.includes(r[0])); ROUTES.length = 0; ROUTES.push(...keep, ...V3T.map(([k, t, i]) => [k, t, i])); }
@@ -2508,11 +2510,12 @@ function v3alias(name, rest) {
     memory: () => a === "s" ? ["memory", "people", { v: "memory", s: rest, t: "这个人的记忆" }] : a === "files" ? (tail ? ["memory", "files", { v: "memory", s: rest, t: tail }] : ["memory", "files"]) : ({ flags: ["memory", "flags"], backups: ["memory", "backups"] })[rest],
     digest: () => rest ? ["groups", "digest", { v: "digest", s: rest, t: "群报" }] : ["groups", "digest"],
     interactions: () => rest ? ["groups", "stats", { v: "interactions", s: rest, t: "互动统计" }] : ["groups", "stats"],
-    approvals: () => ["groups", "approvals"], plugins: () => ["abilities", "plugins"], tools: () => ["abilities", "tools"], cron: () => ["abilities", "cron"],
-    channels: () => ["system", "channels"], audit: () => ["system", "audit"], behavior: () => ["system", "behavior"], config: () => ["system", "config"],
+    approvals: () => ["system", "approvals"], plugins: () => ["abilities", "plugins"], tools: () => ["abilities", "tools"], cron: () => ["abilities", "cron"],
+    channels: () => ["system", "channels"], audit: () => ["system", "audit"], behavior: () => ["persona", "proactive"], config: () => ["system", "config"],
   };
   const r = M[name]?.(); return r ? { t: r[0], sec: r[1], d: r[2] } : null;
 }
+const V4MOVE = { "persona#tech": ["system", "tech"], "groups#approvals": ["system", "approvals"], "system#behavior": ["persona", "proactive"] };
 const v3parse = h => { const m = /^#\/([^#]*)(?:#(.*))?$/.exec(h || "") || []; const path = m[1] || "overview"; const [name, ...r] = path.split("/"); let rest = ""; try { rest = r.map(decodeURIComponent).join("/"); } catch { rest = r.join("/"); } return { name: name || "overview", rest, sec: m[2] || "" }; };
 
 // ---- 状态（sessionStorage）：展开的分区、滚动、展开全部、搜索词 ----
@@ -2582,10 +2585,11 @@ async function v3topic(T, sec, opts = {}) {
   sessionStorage.setItem("v3last", T.k);
   const open = new Set(st.open || [T.secs[0].id]); if (sec) open.add(sec);
   const chips = T.secs.map(s => `<a class="v3chip" href="#/${T.k}#${s.id}" data-v3chip="${s.id}">${esc(s.title)}</a>`).join("");
-  const secs = T.secs.map(s => `<details class="v3sec card" id="v3s-${s.id}" data-sec="${s.id}" ${open.has(s.id) ? "open" : ""}><summary><b>${esc(s.title)}</b>${s.sum ? `<span class="v3sum">${esc(s.sum)}</span>` : ""}<span class="v3tg" aria-hidden="true"></span></summary><div class="v3body"></div></details>`).join("");
-  v.innerHTML = `<div class="view v3page" data-t="${T.k}"><div class="v3head"><div class="v3bc" aria-label="当前位置"><a href="#/more" data-v3back>更多</a> › <b>${esc(T.t)}</b><span id="v3bcs"></span></div>
-    <div class="v3row"><a class="v3back" href="#/more" data-v3back aria-label="返回更多">‹ 更多</a><h1>${esc(T.t)}</h1><button class="iconbtn" data-act="search" aria-label="全局搜索">${ic("search")}</button><button class="iconbtn" data-act="theme" aria-label="切换深浅色">${ic(isDark() ? "sun" : "moon")}</button></div>
+  const secs = T.secs.map((s, i) => `<details class="v3sec card" id="v3s-${s.id}" data-sec="${s.id}" ${open.has(s.id) ? "open" : ""}><summary><span class="v4n" aria-hidden="true">${String(i + 1).padStart(2, "0")}</span><b>${esc(s.title)}</b>${s.sum ? `<span class="v3sum">${esc(s.sum)}</span>` : ""}<span class="v3tg" aria-hidden="true"></span></summary><div class="v3body"></div></details>`).join("");
+  v.innerHTML = `<div class="view v3page" data-t="${T.k}" style="--hue:${V4HUE[T.k] || 200}"><div class="v3head"><div class="v3bc" aria-label="当前位置"><a href="#/more" data-v3back>更多</a><i class="v4sep" aria-hidden="true">›</i><b>${esc(T.t)}</b><span id="v3bcs"></span></div>
+    <div class="v3row"><a class="v3back" href="#/more" data-v3back aria-label="返回更多">‹ 更多</a><span class="v4badge" aria-hidden="true">${ic(T.i)}</span><h1>${esc(T.t)}<small class="v4sub">${esc(T.d)}</small></h1><button class="iconbtn" data-act="search" aria-label="全局搜索">${ic("search")}</button><button class="iconbtn" data-act="theme" aria-label="切换深浅色">${ic(isDark() ? "sun" : "moon")}</button></div>
     <nav class="v3chips" aria-label="分区">${chips}</nav></div>${secs}</div>`;
+  { const f = sessionStorage.getItem("v4from"); if (f && T.k !== "groups") v.querySelector(".v3bc").insertAdjacentHTML("afterbegin", `<a class="v4from" href="#/groups#overview" data-v4from>‹ 回到 各群一览</a>`); else if (T.k === "groups") sessionStorage.removeItem("v4from"); }
   V3 = { k: T.k, el: v.firstChild, rendered: new Set(), curSec: "", lastSec: "" };
   document.title = `${T.t} · 星野控制台`;
   const el = V3.el;
@@ -2609,7 +2613,7 @@ async function v3goSec(id, smooth) {
   // 上面的分区异步加载会把位置顶走，内容到齐后再对齐一次
   for (const t of [450, 1100, 2000]) setTimeout(() => { if (V3?.el === el && V3.curSec === id && Date.now() < V3.lock + 200) go("auto"); }, t);
 }
-function v3mark(id) { if (!V3) return; V3.curSec = id; V3.el.querySelectorAll("[data-v3chip]").forEach(c => c.classList.toggle("on", c.dataset.v3chip === id)); const s = TOPIC[V3.k].secs.find(x => x.id === id); const b = V3.el.querySelector("#v3bcs"); if (b) b.textContent = s ? " › " + s.title : "";
+function v3mark(id) { if (!V3) return; V3.curSec = id; V3.el.querySelectorAll("[data-v3chip]").forEach(c => c.classList.toggle("on", c.dataset.v3chip === id)); const s = TOPIC[V3.k].secs.find(x => x.id === id); const b = V3.el.querySelector("#v3bcs"); if (b) b.innerHTML = s ? `<i class="v4sep" aria-hidden="true">›</i><em>${esc(s.title)}</em>` : "";
   const c = V3.el.querySelector(`[data-v3chip="${id}"]`); if (c) { const n = c.parentElement; const l = c.offsetLeft - n.clientWidth / 2 + c.offsetWidth / 2; n.scrollTo({ left: Math.max(0, l) }); } }
 function v3spy() { if (!V3 || !document.contains(V3.el) || V3.pin || Date.now() < (V3.lock || 0)) return; const h = V3.el.querySelector(".v3head").getBoundingClientRect().bottom + 12; let cur = null;
   for (const d of V3.el.querySelectorAll("details.v3sec")) { if (d.getBoundingClientRect().top <= h) cur = d.dataset.sec; }
@@ -2628,7 +2632,9 @@ document.addEventListener("click", async e => {
   if (!a || e.defaultPrevented || e.button || e.metaKey || e.ctrlKey) return;
   const href = a.getAttribute("href"); const p = v3parse(href);
   // 返回「更多」：上一条历史就是「更多」时退回去，否则替换，不多留历史
-  if (a.hasAttribute("data-v3back")) { e.preventDefault(); if (!await v3leaveOk()) return; if (sessionStorage.getItem("v3prev") === "more" && history.length > 1) history.back(); else location.replace("#/more"); return; }
+  if (a.hasAttribute("data-v4from")) { e.preventDefault(); if (!await v3leaveOk()) return; sessionStorage.removeItem("v4from"); if (history.state?.v4 && history.length > 1) history.back(); else location.replace("#/groups#overview"); return; }
+  if (a.hasAttribute("data-v4tag")) { e.preventDefault(); sessionStorage.setItem("v4from", "1"); history.replaceState({ ...(history.state || {}), v4y: scrollY }, ""); v3saveScroll(); history.pushState({ v4: 1 }, "", href); route(); return; }
+  if (a.hasAttribute("data-v3back")) { sessionStorage.removeItem("v4from"); e.preventDefault(); if (!await v3leaveOk()) return; if (sessionStorage.getItem("v3prev") === "more" && history.length > 1) history.back(); else location.replace("#/more"); return; }
   if (a.closest(".sheet") && !a.closest("[data-v3sheet]")) return; // 其他弹层自己处理
   const al = !TOPIC[p.name] || p.rest ? v3alias(p.name, p.rest) : null;
   const tk = al ? al.t : TOPIC[p.name] ? p.name : null;
@@ -2651,11 +2657,33 @@ function v3detail(d) {
 // 分区：技术模式
 async function v3Tech(body) {
   const d = await api.hlGet(); const tm = d.params?.techMode || {}; const on = tm.enabled === true;
-  body.innerHTML = `<div class="view"><div class="card form"><label class="switchrow"><div class="grow"><b>技术模式 ${on ? pill("开着", "ac") : pill("关着")}</b><div class="faint fs">聊代码、日志、报错时，所有拟人效果全关。${tm.stickyMin != null ? `最后一条技术消息后保持 ${esc(tm.stickyMin)} 分钟。` : ""}</div></div><span class="switch"><input type="checkbox" data-v3tm ${on ? "checked" : ""} aria-label="开启技术模式"><i></i></span></label>
-    <div class="faint fs">关键词、口令等完整参数在下面「拟人化」分区的第一张卡里。</div></div></div>`;
-  body.querySelector("[data-v3tm]").onchange = async e => { const want = e.target.checked;
-    if (!await confirmDialog({ title: want ? "打开技术模式？" : "关掉技术模式？", body: want ? "打开后拟人效果全部暂停，直到你关掉。" : "关掉后，聊技术话题时拟人效果也会照常出现。", ok: want ? "打开" : "关掉", danger: !want })) { e.target.checked = !want; return; }
-    if (await act(() => api.hlSet({ techMode: { enabled: want } }), want ? "技术模式已打开" : "技术模式已关闭")) { V3.lastSec = "tech"; route(); } else e.target.checked = !want; };
+  body.innerHTML = `<div class="view"><div class="v4stat ${on ? "on" : ""}"><b>技术模式现在${on ? "开着" : "关着"}</b><span class="faint fs">聊代码、日志、报错时，所有拟人效果全关。${tm.stickyMin != null ? `最后一条技术消息后保持 ${esc(tm.stickyMin)} 分钟。` : ""}</span></div><div class="v4tmfull"></div></div>`;
+  await OLDV.humanlike(body.querySelector(".v4tmfull"), "only:techMode");
+}
+// 分区：主动搭话（可改的 humanlike.proactive + 网关心跳只读）
+async function v4Proactive(body) {
+  body.innerHTML = `<div class="v4pa"></div><details class="v4ro card"><summary><b>网关当前心跳（只读）</b><span class="faint fs">heartbeat · 追问闸门 · 媒体标签</span></summary><div class="v4rob"><div class="skel"></div></div></details>`;
+  const ro = body.querySelector("details"); let done = false;
+  ro.addEventListener("toggle", async () => { if (!ro.open || done) return; done = true; const host = ro.querySelector(".v4rob"); try { await OLDV.behavior(host); host.querySelectorAll("header.top").forEach(x => x.remove()); } catch (x) { if (x.status === 401) throw x; done = false; host.innerHTML = `<div class="faint">没读出来：${esc(scrub(x.message || ""))}</div>`; } });
+  await OLDV.humanlike(body.querySelector(".v4pa"), "only:proactive");
+}
+// 分区：群 › 各群一览（只读，不发任何 POST）
+async function v4Overview(body) {
+  const [sp, hl, dg, ss] = await Promise.all([api.stickerParams().catch(() => ({})), api.hlGet().catch(() => ({})), api.digestSettings().catch(() => ({})), api.sessions().catch(() => ({ sessions: [] }))]); await loadAliases();
+  const P = sp.params || sp || {}, V = P.voice || null, H = hl.params || {};
+  const gid = k => { const m = /group:([0-9a-f]{32})/i.exec(String(k || "")); return m ? "group:" + m[1].toLowerCase() : null; };
+  const names = new Map();
+  for (const x of ss.sessions || []) { const t = qqTarget(x.key); if (t?.kind === "group") names.set("group:" + t.id.toLowerCase(), sessName(x)); }
+  for (const x of dg.sessions || []) { const k = gid(x.sessionKey); if (k && !names.has(k)) names.set(k, x.name || funGroupName(k, [])); }
+  for (const k of [...Object.keys(V?.perConversation || {}), ...Object.keys(P.sessions || {}), ...Object.keys(H.perGroup || {})]) { const g = gid(k); if (g && !names.has(g)) names.set(g, funGroupName(g, [])); }
+  const tag = (on, label, href, why) => `<a class="v4tag ${on ? "on" : ""}" href="${href}" data-v4tag title="${esc(why)}"><i aria-hidden="true"></i>${esc(label)}<span class="sr">${on ? "开" : "关"}</span></a>`;
+  const rows = [...names].map(([k, nm]) => {
+    const vc = V?.perConversation?.[k]; const vOn = !!V && V.enabled !== false && (vc ? vc.enabled !== false : V.defaultEnabled === true);
+    const sc = P.sessions?.[k]; const sOn = P.enabled !== false && (sc ? sc.enabled !== false : P.defaultEnabled === true);
+    const hOn = H.enabled === true && H.perGroup?.[k]?.enabled !== false;
+    const dc = (dg.sessions || []).find(x => gid(x.sessionKey) === k); const dOn = dg.enabled !== false && dc?.enabled === true;
+    return `<div class="v4grow"><div class="v4gn"><b>${esc(nm)}</b><span class="faint mono fs">${esc(shortId(k.slice(6)))}</span></div><div class="v4tags">${tag(vOn, "语音", "#/voice#rules", "发语音规则 › 按群")}${tag(sOn, "表情", "#/stickers#params", "发表情参数 › 按群")}${tag(hOn, "拟人化", "#/persona#humanlike", "性格 › 拟人化 › 各个群")}${tag(dOn, "群报", "#/groups#digest", "群报 › 按群开关")}</div></div>`; }).join("");
+  body.innerHTML = `<div class="view"><div class="faint fs v4note">这里只看不改。点标签会跳到那个功能自己的设置，改完点「‹ 回到 各群一览」回来。</div>${rows ? `<div class="card v4glist">${rows}</div>` : `<div class="card empty"><b>🫥</b>还没有群会话</div>`}</div>`;
 }
 // 分区：玩梗（只预留，不发任何新字段）
 async function v3Play(body) {
@@ -2670,9 +2698,10 @@ async function v3VoiceRules(body) {
 
 // 「更多」：主题入口 + 刚才进去的那一行高亮
 VIEWS.more = async v => {
+  sessionStorage.removeItem("v4from");
   const last = sessionStorage.getItem("v3last");
   const row = (href, icon, t, d, extra = "", tag = "") => `<a class="mrow" href="${href}" ${extra}><span class="mic">${ic(icon)}</span><span class="grow"><b>${esc(t)}</b>${d ? `<small>${esc(d)}</small>` : ""}</span>${tag}<span class="mchev">${ic("chev")}</span></a>`;
-  const body = V3G.map(([g, ks]) => `<div class="section">${esc(g)}</div><div class="card mlist">${ks.map(k => { const T = TOPIC[k]; return row(`#/${k}`, T.i, T.t, T.d, `data-v3t="${k}"`, k === "persona" ? `<span class="pill" id="v3tmtag" hidden></span>` : ""); }).join("")}</div>`).join("");
+  const body = V3G.map(([g, ks]) => `<div class="section">${esc(g)}</div><div class="card mlist v4tiles">${ks.map(k => { const T = TOPIC[k]; return row(`#/${k}`, T.i, T.t, T.d, `data-v3t="${k}" style="--hue:${V4HUE[k]}"`, k === "system" ? `<span class="pill" id="v3tmtag" hidden></span>` : ""); }).join("")}</div>`).join("");
   const root = paint(v, top("更多") + body + `<div class="section">外观与账号</div><div class="card mlist">${row("#", isDark() ? "sun" : "moon", isDark() ? "切换到浅色" : "切换到深色", "跟随你的选择保存在这台设备", 'data-mx="theme"')}${row("#", "out", "退出登录", "", 'data-mx="out"')}</div>`);
   root.addEventListener("click", e => { const a = e.target.closest("[data-mx]"); if (!a) return; e.preventDefault(); if (a.dataset.mx === "theme") { toggleTheme(); route(); } else logout(); });
   api.hlGet().then(d => { const t = root.querySelector("#v3tmtag"); if (!t) return; const on = d.params?.techMode?.enabled === true; t.hidden = false; t.className = "pill" + (on ? " ac" : ""); t.textContent = "技术模式 " + (on ? "开" : "关"); }).catch(() => {});

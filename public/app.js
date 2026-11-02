@@ -1,5 +1,5 @@
-import { api, setUnauthedHandler, notReady, mediaOf } from "./api.js?v=20261101195157";
-import { md } from "./md.js?v=20261101195157";
+import { api, setUnauthedHandler, notReady, mediaOf } from "./api.js?v=2026.11.2";
+import { md } from "./md.js?v=2026.11.2";
 
 // ---------- 小工具 ----------
 const $ = (s, el = document) => el.querySelector(s);
@@ -118,8 +118,18 @@ function toggleTheme() { const n = isDark() ? "light" : "dark"; document.documen
 
 // ---------- 外壳 ----------
 const app = $("#app");
-let current = null, timers = [];
+let current = null, timers = [], routeGeneration = 0;
 const clearTimers = () => { timers.forEach(clearInterval); timers = []; };
+// A delayed view must not start polling after navigation has detached its owner.
+function viewInterval(owner, fn, ms) {
+  if (!owner.isConnected) return null;
+  const id = setInterval(() => { if (!owner.isConnected) return clearInterval(id); fn(); }, ms);
+  timers.push(id); return id;
+}
+function replaceView() {
+  const old = $("#view"); if (!old) return null;
+  const next = old.cloneNode(false); old.replaceWith(next); return next;
+}
 
 function shell() {
   app.innerHTML = `<div class="shell">
@@ -144,20 +154,39 @@ function top(title, sub, extra = "") { const back = current && current !== "more
 
 function sheet(html, onMount, kind) {
   // 同一种面板已经开着就不再叠一层（防重复绑定/双击/触摸+点击双触发）
-  if (kind) { const ex = document.querySelector(`[data-sheet="${kind}"]`); if (ex) return () => ex.remove(); }
+  if (kind) { const ex = document.querySelector(`[data-sheet="${kind}"]`); if (ex) return ex._v3close; }
+  const previousFocus = document.activeElement;
   const s = document.createElement("div"); if (kind) s.dataset.sheet = kind; s.innerHTML = `<div class="scrim"></div><div class="sheet" role="dialog" aria-modal="true">${html}</div>`;
   s.dataset.v3sheet = "1"; document.body.append(s);
   history.pushState({ ...(history.state || {}), sheet: 1 }, "");
   // 界面关掉：不调 history.back（避免和随后的跳转抢历史），留下的空历史由 popstate 跳过
-  const close = () => s.remove(); s._v3close = () => { s.remove(); s._onclose?.(); }; const snap = new WeakMap(); const take = e => { const t = e.target; if (t.matches?.("input,textarea,select") && !snap.has(t)) snap.set(t, t.type === "checkbox" || t.type === "radio" ? t.checked : t.value); }; for (const ev of ["focusin", "pointerdown", "keydown", "beforeinput"]) s.addEventListener(ev, take, true); s._v3dirty ||= () => [...s.querySelectorAll("[data-save]:not([disabled])")].some(b => !b.closest("[hidden]")) || [...s.querySelectorAll("input,textarea,select")].some(t => snap.has(t) && snap.get(t) !== (t.type === "checkbox" || t.type === "radio" ? t.checked : t.value));
-  s.querySelector(".scrim").onclick = close; s.addEventListener("keydown", e => e.key === "Escape" && close()); s.addEventListener("click", e => { if (e.target.closest("a[href^=\"#/\"]")) close(); });
+  const snap = new WeakMap(); const valueOf = t => t.type === "checkbox" || t.type === "radio" ? t.checked : t.value;
+  const take = e => { const t = e.target; if (t.matches?.("input,textarea,select") && !snap.has(t)) snap.set(t, valueOf(t)); };
+  for (const ev of ["focusin", "pointerdown", "keydown", "beforeinput"]) s.addEventListener(ev, take, true);
+  s._v3dirty = () => !s.dataset.confirm && !s.querySelector("#gq") && ([...s.querySelectorAll("[data-save]:not([disabled])")].some(b => !b.closest("[hidden]")) || [...s.querySelectorAll("input:not([readonly]),textarea:not([readonly]),select")].some(t => snap.has(t) && snap.get(t) !== valueOf(t)));
+  let closing = null;
+  const dismiss = () => { if (s.isConnected) { s.remove(); s._onclose?.(); if (previousFocus?.isConnected) previousFocus.focus(); } return true; };
+  const close = force => {
+    if (force === true || !s.isConnected || !s._v3dirty()) return Promise.resolve(dismiss());
+    if (!closing) closing = confirmDialog({ title: "还有改动没保存", body: "确定关掉吗？改动会丢掉。", ok: "关掉", danger: true }).then(ok => ok ? dismiss() : false).finally(() => { closing = null; });
+    return closing;
+  };
+  close.markSaved = () => s.querySelectorAll("input,textarea,select").forEach(t => snap.set(t, valueOf(t)));
+  s._v3close = close;
+  s.querySelector(".scrim").onclick = () => close();
+  s.addEventListener("click", async e => { const a = e.target.closest("a[href^=\"#/\"]"); if (!a || e.defaultPrevented) return; e.preventDefault(); if (await close()) location.hash = a.getAttribute("href"); });
   onMount?.(s.querySelector(".sheet"), close); return close;
 }
+document.addEventListener("keydown", e => {
+  if (e.key !== "Escape") return;
+  const host = [...document.querySelectorAll("[data-v3sheet]")].at(-1);
+  if (host) { e.preventDefault(); e.stopPropagation(); host._v3close(); }
+});
 async function logout() { try { await api.logout(); } catch {} showLogin(); }
 
 // ---------- 登录 ----------
 function showLogin() {
-  clearTimers(); current = null;
+  ++routeGeneration; clearTimers(); current = null;
   app.innerHTML = `<div class="login"><form class="view" autocomplete="on">
     <img src="icon.svg" alt=""><h1>欢迎回来，凛</h1><p>星野のねこ 在等你哦</p>
     <input class="input" type="password" name="password" autocomplete="current-password" placeholder="输入密码" aria-label="密码" required autofocus>
@@ -172,32 +201,39 @@ function showLogin() {
 
 // ---------- 路由 ----------
 async function route() {
+  const generation = ++routeGeneration;
   v3stamp();
   const h = location.hash || "#/overview", p = v3parse(h);
   const prevName = v3parse(v3pageHash).name;
   // 系统返回/手势离开时，有没保存的改动先问一句
   if (v3pageHash && h !== v3pageHash && !v3skip && v3dirty() && v3parse(v3pageHash).name !== p.name) {
     const ok = await confirmDialog({ title: "还有改动没保存", body: "确定离开吗？没保存的改动会丢掉。", ok: "离开", danger: true });
+    if (generation !== routeGeneration) return;
     if (!ok) { history.replaceState(history.state, "", v3pageHash); return; }
   }
   v3skip = false;
   if (V3 && document.contains(V3.el) && v3parse(v3pageHash).name !== p.name) v3saveScroll();
   if (prevName !== p.name) sessionStorage.setItem("v3prev", prevName || "");
-  if (p.name !== (V3?.k) || !document.contains(V3?.el)) v3closeAll();
-  if (TOPIC[p.name] && !p.rest) { const redraw = h === v3pageHash; current = p.name; renderChrome(); clearTimers(); v3pageHash = h; if (p.name !== V3?.k) v3closeAll(); return v3topic(TOPIC[p.name], p.sec, { redraw }); }
+  if (p.name !== (V3?.k) || !document.contains(V3?.el)) {
+    const closed = await v3closeAll();
+    if (generation !== routeGeneration) return;
+    if (!closed) { history.replaceState(history.state, "", v3pageHash); return; }
+  }
+  if (TOPIC[p.name] && !p.rest) { const redraw = h === v3pageHash; current = p.name; renderChrome(); clearTimers(); v3pageHash = h; return v3topic(TOPIC[p.name], p.sec, { redraw }); }
   const al = v3alias(p.name, p.rest);
-  if (al) { history.replaceState(history.state, "", `#/${al.t}#${al.sec}`); const same = V3?.k === al.t && document.contains(V3?.el); current = al.t; renderChrome(); if (!same) clearTimers(); v3pageHash = location.hash; await v3topic(TOPIC[al.t], al.sec); if (al.d) v3detail(al.d); return; }
+  if (al) { history.replaceState(history.state, "", `#/${al.t}#${al.sec}`); const same = V3?.k === al.t && document.contains(V3?.el); current = al.t; renderChrome(); if (!same) clearTimers(); v3pageHash = location.hash; await v3topic(TOPIC[al.t], al.sec); if (generation === routeGeneration && al.d) v3detail(al.d); return; }
   V3 = null; v3pageHash = h;
-  return routeBase();
+  return routeBase(generation);
 }
-async function routeBase() {
+async function routeBase(generation) {
   clearTimers();
   const [, name = "overview", ...rest] = location.hash.replace(/^#/, "").split("/");
   const r = VIEWS[name] ? name : "overview"; current = r; renderChrome();
-  const v = $("#view"); if (!v) return;
+  const v = replaceView(); if (!v) return;
   v.innerHTML = `<div class="view">${top(routeTitle(r))}<div class="grid g2"><div class="skel"></div><div class="skel"></div><div class="skel"></div><div class="skel"></div></div></div>`;
   try { await VIEWS[r](v, decodeURIComponent(rest.join("/"))); }
-  catch (e) { if (e.status === 401) return; v.innerHTML = `<div class="view">${top(routeTitle(r))}<div class="card empty"><b>😿</b>出了点小状况：${esc(e.message)}<br><br><button class="btn" data-retry>再试一次</button></div></div>`; }
+  catch (e) { if (e.status === 401 || generation !== routeGeneration || !v.isConnected) return; v.innerHTML = `<div class="view">${top(routeTitle(r))}<div class="card empty"><b>😿</b>出了点小状况：${esc(e.message)}<br><br><button class="btn" data-retry>再试一次</button></div></div>`; }
+  if (generation !== routeGeneration || !v.isConnected) return;
   window.scrollTo(0, 0);
   const rb = v.querySelector("[data-retry]"); if (rb) rb.onclick = route;
 }
@@ -227,8 +263,8 @@ VIEWS.more = async v => {
 
 VIEWS.overview = async v => {
   let linkHtml = `<div class="card link"><div class="link-h"><div class="avatar">🛡️</div><div class="grow"><b>线路状态</b><div class="faint" style="font-size:13px"><span class="spin-dot"></span> 正在看看线路的情况…</div></div></div></div>`;
-  const loadLink = async () => { try { linkHtml = linkCard(await api.link()); } catch (x) { linkHtml = linkCard({ error: notReady(x) ? "后台还没开放这个接口" : scrub(x.message), __fail: true }); } const el = $("#linkst"); if (el && current === "overview") el.innerHTML = linkHtml; };
-  loadLink(); timers.push(setInterval(loadLink, 30000));
+  const loadLink = async () => { try { linkHtml = linkCard(await api.link()); } catch (x) { linkHtml = linkCard({ error: notReady(x) ? "后台还没开放这个接口" : scrub(x.message), __fail: true }); } const el = $("#linkst"); if (v.isConnected && el && current === "overview") el.innerHTML = linkHtml; };
+  loadLink(); viewInterval(v, loadLink, 30000);
   const load = async first => {
     const [o, ch] = await Promise.all([api.overview(), api.channels().catch(() => null)]);
     const hs = o.host || {}, m = hs.mem || {}, d = hs.disk || {};
@@ -264,7 +300,7 @@ VIEWS.overview = async v => {
       <div class="card"><div style="display:flex;align-items:center;gap:12px"><div class="avatar">Q</div><div class="grow" style="flex:1"><b>QQ 机器人</b><div class="faint" style="font-size:13px">${qq?.lastError ? esc(qq.lastError) : qc === "ok" ? "连接稳定，消息收发正常" + (qq?.lastConnectedAt ? " · " + ago(qq.lastConnectedAt) + "连上" : "") : "暂时没有连接上"}</div></div>${pill(qt, qc, qc === "ok")}</div></div>`;
     if (first || current === "overview") paint(v, html);
   };
-  await load(true); timers.push(setInterval(() => load().catch(() => {}), 10000));
+  await load(true); viewInterval(v, () => load().catch(() => {}), 10000);
 };
 
 // 会话
@@ -327,7 +363,7 @@ VIEWS.sessions = async (v, key) => {
   const loadHist = async keep => {
     const hst = await api.history(key, 80); const latest = hst.messages || [];
     const seen = new Set(latest.map(m => m.id).filter(Boolean)), ms = [...older.filter(m => !m.id || !seen.has(m.id)), ...latest];
-    const sig = older.length + ":" + latest.length + ":" + (latest.at(-1)?.id || latest.at(-1)?.ts || "") + ":" + (latest.at(-1)?.tools || []).map(t => t.status).join(); if (sig === lastSig) return; lastSig = sig;
+    const sig = JSON.stringify([ms, hst.hasMore, hst.nextBefore, hst.gatewayHasMore, hst.totalMessages, hst.windowCount, hst.sendLogFrom]); if (sig === lastSig) return; lastSig = sig;
     const atBottom = msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 80;
     const ctx = { sendLogFrom: hst.sendLogFrom, openK, revealK, group: isGroup };
     const more = older.length ? olderMore : !!hst.hasMore, next = older.length ? olderNext : hst.nextBefore ?? null;
@@ -356,7 +392,7 @@ VIEWS.sessions = async (v, key) => {
   }
   await loadHist(!!older.length);
   if (older.length) { const ids = new Set(older.map(m => m.id)); const els = [...msgs.querySelectorAll(".msg")]; void ids; const el = els[Math.max(0, Math.min(older.length, els.length) - 1)]; el?.scrollIntoView({ block: "center" }); el?.classList.add("flash"); }
-  timers.push(setInterval(async () => { try { await loadHist(); const ss = await api.sessions(); const x = ss.sessions.find(y => y.key === key); abortB.hidden = !x?.hasActiveRun; } catch {} }, 4000));
+  viewInterval(v, async () => { try { await loadHist(); const ss = await api.sessions(); const x = ss.sessions.find(y => y.key === key); abortB.hidden = !x?.hasActiveRun; } catch {} }, 4000);
   ta.addEventListener("input", () => { ta.style.height = "auto"; ta.style.height = Math.min(160, ta.scrollHeight) + "px"; });
   ta.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing && wide) { e.preventDefault(); form.requestSubmit(); } });
   form.onsubmit = async e => {
@@ -662,7 +698,7 @@ function tuneSheet(sess, models, defaults) {
     <div class="grid g3"><button class="btn" data-op="compact">压缩上下文</button><button class="btn" data-op="reset">重置会话</button><button class="btn danger" data-op="delete">${ic("trash")}删除会话</button></div>
     ${sess.chatType === "group" || qqTarget(sess.key)?.kind === "group" ? `<div class="grid g2" style="margin-top:10px"><a class="btn" href="#/interactions/${encodeURIComponent(sess.key)}" data-close>${ic("people")}互动统计</a><a class="btn" href="#/digest" data-close>${ic("digest")}群报设置</a></div>` : ""}`, (el, close) => {
     el.querySelectorAll("[data-op]").forEach(b => b.onclick = () => sessionOp(b.dataset.op, sess, close));
-    el.querySelector("#mvg").onchange = e => moveToGroup(sess.key, e.target.value || null, () => { close(); route(); });
+    el.querySelector("#mvg").onchange = e => moveToGroup(sess.key, e.target.value || null, () => { close(true); route(); });
     let think = sess.thinkingLevel || sess.thinkingDefault;
     el.querySelectorAll("[data-t]").forEach(b => b.onclick = () => { think = b.dataset.t; el.querySelectorAll("[data-t]").forEach(x => x.setAttribute("aria-pressed", x === b)); });
     el.querySelector("[data-close]").onclick = close;
@@ -672,7 +708,7 @@ function tuneSheet(sess, models, defaults) {
       if (f.agentRuntime.value !== (sess.agentRuntime || "")) patch.agentRuntime = f.agentRuntime.value || null;
       if (think && think !== sess.thinkingLevel) patch.thinkingLevel = think;
       if (!Object.keys(patch).length) return close();
-      try { await api.patch(sess.key, patch); toast("设置已保存 ✓"); close(); route(); } catch (x) { toast(x.message); }
+      try { await api.patch(sess.key, patch); toast("设置已保存 ✓"); close(true); route(); } catch (x) { toast(x.message); }
     };
   });
 }
@@ -811,7 +847,7 @@ VIEWS.logs = async v => {
   $("input", root).oninput = e => { q = e.target.value.toLowerCase(); draw(); };
   const refresh = async () => { data = await api.logs(300, lv === "ALL" || lv === "DEBUG" ? undefined : lv); draw(); };
   root.querySelector("[data-x=rf]").onclick = () => refresh().then(() => toast("已刷新")).catch(e => toast(e.message));
-  timers.push(setInterval(() => $("#live", root)?.checked && refresh().catch(() => {}), 5000));
+  viewInterval(v, () => $("#live", root)?.checked && refresh().catch(() => {}), 5000);
   draw();
 };
 
@@ -894,9 +930,9 @@ async function memSheet(id, after) {
     ${m.flag?.wrong ? `<button class="btn" data-x="unflag" style="width:100%">↩︎ 撤销「记错」标记</button>` : `<label class="field"><span>哪里记错了？<span class="faint fs">（可不填）</span></span><input class="input" id="fnote" maxlength="500" placeholder="比如：她不喝咖啡，是乌龙茶"></label><button class="btn" data-x="flag" style="width:100%">🏷️ 标记为记错</button>`}
     <div class="faint fs" style="margin:6px 0 14px">“记错”只是个标记，不会改动她的记忆。</div>
     <button class="btn danger" data-x="del" style="width:100%">${ic("trash")}删除这条记忆…</button>`, (el, close) => {
-    el.querySelector("[data-x=flag]")?.addEventListener("click", async e => { e.target.disabled = true; if (await act(() => api.memFlag(id, true, el.querySelector("#fnote").value.trim()), "已标记为记错")) { close(); after?.(); toastUndo(id, after); } else e.target.disabled = false; });
-    el.querySelector("[data-x=unflag]")?.addEventListener("click", async () => { if (await act(() => api.memFlag(id, false, ""), "已撤销标记")) { close(); after?.(); } });
-    el.querySelector("[data-x=del]").onclick = () => { close(); memDeleteFlow(m, after); };
+    el.querySelector("[data-x=flag]")?.addEventListener("click", async e => { e.target.disabled = true; if (await act(() => api.memFlag(id, true, el.querySelector("#fnote").value.trim()), "已标记为记错")) { close(true); after?.(); toastUndo(id, after); } else e.target.disabled = false; });
+    el.querySelector("[data-x=unflag]")?.addEventListener("click", async () => { if (await act(() => api.memFlag(id, false, ""), "已撤销标记")) { close(true); after?.(); } });
+    el.querySelector("[data-x=del]").onclick = async () => { if (await close()) memDeleteFlow(m, after); };
   });
 }
 function toastUndo(id, after) {
@@ -960,7 +996,7 @@ function cliNewSheet(after) {
     <div class="row-h"><span class="faint fs">选一个工具</span><button type="button" class="btn sm" data-x="rf">↻ 刷新状态</button></div><div class="list" id="ct"><div class="skel" style="height:120px"></div></div>
     <div id="cmw" hidden><label class="field" style="margin-top:12px"><span>模型</span><select class="input" id="cmd"></select></label><button type="button" class="btn primary" data-x="go" style="width:100%">用 <span id="cmt"></span> 开始</button></div>`, async (el, close) => {
     let pick = null;
-    const create = async (tool, btn) => { btn.disabled = true; const act = async fn => { try { return await fn(); } catch (x) { toast(x.code === "forbidden" ? "原生 CLI 只有主人能用" : x.code === "not_installed" ? `「${cliToolNm(tool)}」未安装或不可用` : x.code === "not_authed" ? `「${cliToolNm(tool)}」未登录` : x.status === 400 ? "这个模型不在可选列表里，点「刷新状态」后再选一次" : x.message); return null; } }; const md0 = el.querySelector("#cmd").value; const s = await act(() => api.cliCreate(tool, el.querySelector("#cti").value.trim(), cliModels(CLI_TOOLS.find(t => t.id === tool)).length ? md0 : undefined)); if (s) { close(); location.hash = `#/cli/${s.id}`; after?.(); } else btn.disabled = false; };
+    const create = async (tool, btn) => { btn.disabled = true; const act = async fn => { try { return await fn(); } catch (x) { toast(x.code === "forbidden" ? "原生 CLI 只有主人能用" : x.code === "not_installed" ? `「${cliToolNm(tool)}」未安装或不可用` : x.code === "not_authed" ? `「${cliToolNm(tool)}」未登录` : x.status === 400 ? "这个模型不在可选列表里，点「刷新状态」后再选一次" : x.message); return null; } }; const md0 = el.querySelector("#cmd").value; const s = await act(() => api.cliCreate(tool, el.querySelector("#cti").value.trim(), cliModels(CLI_TOOLS.find(t => t.id === tool)).length ? md0 : undefined)); if (s) { close(true); location.hash = `#/cli/${s.id}`; after?.(); } else btn.disabled = false; };
     draw(el, await cliTools());
     el.querySelector("[data-x=rf]").onclick = async e => { e.target.disabled = true; draw(el, await cliTools(true)); e.target.disabled = false; toast("已刷新"); };
     el.addEventListener("click", async e => {
@@ -1032,9 +1068,9 @@ async function cliPane(pane, id, ctx) {
   tray.onChange = sync;
   cm.addEventListener("click", e => { const f = e.target.closest("[data-full]"); if (f) lightbox(f.dataset.full, f.getAttribute("aria-label")); });
   let t0 = 0; const tick = () => { if (running) crt.textContent = t0 ? `运行中… ${Math.round((Date.now() - t0) / 1000)} 秒` : "还在运行（可能是之前发起的）…"; };
-  timers.push(setInterval(tick, 1000));
+  viewInterval(pane, tick, 1000);
   const reload = async () => { try { const n = await api.cliGet(id); cm.innerHTML = (n.messages || []).map(cliMsg).join(""); running = !!n.session?.running; sync(); scroll(); } catch {} };
-  if (running) { timers.push(setInterval(() => running && !ctrl && reload(), 3000)); tick(); }
+  if (running) { viewInterval(pane, () => running && !ctrl && reload(), 3000); tick(); }
   sync(); scroll();
   cin.oninput = sync;
   if (ctx.text) { cin.value = ctx.text; sync(); }
@@ -1051,7 +1087,7 @@ async function cliPane(pane, id, ctx) {
     running = true; t0 = Date.now(); ctrl = new AbortController(); cin.value = ""; const kept = [...tray.items]; tray.clear(); sync(); tick();
     let cur = null, txt = "", got = false;
     cm.insertAdjacentHTML("beforeend", `<div class="cli-wait"><div class="cli-spin" aria-hidden="true"></div><div><b>${esc(cliToolNm(sess.tool))} 正在思考…</b><div class="fs">${esc(cliWaitTxt(sess))}</div><div class="fs faint">已等待 <span class="cw-s">0</span> 秒</div></div></div>`); scroll();
-    const wait = cm.lastElementChild, wt = setInterval(() => { const n = wait.querySelector(".cw-s"); if (n) n.textContent = Math.round((Date.now() - t0) / 1000); }, 1000); timers.push(wt);
+    const wait = cm.lastElementChild, wt = viewInterval(pane, () => { const n = wait.querySelector(".cw-s"); if (n) n.textContent = Math.round((Date.now() - t0) / 1000); }, 1000);
     const unwait = () => { if (!got) { got = true; wait.remove(); clearInterval(wt); } };
     let lastErr = "";
     const bubble = () => { if (!cur) { cm.insertAdjacentHTML("beforeend", `<div class="msg assistant md cli-a"></div>`); cur = cm.lastElementChild; txt = ""; } return cur; };
@@ -1476,7 +1512,7 @@ function vvAddForm(id) {
       const body = { id, alias, nicknames, description }; yes.disabled = true;
       let pv; try { pv = await api.vvAdd(body, false); }
       catch (x) { toast(x?.status === 409 && x.code !== "dup_id" ? vvErr(x) + "，换个别名或叫法吧" : vvErr(x)); yes.disabled = false; if (x?.status === 409 || x?.status === 400) { al.focus(); al.select(); } return; }
-      close();
+      close(true);
       const e = pv?.preview?.entry || {}, f = pv?.preview?.fish || {};
       const ok = await confirmDialog({ title: "确认添加音色", ok: "确认添加", body: `<b>${vvE(e.title || f.title || alias)}</b>${f.author ? ` · by ${vvE(f.author)}` : ""}<br>别名 <code>${vvE(e.alias || alias)}</code>；中文叫法：${(e.nicknames || nicknames).map(vvE).join("、") || "—"}<br>素材语言：${esc(vvLangs(e.source_lang))}；可输出语言：${esc(vvLangs(e.output_langs))}<br>${e.style || description ? "用途说明：" + vvE(e.style || description) + "<br>" : ""}手册表格新增一行：<pre class="vv-row">${vvE(pv?.preview?.manualRow || "")}</pre><b>仅在点名时使用，默认音色不变。</b>` });
       if (!ok) return;
@@ -1610,11 +1646,10 @@ function confirmDialog({ title, body = "", ok = "确定", danger = false, typeTe
       <div style="display:flex;gap:10px;margin-top:6px"><button class="btn" data-no style="flex:1">再想想</button><button class="btn ${danger ? "danger solid" : "primary"}" data-yes style="flex:1" ${typeText ? "disabled" : ""}>${esc(ok)}</button></div>`, el => {
       const yes = el.querySelector("[data-yes]"), inp = el.querySelector("#cf-in");
       if (inp) { inp.oninput = () => { yes.disabled = inp.value.trim() !== typeText; }; setTimeout(() => inp.focus(), 50); }
-      el.querySelector("[data-no]").onclick = () => { fin(false); close(); };
-      yes.onclick = () => { fin(true); close(); };
+      el.querySelector("[data-no]").onclick = () => { fin(false); close(true); };
+      yes.onclick = () => { fin(true); close(true); };
     });
-    [...document.querySelectorAll(".scrim")].at(-1)?.addEventListener("click", () => fin(false));
-    const host = [...document.querySelectorAll("[data-v3sheet]")].at(-1); if (host) host._onclose = () => fin(false);
+    const host = [...document.querySelectorAll("[data-v3sheet]")].at(-1); if (host) { host.dataset.confirm = "1"; host._onclose = () => fin(false); }
   });
 }
 // 调用包装：接口没开放时温柔提示
@@ -1648,7 +1683,7 @@ function newSessionSheet() {
   sheet(`<h2>新建会话</h2><form id="ns"><label class="field"><span>名称</span><input class="input" name="label" placeholder="比如：周末旅行计划"></label>
     <div style="display:flex;gap:10px;margin-top:8px"><button type="button" class="btn" data-close style="flex:1">取消</button><button class="btn primary" style="flex:2">创建</button></div></form>`, (el, close) => {
     el.querySelector("[data-close]").onclick = close;
-    el.querySelector("#ns").onsubmit = async e => { e.preventDefault(); const r = await act(() => api.sessionCreate({ label: e.target.label.value.trim() || undefined }), "新会话已创建"); if (r) { close(); location.hash = r.key ? "#/sessions/" + encodeURIComponent(r.key) : "#/sessions"; } };
+    el.querySelector("#ns").onsubmit = async e => { e.preventDefault(); const r = await act(() => api.sessionCreate({ label: e.target.label.value.trim() || undefined }), "新会话已创建"); if (r) { close(true); location.hash = r.key ? "#/sessions/" + encodeURIComponent(r.key) : "#/sessions"; } };
   });
 }
 
@@ -1703,7 +1738,7 @@ function cronEdit(j) {
       const schedule = k === "cron" ? { kind: "cron", expr: f.expr.value.trim(), tz: s.tz || "Asia/Shanghai" } : { kind: "every", everyMs: Math.max(1, +f.mins.value) * 60000 };
       const body = { name: f.name.value.trim(), schedule, payload: { kind: "agentTurn", message: f.msg.value.trim() } };
       const ok = await act(() => j ? api.cronUpdate(j.id, body) : api.cronAdd({ ...body, sessionTarget: "isolated", wakeMode: "now", enabled: true, delivery: { mode: "none" } }), j ? "任务已保存" : "任务已创建 ⏰");
-      if (ok) { close(); route(); }
+      if (ok) { close(true); route(); }
     };
   });
 }
@@ -1780,7 +1815,7 @@ VIEWS.approvals = async v => {
     if (p) { if (await act(() => p.dataset.d === "approve" ? api.pairingApprove(p.dataset.ch, p.dataset.acc, p.dataset.pr) : api.pairingDismiss(p.dataset.ch, p.dataset.acc, p.dataset.pr), p.dataset.d === "approve" ? "配对成功，欢迎新朋友 🐾" : "已忽略")) load(); }
     if (g) { if (!await confirmDialog({ title: "撤销授权？", body: `<span class="mono">${esc(g.dataset.p)}</span><br>以后执行这条命令会重新询问你。`, ok: "撤销", danger: true })) return; if (await act(() => api.grantRevoke(g.dataset.gr), "已撤销")) load(); }
   });
-  timers.push(setInterval(() => document.visibilityState === "visible" && !document.querySelector(".sheet") && load(), 15000));
+  viewInterval(v, () => document.visibilityState === "visible" && !document.querySelector(".sheet") && load(), 15000);
 };
 
 // ---- 9 工具 / Hooks ----
@@ -1835,15 +1870,15 @@ async function fileEditor(name) {
     const ta = el.querySelector("textarea"), pv = el.querySelector(".mdbox"), sv = el.querySelector("[data-save]") || { disabled: true }, dirty = el.querySelector("#dirty");
     ta.oninput = () => { const ch = ta.value !== (f.content || ""); sv.disabled = !ch; dirty.textContent = ch ? "有未保存的修改" : ""; };
     el.querySelectorAll("[data-m]").forEach(b => b.onclick = () => { const view = b.dataset.m === "view"; el.querySelectorAll("[data-m]").forEach(x => x.setAttribute("aria-pressed", x === b)); ta.hidden = view; pv.hidden = !view; if (view) pv.innerHTML = md(ta.value); });
-    el.querySelector("[data-close]").onclick = async () => { if (!sv.disabled && !await confirmDialog({ title: "放弃修改？", body: "改动还没有保存。", ok: "放弃", danger: true })) return; cl(); location.hash = "#/files"; };
+    el.querySelector("[data-close]").onclick = async () => { if (await cl()) location.hash = "#/files"; };
     sv.onclick = async () => {
       const diff = ta.value.split("\n").length - (f.content || "").split("\n").length;
       if (!await confirmDialog({ title: `保存 ${name}？`, body: `这会改变星野のねこ 的行为（${diff >= 0 ? "+" : ""}${diff} 行）。<br>旧版本会自动备份，需要时可以找回。`, ok: "保存" })) return;
       sv.disabled = true; sv.textContent = "保存中…";
-      try { const r = await api.agentFileSet(name, ta.value, "main"); f = { ...f, ...(r.file || {}), content: ta.value }; toast(r.backup ? "已保存，旧版本已备份 ✓" : "已保存 ✓"); dirty.textContent = r.backup ? "备份：" + r.backup.split("/").pop() : "刚刚保存"; sv.textContent = "保存"; }
+      try { const r = await api.agentFileSet(name, ta.value, "main"); f = { ...f, ...(r.file || {}), content: ta.value }; cl.markSaved(); toast(r.backup ? "已保存，旧版本已备份 ✓" : "已保存 ✓"); dirty.textContent = r.backup ? "备份：" + r.backup.split("/").pop() : "刚刚保存"; sv.textContent = "保存"; }
       catch (e) { sv.disabled = false; sv.textContent = "保存";
         if (e.status === 409 || /hash|conflict|changed|modified|stale|冲突|已被修改/i.test(e.message)) {
-          if (await confirmDialog({ title: "文件刚被别处改过了", body: "为了不覆盖别人的修改，这次没有保存。<br>重新加载后会看到最新内容——你的改动会丢失，建议先复制一份。", ok: "重新加载" })) { cl(); fileEditor(name); }
+          if (await confirmDialog({ title: "文件刚被别处改过了", body: "为了不覆盖别人的修改，这次没有保存。<br>重新加载后会看到最新内容——你的改动会丢失，建议先复制一份。", ok: "重新加载" })) { cl(true); fileEditor(name); }
         } else toast(notReady(e) ? "保存接口还没开放" : e.message); }
     };
   });
@@ -1990,12 +2025,12 @@ function stkSheet(x, after) {
       if (c === (m.category || x.emotion)) return toast("已经在这个分类里啦");
       if (!await confirmDialog({ title: `换到「${c}」？`, body: "文件会按规则重新命名，原图会先备份到回收目录。" , ok: "继续" })) return;
       if (!await confirmDialog({ title: "再确认一次", body: `把这张表情从「${esc(m.category || x.emotion || "?")}」换到「${esc(c)}」。群聊里 5–30 秒内生效。`, ok: "确定换分类" })) return;
-      if (await act(() => api.stickerRename(x.file, c).catch(e => { throw new Error(stkErr(e)); }), `已换到「${c}」`)) { close(); after?.(); }
+      if (await act(() => api.stickerRename(x.file, c).catch(e => { throw new Error(stkErr(e)); }), `已换到「${c}」`)) { close(true); after?.(); }
     };
     el.querySelector("[data-x=del]").onclick = async () => {
       if (!await confirmDialog({ title: "把这张挪进回收目录？", body: "不会真的删掉，文件会挪进回收目录，需要时还能找回来。", ok: "继续", danger: true })) return;
       if (!await confirmDialog({ title: "再确认一次", body: `<span class="mono">${esc(x.file)}</span> 会挪进回收目录，群聊里之后就不会再用它。`, ok: "挪进回收目录", danger: true })) return;
-      if (await act(() => api.stickerDelete(x.file).catch(e => { throw new Error(stkErr(e)); }), "已挪进回收目录")) { close(); after?.(); }
+      if (await act(() => api.stickerDelete(x.file).catch(e => { throw new Error(stkErr(e)); }), "已挪进回收目录")) { close(true); after?.(); }
     };
   });
 }
@@ -2013,7 +2048,7 @@ function importSheet(after) {
       for (const f of e.target.files) { const t = await sniff(f); files.push(f.size > 5 * 1024 * 1024 ? { f, st: "bad", p: 0, msg: "超过 5MB 了" } : !t ? { f, st: "bad", p: 0, msg: "不是 png / jpg / webp / gif" } : { f, st: "ready", p: 0, msg: `${t} · 等待导入` }); }
       e.target.value = ""; draw();
     };
-    el.querySelector("[data-close]").onclick = () => { close(); if (did) after?.(); };
+    el.querySelector("[data-close]").onclick = async () => { if (await close() && did) after?.(); };
     go.onclick = async () => {
       const c = catVal(el); if (!CAT_RE.test(c)) return toast("分类名要 1–16 个中文、字母或数字，不能有 -");
       busy = true; draw();
@@ -2262,7 +2297,7 @@ async function profileSheet(id, after, sessKey) {
     el.querySelector("#pf").onsubmit = async e => {
       e.preventDefault(); const f = new FormData(e.target), name = String(f.get("name")).trim(), note = String(f.get("note")).trim();
       if (!name && !note && d.profile && !await confirmDialog({ title: "删除这份档案？", body: "称呼和备注都清空了，保存会删除这份档案。", ok: "删除", danger: true })) return;
-      if (await act(() => api.profileSet(id, name, note), !name && !note ? "档案已删除" : "档案已保存")) { close(); after?.(); }
+      if (await act(() => api.profileSet(id, name, note), !name && !note ? "档案已删除" : "档案已保存")) { close(true); after?.(); }
     };
   });
 }
@@ -2294,9 +2329,9 @@ function promptSheet(title, val, ph) {
   return new Promise(res => { let done = false; const fin = v => { if (!done) { done = true; res(v); } };
     const close = sheet(`<h2>${esc(title)}</h2><form id="ps"><input class="input" name="v" maxlength="40" value="${esc(val)}" placeholder="${esc(ph)}" aria-label="${esc(title)}"><div style="display:flex;gap:10px;margin-top:16px"><button type="button" class="btn" data-close style="flex:1">取消</button><button class="btn primary" style="flex:2">好</button></div></form>`, (el, c) => {
       const inp = el.querySelector("input"); setTimeout(() => inp.focus(), 60);
-      el.querySelector("[data-close]").onclick = () => { fin(null); c(); };
-      el.querySelector("#ps").onsubmit = e => { e.preventDefault(); fin(inp.value); c(); };
-      el.parentElement.querySelector(".scrim").addEventListener("click", () => fin(null));
+      el.querySelector("[data-close]").onclick = async () => { if (await c()) fin(null); };
+      el.querySelector("#ps").onsubmit = e => { e.preventDefault(); fin(inp.value); c(true); };
+      el.parentElement._onclose = () => fin(null);
     });
     void close;
   });
@@ -2354,7 +2389,7 @@ document.addEventListener("keydown", e => {
 
 // ---- 6 PWA ----
 if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) {
-  addEventListener("load", () => navigator.serviceWorker.register("/sw.js?v=20261101195157").catch(() => {}));
+  addEventListener("load", () => navigator.serviceWorker.register("/sw.js?v=2026.11.2").catch(() => {}));
 }
 
 
@@ -2414,20 +2449,23 @@ addEventListener("scroll", () => { if (!V3 || !document.contains(V3.el)) return;
 
 // ---- 弹层接入历史：开弹层 pushState，返回键只关弹层 ----
 let v3pageHash = "";
-const v3closeAll = () => document.querySelectorAll("[data-v3sheet]").forEach(s => s.remove());
+const v3closeAll = async () => { for (const s of [...document.querySelectorAll("[data-v3sheet]")].reverse()) if (!await s._v3close()) return false; return true; };
 addEventListener("popstate", e => {
   const open = [...document.querySelectorAll("[data-v3sheet]")];
-  if (open.length) { const s = open.at(-1); if (s._v3dirty?.()) { history.pushState({ ...(history.state || {}), sheet: 1, i: v3hist }, ""); confirmDialog({ title: "还有改动没保存", body: "确定关掉吗？改动会丢掉。", ok: "关掉", danger: true }).then(ok => { if (ok) s.remove(); }); return; } s._v3close ? s._v3close() : s.remove(); return; }
+  // Hash navigation also fires popstate; route() owns its discard confirmation.
+  if (open.length && location.hash !== v3pageHash) return;
+  if (open.length) { const s = open.at(-1); if (s._v3dirty?.()) history.pushState({ ...(history.state || {}), sheet: 1, i: v3hist }, ""); s._v3close(); return; }
   // 弹层被界面关掉后留下的空历史：和当前页同一个地址时再退一步
   if (e.state?.sheet && v3parse(location.hash).name === v3parse(v3pageHash).name && v3parse(location.hash).rest === v3parse(v3pageHash).rest) history.back();
 });
 
 // ---- 主题页 ----
 async function v3renderSec(T, s, body) {
-  body.dataset.v3sec = s.id; V3.rendered.add(s.id);
+  const owner = V3; body.dataset.v3sec = s.id; owner.rendered.add(s.id);
   const st = v3st(T.k);
   try { if (s.src.fn) await s.src.fn(body); else await OLDV[s.src.v](body, s.src.s); }
   catch (e) { if (e.status === 401) throw e; body.innerHTML = `<div class="card empty"><b>😿</b>这一块没加载出来：${esc(scrub(e.message || ""))}<br><br><button class="btn" data-v3retry="${s.id}">再试一次</button></div>`; }
+  if (V3 !== owner || !body.isConnected) return;
   v3tidy(body, T.k, s.id);
   const q = st.q?.[s.id]; const inp = body.querySelector('input[type="search"]'); if (q && inp && !inp.value) { inp.value = q; inp.dispatchEvent(new Event("input", { bubbles: true })); }
 }
@@ -2447,7 +2485,7 @@ function v3tidy(body, k, sid) {
 function v3observe(body, k, sid) { const mo = new MutationObserver(() => { mo.disconnect(); v3tidy(body, k, sid); mo.observe(body, { childList: true, subtree: true }); }); mo.observe(body, { childList: true, subtree: true }); }
 
 async function v3topic(T, sec, opts = {}) {
-  const v = $("#view"); const st = v3st(T.k);
+  const st = v3st(T.k);
   // 同一个主题页：只滚到分区（或在原地重绘刚操作过的分区）
   if (V3 && V3.k === T.k && document.contains(V3.el) && !opts.fresh) {
     if (sec && sec !== V3.curSec && !opts.redraw) return v3goSec(sec, true);
@@ -2455,6 +2493,7 @@ async function v3topic(T, sec, opts = {}) {
     for (const id of ids) { const s = T.secs.find(x => x.id === id); const d = V3.el.querySelector(`#v3s-${id}`); if (s && d?.open) await v3renderSec(T, s, d.querySelector(".v3body")); }
     scrollTo(0, y); return;
   }
+  const v = replaceView(); if (!v) return;
   sessionStorage.setItem("v3last", T.k);
   const open = new Set(st.open || [T.secs[0].id]); if (sec) open.add(sec);
   const chips = T.secs.map(s => `<a class="v3chip" href="#/${T.k}#${s.id}" data-v3chip="${s.id}">${esc(s.title)}</a>`).join("");
@@ -2508,7 +2547,7 @@ document.addEventListener("click", async e => {
   if (a.closest(".sheet") && !a.closest("[data-v3sheet]")) return; // 其他弹层自己处理
   const al = !TOPIC[p.name] || p.rest ? v3alias(p.name, p.rest) : null;
   const tk = al ? al.t : TOPIC[p.name] ? p.name : null;
-  if (tk && V3 && V3.k === tk && document.contains(V3.el)) { e.preventDefault(); a.closest("[data-v3sheet]")?._v3close?.(true); const sec = al ? al.sec : p.sec; if (sec) await v3goSec(sec, true); if (al?.d) v3detail(al.d); return; }
+  if (tk && V3 && V3.k === tk && document.contains(V3.el)) { e.preventDefault(); const host = a.closest("[data-v3sheet]"); if (host && !await host._v3close()) return; const sec = al ? al.sec : p.sec; if (sec) await v3goSec(sec, true); if (al?.d) v3detail(al.d); return; }
   if (v3dirty() && !a.closest("[data-v3sheet]")) { e.preventDefault(); if (await v3leaveOk()) { v3skip = true; location.hash = href; } }
 }, true);
 let v3skip = false;

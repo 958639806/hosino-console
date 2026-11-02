@@ -1,0 +1,43 @@
+name: Upload verified v2026.11.2 packages
+on:
+  push:
+    branches: [fix/console-reliability-20261102]
+    paths: [.github/workflows/publish-release.yml]
+permissions:
+  contents: write
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: v2026.11.2
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check immutable source and existing draft
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse 'v2026.11.2^{commit}')" = 8719e438cf71d4be817bc03407ebf6e4bd6176a0
+          test "$(git rev-parse 'baseline-20261101195157^{commit}')" = 1bcb35f928ad6f0ce46b32d38bccacea255ef170
+          gh api "repos/$GITHUB_REPOSITORY/releases" --jq '.[] | select(.tag_name == "v2026.11.2")' > draft.json
+          jq -e '.id == 431475208 and .draft == true and (.assets | length) == 0' draft.json
+      - name: Reproduce version packages and verify local build checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir packages
+          git archive --format=tar.gz --prefix=hosino-console-v2026.11.2/ v2026.11.2 > packages/hosino-console-v2026.11.2.tar.gz
+          git archive --format=tar.gz --prefix=hosino-console-before-20261101195157/ baseline-20261101195157 > packages/hosino-console-before-20261101195157.tar.gz
+          cd packages
+          printf '%s\n' \
+            '9edaebaa1d8d337c0abdb5ccf71e09a62e52263a4ab5e64677e20c7f7a9a919f  hosino-console-before-20261101195157.tar.gz' \
+            '8a6e66df882a7dacd984ff6e990b4668fa2180127ecd7e4c4595b216f6efb02e  hosino-console-v2026.11.2.tar.gz' > SHA256SUMS
+          sha256sum --check SHA256SUMS
+      - name: Upload without replacing any existing asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release upload "$RELEASE_TAG" packages/hosino-console-before-20261101195157.tar.gz packages/hosino-console-v2026.11.2.tar.gz packages/SHA256SUMS --repo "$GITHUB_REPOSITORY"

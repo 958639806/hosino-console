@@ -24,42 +24,63 @@ const gwTls = () => { const ca = fs.readFileSync(GW_CERT, "utf8"); const fp = GW
 // ---------- 登录 / 会话 ----------
 const sessions = new Map(); // sid -> expires
 const fails = new Map();    // ip -> {n, first, lockUntil}
+const loginPending = new Set(); // 同一 IP 同时只验证一次，额外请求立即返回 429
 const TTL = 7 * 864e5, WIN = 15 * 60e3, MAXF = 5;
 const ipOf = r => (r.headers["x-real-ip"] || r.socket.remoteAddress || "").toString();
 const cookieSid = r => (/(?:^|;\s*)hs_sid=([a-f0-9]{64})/.exec(r.headers.cookie || "") || [])[1];
 const authed = r => { const s = cookieSid(r); const e = s && sessions.get(s); if (e && e > Date.now()) return s; if (s) sessions.delete(s); return null; };
-setInterval(() => { const n = Date.now(); for (const [k, v] of sessions) if (v < n) sessions.delete(k); for (const [k, v] of fails) if (v.first + WIN < n && v.lockUntil < n) fails.delete(k); }, 60e3).unref();
+setInterval(() => { const n = Date.now(); for (const [k, v] of sessions) if (v < n) sessions.delete(k); for (const [k, v] of fails) if (!loginPending.has(k) && v.first + WIN <= n && v.lockUntil <= n) fails.delete(k); }, 60e3).unref();
 
 // ---------- 网关客户端（单连接，自动重连） ----------
 let ws = null, ready = null, seq = 0; const pend = new Map(); let gwHello = null;
 const token = () => JSON.parse(fs.readFileSync(CFG, "utf8")).gateway.auth.token;
 function connect() {
   if (ready) return ready;
-  ready = new Promise((res, rej) => {
-    const s = new WS(GW, gwTls()); let done = false;
-    const fail = e => { if (!done) { done = true; rej(e); } ready = null; ws = null; for (const [, p] of pend) p.rej(new Error("网关连接断开")); pend.clear(); };
-    const t = setTimeout(() => { fail(new Error("网关握手超时")); try { s.close(); } catch {} }, 8000);
+  let resolve, reject, s, timer, settled = false, failed = false, challenged = false;
+  const attempt = new Promise((res, rej) => { resolve = res; reject = rej; });
+  ready = attempt;
+  const fail = e => {
+    if (failed) return; failed = true; clearTimeout(timer);
+    if (ready === attempt) { ready = null; ws = null; gwHello = null; }
+    const waiting = [];
+    for (const [id, p] of pend) if (p.socket === s) { pend.delete(id); waiting.push(p); }
+    if (!settled) { settled = true; reject(e); }
+    for (const p of waiting) p.rej(e);
+    try { s?.close(); } catch {}
+  };
+  try {
+    s = new WS(GW, gwTls());
+    timer = setTimeout(() => fail(new Error("网关握手超时")), 8000);
     s.onmessage = e => {
+      if (failed) return;
       let d; try { d = JSON.parse(e.data); } catch { return; }
-      if (d.event === "connect.challenge") {
-        const id = "c" + (++seq);
-        pend.set(id, { res: p => { clearTimeout(t); gwHello = p; ws = s; done = true; res(s); }, rej: fail });
-        s.send(JSON.stringify({ type: "req", id, method: "connect", params: { minProtocol: 4, maxProtocol: 4, client: { id: "gateway-client", displayName: "hosino-console", version: "1.0", platform: "linux", mode: "backend" }, role: "operator", scopes: ["operator.admin"], auth: { token: token() } } }));
-        return;
+      try {
+        if (d.event === "connect.challenge") {
+          if (challenged || settled) return; challenged = true;
+          const authToken = token(), id = "c" + (++seq);
+          pend.set(id, { socket: s, res: p => { clearTimeout(timer); gwHello = p; ws = s; settled = true; resolve(s); }, rej: fail });
+          s.send(JSON.stringify({ type: "req", id, method: "connect", params: { minProtocol: 4, maxProtocol: 4, client: { id: "gateway-client", displayName: "hosino-console", version: "1.0", platform: "linux", mode: "backend" }, role: "operator", scopes: ["operator.admin"], auth: { token: authToken } } }));
+          return;
+        }
+        if (d.type === "res" && pend.has(d.id)) { const p = pend.get(d.id); if (p.socket !== s) return; pend.delete(d.id); d.ok ? p.res(d.payload) : p.rej(Object.assign(new Error(d.error?.message || "网关错误"), { code: d.error?.code })); }
+      } catch (e) {
+        fail(e);
       }
-      if (d.type === "res" && pend.has(d.id)) { const p = pend.get(d.id); pend.delete(d.id); d.ok ? p.res(d.payload) : p.rej(Object.assign(new Error(d.error?.message || "网关错误"), { code: d.error?.code })); }
     };
     s.onclose = () => fail(new Error("网关连接关闭"));
-    s.onerror = () => {};
-  });
-  return ready;
+    s.onerror = () => fail(new Error("网关连接错误"));
+  } catch (e) {
+    fail(e);
+  }
+  return attempt;
 }
 async function call(method, params = {}, timeout = 15000) {
   const s = await connect(); const id = "r" + (++seq);
   return new Promise((res, rej) => {
     const t = setTimeout(() => { pend.delete(id); rej(new Error("网关调用超时：" + method)); }, timeout);
-    pend.set(id, { res: v => { clearTimeout(t); res(v); }, rej: e => { clearTimeout(t); rej(e); } });
-    s.send(JSON.stringify({ type: "req", id, method, params }));
+    pend.set(id, { socket: s, res: v => { clearTimeout(t); res(v); }, rej: e => { clearTimeout(t); rej(e); } });
+    try { s.send(JSON.stringify({ type: "req", id, method, params })); }
+    catch (e) { pend.delete(id); clearTimeout(t); rej(e); }
   });
 }
 const cache = new Map();
@@ -537,12 +558,14 @@ const lastJson = s => { const i = s.indexOf("{"); if (i < 0) return null; try { 
 const usageOf = j => { if (!j || typeof j !== "object") return null; const u = j.usage || j.result?.usage || j.meta?.usage || j.attempts?.find?.(a => a.usage)?.usage || null; const cost = j.cost ?? j.usage?.cost ?? j.meta?.cost ?? null; return u || cost != null ? { ...(u || {}), ...(cost != null ? { cost } : {}) } : null; };
 const textOfJson = j => j?.outputs?.map?.(o => o?.text).filter(Boolean).join("\n") || j?.text || j?.output || j?.payloads?.map?.(p => p.text).filter(Boolean).join("\n") || j?.result?.text || null;
 const digestRunning = new Set();
+const digestIdFor = (key, day) => `${day}__${crypto.createHash("sha1").update(key).digest("hex").slice(0, 10)}`;
 async function runDigest(key, day, opts = {}) {
   if (digestRunning.has(key + day)) throw httpErr(409, "该会话当天群报正在生成");
-  digestRunning.add(key + day); const t0 = Date.now();
-  const id = `${day}__${crypto.createHash("sha1").update(key).digest("hex").slice(0, 10)}`;
+  const t0 = Date.now();
+  const id = digestIdFor(key, day);
   const rec = { id, sessionKey: key, name: aliasFor(key) || key, day, startedAt: t0, trigger: opts.trigger === "schedule" ? "schedule" : "manual", status: "running", messageCount: 0, text: null, image: null, usage: { text: null, image: null }, errors: [] };
   const save = () => atomicWrite(path.join(DIGEST_DIR, id + ".json"), JSON.stringify(rec, null, 1));
+  digestRunning.add(key + day);
   try {
     const raw = await call("chat.history", { sessionKey: key, limit: 1000 }, 20000);
     const h = buildHistory(raw, null);
@@ -553,11 +576,12 @@ async function runDigest(key, day, opts = {}) {
       else if (m.role === "assistant" && m.delivery === "sent" && m.model !== "delivery-mirror") lines.push(`[${sgParts(m.ts).hm}] 星野: ${t.slice(0, 400)}`);
     }
     rec.messageCount = lines.length;
-    let notes = ""; try { for (const f of fs.readdirSync(path.join(WORKSPACE, "memory")).filter(f => f.startsWith(day) && f.endsWith(".md")).sort()) notes += fs.readFileSync(path.join(WORKSPACE, "memory", f), "utf8").slice(0, 3000) + "\n"; } catch {}
-    rec.notesUsed = !!notes;
+    // Workspace daily memories have no reliable conversation/visibility metadata.
+    // A group digest must use only the history returned for that target session.
+    rec.notesUsed = false;
     if (!lines.length) { rec.status = "empty"; rec.text = "今天这个会话没有消息。"; return rec; }
     const chat = lines.join("\n").slice(-16000);
-    const prompt = `你是群聊日报编辑。下面是 QQ 会话「${rec.name}」在 ${day}（${TZ}）的聊天记录${notes ? "和当天的记忆小结" : ""}。请用中文写一份简短有趣的“今日群报”：标题一行、3–6 条要点（谁聊了什么、有趣瞬间）、一句总结。不要编造记录里没有的内容，不要输出 QQ openid。最后单独一行以“画面：”开头，用一句话描述一张适合作为今日群报插图的可爱插画场景（不出现真实人名和文字）。\n\n【聊天记录】\n${chat}\n${notes ? "\n【记忆小结】\n" + notes.slice(0, 4000) : ""}`;
+    const prompt = `你是群聊日报编辑。下面是 QQ 会话「${rec.name}」在 ${day}（${TZ}）的聊天记录。请只根据这份聊天记录，用中文写一份简短有趣的“今日群报”：标题一行、3–6 条要点（谁聊了什么、有趣瞬间）、一句总结。不要编造记录里没有的内容，不要输出 QQ openid。最后单独一行以“画面：”开头，用一句话描述一张适合作为今日群报插图的可爱插画场景（不出现真实人名和文字）。\n\n【聊天记录】\n${chat}`;
     const tr = await runCli(["infer", "model", "run", "--local", "--json", ...(DIGEST_TEXT_MODEL ? ["--model", DIGEST_TEXT_MODEL] : []), "--prompt", prompt], 180e3);
     if (tr.e) throw new Error("总结失败：" + tr.e);
     const tj = lastJson(tr.o); const text = (textOfJson(tj) || tr.o).trim(); rec.usage.text = usageOf(tj); rec.textModel = tj?.model || tj?.provider ? `${tj.provider || ""}/${tj.model || ""}` : null;
@@ -568,21 +592,46 @@ async function runDigest(key, day, opts = {}) {
     else { fs.chmodSync(out, 0o600); rec.image = path.basename(out); rec.usage.image = usageOf(lastJson(ir.o)); rec.imageModel = DIGEST_IMAGE_MODEL; }
     rec.status = rec.errors.length ? "partial" : "ok"; return rec;
   } catch (e) { rec.status = "error"; rec.errors.push(String(e.message || e).slice(0, 400)); return rec; }
-  finally { rec.finishedAt = Date.now(); rec.durationMs = rec.finishedAt - t0; try { save(); } catch (e) { console.error("digest save", e.message); } digestRunning.delete(key + day); }
+  finally { rec.finishedAt = Date.now(); rec.durationMs = rec.finishedAt - t0; try { save(); } catch (e) { rec.status = "error"; rec.errors.push("保存失败：" + e.message); console.error("digest save", e.message); } digestRunning.delete(key + day); }
 }
-// 调度：每分钟检查；到点后对每个启用会话每天只跑一次（错过时间点的当天会补跑，比如控制台在 22:00 时正在重启）
+// Each day's successful/empty report is final for the scheduler. Failed generation
+// gets at most three attempts with 1/3 minute backoff; manual runs stay available.
+const DIGEST_GENERATE_MAX = 3, DIGEST_GENERATE_BACKOFF = [60e3, 180e3, 300e3];
 let digestTick = false;
-setInterval(async () => {
+async function digestGenerateTick() {
   if (digestTick) return; digestTick = true;
   try {
     const s = digestSettings.load(); if (!s.enabled) return; const { day, hm } = sgParts(); if (hm < s.time) return;
     for (const [key, on] of Object.entries(s.sessions || {})) {
-      if (!on || s.lastRun?.[key] === day) continue;
-      const cur = digestSettings.load(); digestSettings.save({ ...cur, lastRun: { ...(cur.lastRun || {}), [key]: day } });
-      await runDigest(key, day, { trigger: "schedule" });
+      const cur = digestSettings.load();
+      if (!on || !cur.enabled || !cur.sessions?.[key] || digestRunning.has(key + day)) continue;
+      const id = digestIdFor(key, day), delivery = digestDelivery.load().records?.[id];
+      if (delivery?.status === "delivered" || delivery?.image === "sent" || delivery?.text === "sent") continue;
+      let existing;
+      try { existing = JSON.parse(fs.readFileSync(path.join(DIGEST_DIR, id + ".json"), "utf8")); } catch (e) { if (e.code !== "ENOENT") { console.error("digest read", e.message); continue; } }
+      if (["ok", "partial", "empty"].includes(existing?.status)) {
+        if (cur.lastRun?.[key] !== day) digestSettings.save({ ...cur, lastRun: { ...(cur.lastRun || {}), [key]: day } });
+        continue;
+      }
+      const prior = cur.lastAttempt?.[key], attempt = prior?.day === day ? prior : { day, attempts: 0 };
+      if (cur.lastRun?.[key] === day && ["ok", "partial", "empty"].includes(attempt.status)) continue;
+      if (attempt.attempts >= DIGEST_GENERATE_MAX || attempt.nextAt > Date.now()) continue;
+      const next = { day, attempts: attempt.attempts + 1, at: Date.now(), status: "running" };
+      next.nextAt = next.at + DIGEST_GENERATE_BACKOFF[Math.min(next.attempts - 1, DIGEST_GENERATE_BACKOFF.length - 1)];
+      const lastRun = { ...(cur.lastRun || {}) }; if (lastRun[key] === day) delete lastRun[key]; // Migrate the old pre-attempt marker.
+      digestSettings.save({ ...cur, lastRun, lastAttempt: { ...(cur.lastAttempt || {}), [key]: next } });
+      let result;
+      try { result = await runDigest(key, day, { trigger: "schedule" }); }
+      catch (e) { result = { status: "error", errors: [e.message] }; }
+      const latest = digestSettings.load(), success = ["ok", "partial", "empty"].includes(result.status);
+      const finished = { ...next, status: result.status, finishedAt: Date.now() };
+      if (success) delete finished.nextAt;
+      else finished.nextAt = finished.finishedAt + DIGEST_GENERATE_BACKOFF[Math.min(next.attempts - 1, DIGEST_GENERATE_BACKOFF.length - 1)];
+      digestSettings.save({ ...latest, ...(success ? { lastRun: { ...(latest.lastRun || {}), [key]: day } } : {}), lastAttempt: { ...(latest.lastAttempt || {}), [key]: finished } });
     }
   } catch (e) { console.error("digest tick", e.message); } finally { digestTick = false; }
-}, 60e3).unref();
+}
+setInterval(digestGenerateTick, 60e3).unref();
 // ---------- HS-DIGEST-DELIVER v1（v2.13）：把当天已生成的群报（图片 + 文字）发到对应 QQ 群 ----------
 // 通道：网关 RPC `send`（控制台“QQ 直发”同一条已验证的路径，target=qqbot:group:<大写ID>）；图片用 base64 buffer 随 RPC 传入（不经本地路径，因此消息里绝不会出现路径或 MEDIA:）。
 // 开关：digest-settings.json 的 deliver.enabled（默认 true）+ deliver.sessions[key]=false 可单独关某个群；不依赖 QQ_SEND_ENABLED（那是手动直发的闸）。
@@ -607,7 +656,8 @@ function digestSafeText(text) {
   return t.length > 1800 ? t.slice(0, 1800).replace(/\s+\S*$/, "") + "…" : t;
 }
 const digestScheduled = (d, s) => d.trigger === "schedule" || (d.trigger == null && sgParts(d.startedAt).hm >= (s?.time || "22:00") && sgDayOf(d.startedAt) === d.day);
-const digestDeliverable = d => !!d && (d.status === "ok" || d.status === "partial") && typeof d.text === "string" && d.text.trim() && !!digestTargetOf(d.sessionKey);
+// Missing provenance in legacy reports is not evidence of conversation isolation.
+const digestDeliverable = d => !!d && d.notesUsed === false && (d.status === "ok" || d.status === "partial") && typeof d.text === "string" && d.text.trim() && !!digestTargetOf(d.sessionKey);
 const digestSleep = ms => new Promise(r => setTimeout(r, ms));
 const digestDelivering = new Set();
 function digestPlan(d) {
@@ -740,6 +790,8 @@ Object.assign(R, {
   "POST /api/digests/deliver": W("digest.deliver", b => `${b.id} dry=${!!b.dry} force=${!!b.force}`, async b => { /* HS-DIGEST-DELIVER v1：手动投递/预演；dry 不发送；force 才会对已 delivered/failed 的重发 */
     need(b, "id"); if (!isDigestId(b.id)) throw httpErr(400, "id 无效");
     let d; try { d = JSON.parse(fs.readFileSync(path.join(DIGEST_DIR, b.id + ".json"), "utf8")); } catch { throw httpErr(404, "群报不存在"); }
+    if (d.notesUsed === true) throw httpErr(400, "该旧群报使用全局记忆，请重新生成后再发送");
+    if (d.notesUsed !== false) throw httpErr(400, "该旧群报无法确认记忆隔离，请重新生成后再发送");
     if (!digestDeliverable(d)) throw httpErr(400, "该群报没有可发送的内容，或不是 QQ 群会话");
     if (b.dry === true || DIGEST_DELIVER_DRY) return digestDryRun(d);
     if (!digestSettings.load().sessions?.[d.sessionKey]) throw httpErr(400, "该会话没有开启群报");
@@ -1167,10 +1219,12 @@ async function cliRun(req, res, id) {
   let prompt = typeof b.prompt === "string" ? b.prompt : ""; if (!prompt.trim() && hasAtt) prompt = "请看看我上传的附件。";
   if (!prompt.trim()) return send(res, 400, { error: "缺少参数：prompt" });
   if (strLen(prompt) > CLI_MAX_PROMPT) return send(res, 413, { error: `prompt 最长 ${CLI_MAX_PROMPT} 字` });
-  if (cliRuns.has(id)) return send(res, 409, { error: "这个会话正在运行" });
-  if (cliRuns.size >= CLI_MAX_RUNS) return send(res, 429, { error: `同时只能运行 ${CLI_MAX_RUNS} 个` });
   let ups; try { ups = upResolve(b.attachments, "cli", id); } catch (e) { return send(res, e.http || 400, { error: e.message }); }
   const t = (await cliTools()).find(x => x.id === m.tool); if (!t?.available) return send(res, 409, { error: t?.reason || `${m.tool} 未安装`, code: "not_installed" }); if (!t.authed) return send(res, 409, { error: t.reason || `${m.tool} 未登录`, code: "not_authed" });
+  // No await is allowed between these checks and registering the spawned run.
+  if (cliDeleted.has(id)) return send(res, 404, { error: "会话不存在" });
+  if (cliRuns.has(id)) return send(res, 409, { error: "这个会话正在运行" });
+  if (cliRuns.size >= CLI_MAX_RUNS) return send(res, 429, { error: `同时只能运行 ${CLI_MAX_RUNS} 个` });
   const dir = path.join(CLI_ROOT, id); const runId = crypto.randomBytes(6).toString("hex"); const unit = `hs-cli-${runId}`;
   upMarkAttached(ups); const files = ups.map(x => ({ up: x, src: upFile(x), rel: `uploads/${x.id.slice(0, 6)}-${x.name}` }));
   const imgs = files.filter(f => f.up.kind === "image");
@@ -1249,6 +1303,7 @@ const UP_TTL = (+process.env.UPLOAD_TTL_DAYS || 30) * 864e5;
 const UP_MAX_PER_MSG = 10;
 const CHAT_IMG_MAX = 6 * 1024 * 1024; // 网关 agent-hydration 上限
 const isUpId = s => /^[a-f0-9]{24}$/.test(s || "");
+const activeUploads = new Set(); // Protect in-flight files before meta.json is committed.
 const safeName = n => { let s = String(n || "").split(/[\\/]/).pop().normalize("NFC").replace(/[\u0000-\u001f\u007f"'`$<>|:*?\\]/g, "").replace(/\s+/g, " ").trim().replace(/^\.+/, ""); if (!s) s = "file"; if ([...s].length > 100) { const e = path.extname(s).slice(0, 12); s = [...s].slice(0, 100 - e.length).join("") + e; } return s; };
 const UP_EXT_MIME = { ".txt": "text/plain", ".md": "text/markdown", ".csv": "text/csv", ".json": "application/json", ".log": "text/plain", ".py": "text/x-python", ".js": "text/javascript", ".ts": "text/plain", ".html": "text/html", ".xml": "application/xml", ".yaml": "text/yaml", ".yml": "text/yaml", ".sh": "text/x-shellscript" };
 function upSniff(buf, name) {
@@ -1275,23 +1330,26 @@ async function upReceive(req, u) {
   const len = +req.headers["content-length"]; if (len > UP_MAX) { req.resume(); throw httpErr(413, `文件不能超过 ${Math.round(UP_MAX / 1048576)}MB`); }
   const id = crypto.randomBytes(12).toString("hex"), dir = path.join(UP_DIR, id); fs.mkdirSync(dir, { recursive: true, mode: 0o700 });
   const f = path.join(dir, "f"), out = fs.createWriteStream(f, { mode: 0o600 }); const hash = crypto.createHash("sha256"); let n = 0, head = [];
+  activeUploads.add(id);
   try {
     await new Promise((r, j) => {
+      out.on("error", j);
       req.on("data", c => { n += c.length; if (n > UP_MAX) { j(httpErr(413, `文件不能超过 ${Math.round(UP_MAX / 1048576)}MB`)); req.destroy(); return; } hash.update(c); if (head.reduce((a, b) => a + b.length, 0) < 65536) head.push(c); if (!out.write(c)) { req.pause(); out.once("drain", () => req.resume()); } });
       req.on("end", () => out.end(r)); req.on("error", j); req.on("aborted", () => j(httpErr(400, "上传中断")));
     });
     if (!n) throw httpErr(400, "空文件");
+    const { mime, kind } = upSniff(Buffer.concat(head), name);
+    const m = { id, scope, session, name, mime, kind, size: n, sha256: hash.digest("hex"), createdAt: Date.now() };
+    atomicWrite(path.join(dir, "meta.json"), JSON.stringify(m)); return upPub(m);
   } catch (e) { out.destroy(); fs.rmSync(dir, { recursive: true, force: true }); throw e; }
-  const { mime, kind } = upSniff(Buffer.concat(head), name);
-  const m = { id, scope, session, name, mime, kind, size: n, sha256: hash.digest("hex"), createdAt: Date.now() };
-  atomicWrite(path.join(dir, "meta.json"), JSON.stringify(m)); return upPub(m);
+  finally { activeUploads.delete(id); }
 }
 const UP_TTL_UNATTACHED = (+process.env.UPLOAD_TTL_UNATTACHED_HOURS || 24) * 3600e3;
 function upMarkAttached(ups) { const t = Date.now(); for (const m of ups) if (!m.attachedAt) { m.attachedAt = t; try { atomicWrite(path.join(UP_DIR, m.id, "meta.json"), JSON.stringify(m)); } catch {} } }
 const upExpired = (m, now) => m.attachedAt ? m.attachedAt + UP_TTL < now : m.createdAt + UP_TTL_UNATTACHED < now;
-const upSweep = () => { try { const now = Date.now(); for (const d of fs.readdirSync(UP_DIR)) { const m = upMeta(d); if (!m || upExpired(m, now)) fs.rmSync(path.join(UP_DIR, d), { recursive: true, force: true }); } } catch {} };
+const upSweep = () => { try { const now = Date.now(); for (const d of fs.readdirSync(UP_DIR)) { if (activeUploads.has(d)) continue; const m = upMeta(d); if (!m || upExpired(m, now)) fs.rmSync(path.join(UP_DIR, d), { recursive: true, force: true }); } } catch {} };
 setTimeout(upSweep, 60e3).unref();
-setInterval(() => { try { const now = Date.now(); for (const d of fs.readdirSync(UP_DIR)) { const m = upMeta(d); if (!m || upExpired(m, now)) fs.rmSync(path.join(UP_DIR, d), { recursive: true, force: true }); } } catch {} }, 3600e3).unref();
+setInterval(upSweep, 3600e3).unref();
 // 取一组上传，校验归属
 function upResolve(ids, scope, session) {
   if (ids == null) return []; if (!Array.isArray(ids)) throw httpErr(400, "attachments 需为上传 id 数组"); if (ids.length > UP_MAX_PER_MSG) throw Object.assign(httpErr(400, `每条最多 ${UP_MAX_PER_MSG} 个附件`), { code: "too_many_attachments" });
@@ -1831,17 +1889,25 @@ http.createServer(async (req, res) => {
   try {
     if (u.pathname.startsWith("/api/") && req.method === "POST" && req.headers["x-hs"] !== "1") return send(res, 403, { error: "拒绝跨站请求" });
     if (u.pathname === "/api/login" && req.method === "POST") {
-      const ip = ipOf(req), f = fails.get(ip) || { n: 0, first: Date.now(), lockUntil: 0 };
-      if (f.lockUntil > Date.now()) return send(res, 429, { error: `尝试次数过多，请 ${Math.ceil((f.lockUntil - Date.now()) / 60e3)} 分钟后再试` });
-      const b = await body(req);
-      if (typeof b.password === "string" && b.password.length < 200 && HASH && await bcrypt.compare(b.password, HASH)) {
-        fails.delete(ip); const sid = crypto.randomBytes(32).toString("hex"); sessions.set(sid, Date.now() + TTL);
-        return send(res, 200, { ok: true }, { "set-cookie": `hs_sid=${sid}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${TTL / 1000}` });
+      const ip = ipOf(req), now = Date.now(); let f = fails.get(ip);
+      if (f?.lockUntil > now) return send(res, 429, { error: `尝试次数过多，请 ${Math.ceil((f.lockUntil - now) / 60e3)} 分钟后再试` });
+      if (loginPending.has(ip)) return send(res, 429, { error: "正在验证登录，请稍后再试" });
+      if (!f || f.first + WIN <= now) { f = { n: 0, first: now, lockUntil: 0 }; fails.set(ip, f); }
+      loginPending.add(ip); let timer;
+      try {
+        const b = await Promise.race([body(req), new Promise((_, reject) => { timer = setTimeout(() => reject(Object.assign(new Error("登录请求超时，请重试"), { http: 408 })), 10000); })]);
+        clearTimeout(timer);
+        if (typeof b.password === "string" && b.password.length < 200 && HASH && await bcrypt.compare(b.password, HASH)) {
+          fails.delete(ip); const sid = crypto.randomBytes(32).toString("hex"); sessions.set(sid, Date.now() + TTL);
+          return send(res, 200, { ok: true }, { "set-cookie": `hs_sid=${sid}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${TTL / 1000}` });
+        }
+        if (f.first + WIN <= Date.now()) { f.n = 0; f.first = Date.now(); }
+        f.n++; if (f.n >= MAXF) f.lockUntil = Date.now() + WIN;
+        await new Promise(r => setTimeout(r, 600));
+        return send(res, 401, { error: f.lockUntil > Date.now() ? "密码错误次数过多，已锁定 15 分钟" : `密码不对（还可再试 ${MAXF - f.n} 次）` });
+      } finally {
+        clearTimeout(timer); loginPending.delete(ip);
       }
-      if (f.first + WIN < Date.now()) { f.n = 0; f.first = Date.now(); }
-      f.n++; if (f.n >= MAXF) f.lockUntil = Date.now() + WIN; fails.set(ip, f);
-      await new Promise(r => setTimeout(r, 600));
-      return send(res, 401, { error: f.lockUntil > Date.now() ? "密码错误次数过多，已锁定 15 分钟" : `密码不对（还可再试 ${MAXF - f.n} 次）` });
     }
     if (u.pathname === "/api/logout") { const s = cookieSid(req); if (s) sessions.delete(s); return send(res, 200, { ok: true }, { "set-cookie": "hs_sid=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0" }); }
     if (u.pathname === "/api/me") { const a = !!authed(req); return send(res, 200, { authed: a, isOwner: a }); } // 单密码登录：登录即主人

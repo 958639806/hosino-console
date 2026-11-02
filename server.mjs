@@ -558,14 +558,19 @@ const lastJson = s => { const i = s.indexOf("{"); if (i < 0) return null; try { 
 const usageOf = j => { if (!j || typeof j !== "object") return null; const u = j.usage || j.result?.usage || j.meta?.usage || j.attempts?.find?.(a => a.usage)?.usage || null; const cost = j.cost ?? j.usage?.cost ?? j.meta?.cost ?? null; return u || cost != null ? { ...(u || {}), ...(cost != null ? { cost } : {}) } : null; };
 const textOfJson = j => j?.outputs?.map?.(o => o?.text).filter(Boolean).join("\n") || j?.text || j?.output || j?.payloads?.map?.(p => p.text).filter(Boolean).join("\n") || j?.result?.text || null;
 const digestRunning = new Set();
+const digestActive = new Set(); // Generation and delivery share one lock per persisted report id.
 const digestIdFor = (key, day) => `${day}__${crypto.createHash("sha1").update(key).digest("hex").slice(0, 10)}`;
 async function runDigest(key, day, opts = {}) {
   if (digestRunning.has(key + day)) throw httpErr(409, "该会话当天群报正在生成");
   const t0 = Date.now();
   const id = digestIdFor(key, day);
+  if (digestActive.has(id)) throw httpErr(409, "该群报正在生成或投递中");
+  const delivered = digestDelivery.load().records?.[id];
+  if (delivered?.status === "delivered" || delivered?.image === "sent" || delivered?.text === "sent") throw httpErr(409, "该群报已有内容发出，不能覆盖；请继续投递或重发原群报");
   const rec = { id, sessionKey: key, name: aliasFor(key) || key, day, startedAt: t0, trigger: opts.trigger === "schedule" ? "schedule" : "manual", status: "running", messageCount: 0, text: null, image: null, usage: { text: null, image: null }, errors: [] };
   const save = () => atomicWrite(path.join(DIGEST_DIR, id + ".json"), JSON.stringify(rec, null, 1));
-  digestRunning.add(key + day);
+  let generatedImage = null;
+  digestRunning.add(key + day); digestActive.add(id);
   try {
     const raw = await call("chat.history", { sessionKey: key, limit: 1000 }, 20000);
     const h = buildHistory(raw, null);
@@ -586,13 +591,25 @@ async function runDigest(key, day, opts = {}) {
     if (tr.e) throw new Error("总结失败：" + tr.e);
     const tj = lastJson(tr.o); const text = (textOfJson(tj) || tr.o).trim(); rec.usage.text = usageOf(tj); rec.textModel = tj?.model || tj?.provider ? `${tj.provider || ""}/${tj.model || ""}` : null;
     const sm = /^画面[:：]\s*(.+)$/m.exec(text); rec.text = text.replace(/^画面[:：].*$/m, "").trim(); rec.imagePrompt = sm ? sm[1].trim().slice(0, 500) : `一只可爱的星野猫娘在群聊里和大家热闹聊天，${day} 夜晚，温暖插画风`;
-    const out = path.join(DIGEST_DIR, id + ".png");
+    const out = path.join(DIGEST_DIR, `${id}--${crypto.randomBytes(6).toString("hex")}.png`); generatedImage = out;
     const ir = await runCli(["infer", "image", "generate", "--model", DIGEST_IMAGE_MODEL, "--prompt", rec.imagePrompt + "。温暖可爱的日系插画风格，画面中不要出现文字。", "--size", "1024x1024", "--output", out, "--json"], 300e3);
     if (ir.e || !fs.existsSync(out)) rec.errors.push("生图失败：" + (ir.e || "未生成文件"));
     else { fs.chmodSync(out, 0o600); rec.image = path.basename(out); rec.usage.image = usageOf(lastJson(ir.o)); rec.imageModel = DIGEST_IMAGE_MODEL; }
     rec.status = rec.errors.length ? "partial" : "ok"; return rec;
   } catch (e) { rec.status = "error"; rec.errors.push(String(e.message || e).slice(0, 400)); return rec; }
-  finally { rec.finishedAt = Date.now(); rec.durationMs = rec.finishedAt - t0; try { save(); } catch (e) { rec.status = "error"; rec.errors.push("保存失败：" + e.message); console.error("digest save", e.message); } digestRunning.delete(key + day); }
+  finally {
+    rec.finishedAt = Date.now(); rec.durationMs = rec.finishedAt - t0;
+    try { save(); } catch (e) { rec.status = "error"; rec.errors.push("保存失败：" + e.message); console.error("digest save", e.message); }
+    if (generatedImage && (!rec.image || rec.status === "error")) {
+      // A failed atomic write can have an uncertain outcome: remove only an
+      // image we can establish is not referenced by the committed report.
+      let referenced = false;
+      try { referenced = JSON.parse(fs.readFileSync(path.join(DIGEST_DIR, id + ".json"), "utf8")).image === path.basename(generatedImage); }
+      catch (e) { referenced = e.code !== "ENOENT"; }
+      if (!referenced) try { fs.rmSync(generatedImage, { force: true }); } catch (e) { console.error("digest image cleanup", e.message); }
+    }
+    digestRunning.delete(key + day); digestActive.delete(id);
+  }
 }
 // Each day's successful/empty report is final for the scheduler. Failed generation
 // gets at most three attempts with 1/3 minute backoff; manual runs stay available.
@@ -606,6 +623,7 @@ async function digestGenerateTick() {
       const cur = digestSettings.load();
       if (!on || !cur.enabled || !cur.sessions?.[key] || digestRunning.has(key + day)) continue;
       const id = digestIdFor(key, day), delivery = digestDelivery.load().records?.[id];
+      if (digestActive.has(id)) continue;
       if (delivery?.status === "delivered" || delivery?.image === "sent" || delivery?.text === "sent") continue;
       let existing;
       try { existing = JSON.parse(fs.readFileSync(path.join(DIGEST_DIR, id + ".json"), "utf8")); } catch (e) { if (e.code !== "ENOENT") { console.error("digest read", e.message); continue; } }
@@ -660,17 +678,35 @@ const digestScheduled = (d, s) => d.trigger === "schedule" || (d.trigger == null
 const digestDeliverable = d => !!d && d.notesUsed === false && (d.status === "ok" || d.status === "partial") && typeof d.text === "string" && d.text.trim() && !!digestTargetOf(d.sessionKey);
 const digestSleep = ms => new Promise(r => setTimeout(r, ms));
 const digestDelivering = new Set();
+function digestImagePath(id, file) {
+  if (!isDigestId(id) || typeof file !== "string") return null;
+  return file === `${id}.png` || (file.startsWith(`${id}--`) && /^[0-9a-f]{12}\.png$/.test(file.slice(id.length + 2))) ? path.join(DIGEST_DIR, file) : null;
+}
 function digestPlan(d) {
   const to = digestTargetOf(d.sessionKey); const text = digestSafeText(d.text);
   let file = null, bytes = 0;
-  if (d.image && /^\d{4}-\d\d-\d\d__[0-9a-f]{10}\.png$/.test(String(d.image))) { const f = path.join(DIGEST_DIR, d.image); try { const st = fs.statSync(f); if (st.isFile() && st.size > 0 && st.size <= DIGEST_IMG_MAX) { file = f; bytes = st.size; } } catch {} }
+  const f = digestImagePath(d.id, d.image); if (f) try { const st = fs.statSync(f); if (st.isFile() && st.size > 0 && st.size <= DIGEST_IMG_MAX) { file = f; bytes = st.size; } } catch {}
   return { to, text, file, bytes };
 }
 // 一次投递尝试（只做还没 sent 的步骤）。返回 { done, rec }。opt.send 可注入（单元测试用）
 async function digestDeliverOnce(d, opt = {}) {
+  if (digestActive.has(d.id)) throw httpErr(409, "该群报正在生成或投递中");
+  if (d.notesUsed !== false) throw httpErr(400, "该旧群报无法确认记忆隔离，请重新生成后再发送");
+  digestActive.add(d.id); digestDelivering.add(d.id);
+  try {
+  d = { ...d }; // Keep text and image bytes from the same report before the first await.
+  const plan = digestPlan(d); let imageBuffer = null, imageError = null;
+  if (plan.file) try { imageBuffer = fs.readFileSync(plan.file); } catch (e) { imageError = e; }
   const callFn = opt.call || call; const store = digestDelivery.load(); const recs = (store.records ||= {});
-  const r = (recs[d.id] ||= { id: d.id, day: d.day, sessionKey: d.sessionKey, status: "pending", attempts: 0, image: d.image ? "pending" : "none", text: "pending", createdAt: Date.now() });
-  const plan = digestPlan(d); const last = r.attempts + 1 >= DIGEST_DELIVER_MAX || opt.force === true;
+  let r = recs[d.id];
+  if (r?.status === "delivered" && !opt.restart) return { done: true, rec: r };
+  const original = r;
+  if (opt.restart || !r) r = { ...r, id: d.id, day: d.day, sessionKey: d.sessionKey, status: "pending", attempts: 0, image: d.image ? "pending" : "none", text: "pending", createdAt: r?.createdAt || Date.now() };
+  if (opt.restart) { r.batch = crypto.randomBytes(8).toString("hex"); delete r.nextAt; }
+  recs[d.id] = r;
+  if (opt.restart) try { digestDelivery.save(store); } catch (e) { if (original) recs[d.id] = original; else delete recs[d.id]; throw e; }
+  const batchKey = r.batch ? `${d.id}-${r.batch}` : d.id;
+  const last = r.attempts + 1 >= DIGEST_DELIVER_MAX || opt.force === true;
   if (!plan.to) { r.status = "skipped"; r.reason = "not-qq-group"; digestDelivery.save(store); return { done: true, rec: r }; }
   r.attempts += 1; r.lastAttemptAt = Date.now(); r.errors = r.errors || [];
   let to = plan.to, accountId = "default", sessionKey;
@@ -680,12 +716,12 @@ async function digestDeliverOnce(d, opt = {}) {
     if (r.image === "pending") {
       if (!plan.file) { r.image = "none"; r.errors.push("image: 文件缺失或过大，仅发文字"); }
       else {
-        try { const buf = fs.readFileSync(plan.file); await callFn("send", { to, channel: "qqbot", accountId, buffer: buf.toString("base64"), filename: "digest.png", contentType: "image/png", idempotencyKey: `digest-${d.id}-image` }, 60000); r.image = "sent"; r.imageAt = Date.now(); await digestSleep(opt.gapMs ?? 1500); }
+        try { if (imageError) throw imageError; await callFn("send", { to, channel: "qqbot", accountId, buffer: imageBuffer.toString("base64"), filename: "digest.png", contentType: "image/png", idempotencyKey: `digest-${batchKey}-image` }, 60000); r.image = "sent"; r.imageAt = Date.now(); await digestSleep(opt.gapMs ?? 1500); }
         catch (e) { fail("image", e); if (!last) { r.status = "retry"; r.nextAt = Date.now() + DIGEST_DELIVER_BACKOFF[Math.min(r.attempts - 1, DIGEST_DELIVER_BACKOFF.length - 1)]; digestDelivery.save(store); return { done: false, rec: r }; } }
       }
     }
     if (r.text === "pending") {
-      try { await callFn("send", { to, channel: "qqbot", accountId, message: plan.text, ...(sessionKey ? { sessionKey } : {}), idempotencyKey: `digest-${d.id}-text` }, 30000); r.text = "sent"; r.textAt = Date.now(); }
+      try { await callFn("send", { to, channel: "qqbot", accountId, message: plan.text, ...(sessionKey ? { sessionKey } : {}), idempotencyKey: `digest-${batchKey}-text` }, 30000); r.text = "sent"; r.textAt = Date.now(); }
       catch (e) { fail("text", e); }
     }
   } finally {
@@ -697,6 +733,7 @@ async function digestDeliverOnce(d, opt = {}) {
     opLog(null, "digest.deliver", `${d.id} -> ${plan.to} attempt=${r.attempts} image=${r.image} text=${r.text} status=${r.status}`, r.status === "delivered", r.status === "delivered" ? null : r.lastError);
   }
   return { done: r.status === "delivered" || r.status === "failed", rec: r };
+  } finally { digestDelivering.delete(d.id); digestActive.delete(d.id); }
 }
 // 预演：只返回/打印将要发送的内容与目标，不调用网关
 function digestDryRun(d) {
@@ -706,13 +743,15 @@ function digestDryRun(d) {
 }
 async function digestDeliverTick() {
   const s = digestSettings.load(); const cfg = digestDeliverCfg(s); if (!s.enabled || !cfg.enabled) return; const today = sgParts().day; const store = digestDelivery.load();
-  for (const d of listDigests().filter(x => x.day === today && !digestRunning.has(x.sessionKey + x.day))) {
+  for (let d of listDigests().filter(x => x.day === today && !digestRunning.has(x.sessionKey + x.day))) {
+    if (digestActive.has(d.id)) continue;
+    // Earlier reports may await the gateway while this queued report is regenerated.
+    try { d = JSON.parse(fs.readFileSync(path.join(DIGEST_DIR, d.id + ".json"), "utf8")); } catch { continue; }
     if (!digestDeliverable(d) || !digestScheduled(d, s) || cfg.sessions[d.sessionKey] === false || !s.sessions?.[d.sessionKey]) continue;
     const r = store.records?.[d.id]; if (r && (r.status === "delivered" || r.status === "failed" || r.status === "skipped")) continue; if (r?.nextAt && r.nextAt > Date.now()) continue;
     if (digestDelivering.has(d.id)) continue;
     if (DIGEST_DELIVER_DRY) { if (!r) { digestDryRun(d); store.records[d.id] = { id: d.id, day: d.day, sessionKey: d.sessionKey, status: "dry-run", attempts: 0, image: "none", text: "pending", createdAt: Date.now() }; digestDelivery.save(store); } continue; }
-    digestDelivering.add(d.id);
-    try { await digestDeliverOnce(d); } catch (e) { console.error("digest deliver", e.message); opLog(null, "digest.deliver", d.id, false, e.message); } finally { digestDelivering.delete(d.id); }
+    try { await digestDeliverOnce(d); } catch (e) { console.error("digest deliver", e.message); opLog(null, "digest.deliver", d.id, false, e.message); }
   }
 }
 let digestDeliverBusy = false;
@@ -762,7 +801,7 @@ async function interactions(key) {
 
 // 主动行为参数（只读 openclaw.json，敏感字段打码）
 const maskCfg = o => Array.isArray(o) ? o.map(maskCfg) : o && typeof o === "object" ? Object.fromEntries(Object.entries(o).map(([k, v]) => [k, /key|token|secret|password|hash/i.test(k) ? (v ? "已设置" : "未设置") : maskCfg(v)])) : o;
-const serveFile = (res, f, ct) => { const st = fs.statSync(f); res.writeHead(200, { "content-type": ct, "content-length": String(st.size), "cache-control": "private, max-age=3600", "x-content-type-options": "nosniff" }); fs.createReadStream(f).pipe(res); };
+const serveFile = (res, f, ct, cache = "private, max-age=3600") => { const st = fs.statSync(f); res.writeHead(200, { "content-type": ct, "content-length": String(st.size), "cache-control": cache, "x-content-type-options": "nosniff" }); fs.createReadStream(f).pipe(res); };
 
 Object.assign(R, {
   "GET /api/digest/settings": async () => {
@@ -786,9 +825,10 @@ Object.assign(R, {
     digestSettings.save(s); return { ok: true, enabled: s.enabled, time: s.time, sessions: s.sessions };
   }, { confirm: true }),
   "GET /api/digests": async u => { const k = u.searchParams.get("key"); const all = listDigests().filter(d => !k || d.sessionKey === k); const lim = qi(u, "limit", 30, 200); const dl = digestDelivery.load().records || {}; return { digests: all.slice(0, lim).map(({ text, ...d }) => ({ ...d, delivery: dl[d.id] ? { status: dl[d.id].status, image: dl[d.id].image, text: dl[d.id].text, attempts: dl[d.id].attempts, at: dl[d.id].deliveredAt || dl[d.id].lastAttemptAt || null, error: dl[d.id].lastError || null } : null, preview: String(text || "").slice(0, 120) })), total: all.length }; },
-  "POST /api/digests/run-now": W("digest.run-now", b => b.sessionKey, async b => { need(b, "sessionKey"); if (!digestSettings.load().sessions?.[b.sessionKey]) throw httpErr(400, "该会话没有开启群报"); const day = sgParts().day; runDigest(b.sessionKey, day).catch(() => {}); return { ok: true, started: true, day }; }, { confirm: true }),
+  "POST /api/digests/run-now": W("digest.run-now", b => b.sessionKey, async b => { need(b, "sessionKey"); if (!digestSettings.load().sessions?.[b.sessionKey]) throw httpErr(400, "该会话没有开启群报"); const day = sgParts().day, id = digestIdFor(b.sessionKey, day); if (digestActive.has(id)) throw httpErr(409, "该群报正在生成或投递中"); const delivered = digestDelivery.load().records?.[id]; if (delivered?.status === "delivered" || delivered?.image === "sent" || delivered?.text === "sent") throw httpErr(409, "该群报已有内容发出，不能覆盖；请继续投递或重发原群报"); runDigest(b.sessionKey, day).catch(() => {}); return { ok: true, started: true, day }; }, { confirm: true }),
   "POST /api/digests/deliver": W("digest.deliver", b => `${b.id} dry=${!!b.dry} force=${!!b.force}`, async b => { /* HS-DIGEST-DELIVER v1：手动投递/预演；dry 不发送；force 才会对已 delivered/failed 的重发 */
     need(b, "id"); if (!isDigestId(b.id)) throw httpErr(400, "id 无效");
+    if (digestActive.has(b.id)) throw httpErr(409, "该群报正在生成或投递中");
     let d; try { d = JSON.parse(fs.readFileSync(path.join(DIGEST_DIR, b.id + ".json"), "utf8")); } catch { throw httpErr(404, "群报不存在"); }
     if (d.notesUsed === true) throw httpErr(400, "该旧群报使用全局记忆，请重新生成后再发送");
     if (d.notesUsed !== false) throw httpErr(400, "该旧群报无法确认记忆隔离，请重新生成后再发送");
@@ -797,9 +837,7 @@ Object.assign(R, {
     if (!digestSettings.load().sessions?.[d.sessionKey]) throw httpErr(400, "该会话没有开启群报");
     const store = digestDelivery.load(); const r0 = store.records?.[b.id];
     if (r0?.status === "delivered" && b.force !== true) throw httpErr(409, "该群报已投递过（防重复）；确需重发请带 force:true");
-    if (b.force === true && r0) { r0.status = "pending"; r0.image = d.image ? "pending" : "none"; r0.text = "pending"; r0.attempts = 0; delete r0.nextAt; digestDelivery.save(store); }
-    if (digestDelivering.has(b.id)) throw httpErr(409, "正在投递中");
-    digestDelivering.add(b.id); try { const r = await digestDeliverOnce(d, { force: true }); return { ok: r.rec.status === "delivered", status: r.rec.status, image: r.rec.image, text: r.rec.text, attempts: r.rec.attempts, error: r.rec.lastError || null }; } finally { digestDelivering.delete(b.id); }
+    const r = await digestDeliverOnce(d, { force: true, restart: b.force === true }); return { ok: r.rec.status === "delivered", status: r.rec.status, image: r.rec.image, text: r.rec.text, attempts: r.rec.attempts, error: r.rec.lastError || null };
   }, { confirm: true }),
   "GET /api/digests/get": async u => { const id = u.searchParams.get("id"); if (!isDigestId(id)) throw httpErr(400, "id 无效"); try { return JSON.parse(fs.readFileSync(path.join(DIGEST_DIR, id + ".json"), "utf8")); } catch { throw httpErr(404, "群报不存在"); } },
   "GET /api/diary": async () => cached("diary", 60e3, async () => { const r = await call("doctor.memory.dreamDiary", { agentId: "main" }, 15000); return { agentId: r.agentId || "main", found: !!r.found, path: r.path || null, content: r.content || "", updatedAtMs: r.updatedAtMs || null }; }),
@@ -1236,23 +1274,24 @@ async function cliRun(req, res, id) {
     stdinData = JSON.stringify({ type: "user", message: { role: "user", content: [...claudeImgs.map(f => ({ type: "image", source: { type: "base64", media_type: f.up.mime, data: fs.readFileSync(f.src).toString("base64") } })), { type: "text", text: fullPrompt }] } }) + "\n";
   }
   if (m.tool === "codex" && imgs.length) args.splice(args.length - 1, 0, ...imgs.map(f => `--image=${f.rel}`));
-  let child;
-  const stdio = [stdinData ? "pipe" : "ignore", "pipe", "pipe"];
-  if (CLI_LAUNCH === "direct") { fs.mkdirSync(path.join(dir, "uploads"), { recursive: true, mode: 0o700 }); for (const f of files) fs.copyFileSync(f.src, path.join(dir, f.rel)); child = spawn(bin, args, { cwd: dir, env: cliEnv(), detached: true, stdio }); }
-  else child = spawn("sudo", ["-n", "/usr/bin/systemd-run", "--quiet", "--collect", "--wait", "--pipe", "--uid=ubuntu", "--gid=ubuntu", `--unit=${unit}`, `-p`, `RuntimeMaxSec=${Math.ceil(cliTimeout(m.tool) / 1000) + 30}`, ...Object.entries(cliEnv()).map(([k, v]) => `--setenv=${k}=${v}`), "/bin/bash", "-c", 'd=$0; n=$1; shift; mkdir -p -m 700 "$d/uploads" && cd "$d" || exit 97; while [ "$n" -gt 0 ]; do cp -f -- "$1" "$2" || exit 98; shift 2; n=$((n-1)); done; exec "$@"', dir, String(files.length), ...files.flatMap(f => [f.src, f.rel]), bin, ...args], { env: { PATH: CLI_PATH }, detached: true, stdio });
-  if (stdinData) { child.stdin.on("error", () => {}); child.stdin.end(stdinData); }
-  const run = { child, unit, runId, started, reason: null }; cliRuns.set(id, run);
-  const kill = why => { if (run.reason) return; run.reason = why; if (CLI_LAUNCH !== "direct") execFile("sudo", ["-n", "/usr/bin/systemctl", "kill", "--signal=SIGKILL", unit], () => {}); try { process.kill(-child.pid, "SIGTERM"); } catch {} setTimeout(() => { try { process.kill(-child.pid, "SIGKILL"); } catch {} }, 3000).unref(); };
+  let child, timer, ping, open = false, finished = false, exited = false, stopping = false;
+  const run = { child: null, unit, runId, started, reason: null };
+  const stopChild = () => {
+    if (stopping || exited || !child) return; stopping = true;
+    if (CLI_LAUNCH !== "direct") try { execFile("sudo", ["-n", "/usr/bin/systemctl", "kill", "--signal=SIGKILL", unit], () => {}); } catch {}
+    // An ENOENT spawn error has no PID: never signal an unrelated process group.
+    if (Number.isInteger(child.pid) && child.pid > 0) {
+      try { process.kill(-child.pid, "SIGTERM"); } catch {}
+      setTimeout(() => { if (!exited) try { process.kill(-child.pid, "SIGKILL"); } catch {} }, 3000).unref();
+    }
+  };
+  const kill = why => { if (finished || run.reason) return; run.reason = why; stopChild(); };
   run.cancel = () => kill("cancelled");
-  const TMO = cliTimeout(m.tool); const timer = setTimeout(() => kill("timeout"), TMO);
-  m.updatedAt = Date.now(); if (m.title === "新会话") m.title = prompt.replace(/\s+/g, " ").slice(0, 40); cliSave(m);
-  cliPush(id, { role: "user", text: prompt, ts: started, ...(files.length ? { attachments: files.map(f => ({ ...upPub(f.up), path: f.rel })) } : {}) });
-  cliAudit(req, { ev: "start", session: id, tool: m.tool, model: m.model || null, runId, prompt: prompt.slice(0, 4000), promptLen: strLen(prompt), ...(files.length ? { attachments: files.map(f => `${f.up.id} ${f.up.name} ${f.up.size}B ${f.up.mime}`) } : {}) });
-  res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-store", "x-accel-buffering": "no", connection: "keep-alive" });
-  let open = true; res.on("close", () => { open = false; }); // 断开不杀进程：结果照样写进会话记录
-  const sse = (event, data) => { if (open) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
-  const ping = setInterval(() => { if (open) res.write(": ping\n\n"); }, 15e3);
-  sse("start", { sessionId: id, runId, tool: m.tool, ts: started });
+  const sse = (event, data) => { if (open) try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch { open = false; } };
+  const reportError = message => {
+    try { cliPush(id, { role: "error", text: message, ts: Date.now() }); } catch {}
+    sse("error", { message });
+  };
   const st = { pend: new Map() }; let answer = "", buf = "", errTail = "";
   const flushAns = () => { if (answer) { cliPush(id, { role: "assistant", text: answer, ts: Date.now() }); answer = ""; } };
   const onLine = line => {
@@ -1264,17 +1303,50 @@ async function cliRun(req, res, id) {
       else if (e.type === "error") { flushAns(); cliPush(id, { role: "error", text: e.message, ts: Date.now() }); sse("error", { message: e.message }); }
     }
   };
-  child.stdout.on("data", d => { buf += d; let i; while ((i = buf.indexOf("\n")) >= 0) { onLine(buf.slice(0, i)); buf = buf.slice(i + 1); } });
-  child.stderr.on("data", d => { errTail = (errTail + d).slice(-4000); });
-  child.on("close", (code, sig) => {
-    clearTimeout(timer); clearInterval(ping); if (buf) onLine(buf); flushAns(); cliRuns.delete(id);
+  const finish = (code, sig, error) => {
+    if (finished) return; finished = true;
+    clearTimeout(timer); clearInterval(ping);
+    if (cliRuns.get(id) === run) cliRuns.delete(id);
     const durationMs = Date.now() - started, exitCode = code ?? null;
-    if (!run.reason && exitCode !== 0) { const msg = run.reason === "timeout" ? `超时（${TMO >= 60e3 ? Math.round(TMO / 60e3) + " 分钟" : Math.round(TMO / 1000) + " 秒"}）已终止` : run.reason === "cancelled" ? "已取消" : `退出码 ${exitCode}${sig ? " " + sig : ""}${errTail.trim() ? "：" + errTail.trim().slice(-1500) : ""}`; cliPush(id, { role: "error", text: msg, ts: Date.now() }); sse("error", { message: msg }); }
-    m.updatedAt = Date.now(); cliSave(m);
-    cliAudit(req, { ev: "end", session: id, tool: m.tool, runId, exitCode, signal: sig, reason: run.reason, durationMs });
-    sse("done", { exitCode, durationMs, ...(run.reason ? { reason: run.reason } : {}) }); if (open) res.end();
+    try {
+      if (error) throw error;
+      if (buf) onLine(buf); flushAns();
+      if (!run.reason && exitCode !== 0) reportError(`退出码 ${exitCode}${sig ? " " + sig : ""}${errTail.trim() ? "：" + errTail.trim().slice(-1500) : ""}`);
+      m.updatedAt = Date.now(); cliSave(m);
+    } catch (e) { stopChild(); reportError(e.message); }
+    finally {
+      try { cliAudit(req, { ev: "end", session: id, tool: m.tool, runId, exitCode, signal: sig, reason: run.reason, durationMs }); } catch {}
+      sse("done", { exitCode, durationMs, ...(run.reason ? { reason: run.reason } : {}) });
+      if (open) { open = false; try { res.end(); } catch {} }
+    }
+  };
+  const stdio = [stdinData ? "pipe" : "ignore", "pipe", "pipe"];
+  if (CLI_LAUNCH === "direct") { fs.mkdirSync(path.join(dir, "uploads"), { recursive: true, mode: 0o700 }); for (const f of files) fs.copyFileSync(f.src, path.join(dir, f.rel)); child = spawn(bin, args, { cwd: dir, env: cliEnv(), detached: true, stdio }); }
+  else child = spawn("sudo", ["-n", "/usr/bin/systemd-run", "--quiet", "--collect", "--wait", "--pipe", "--uid=ubuntu", "--gid=ubuntu", `--unit=${unit}`, `-p`, `RuntimeMaxSec=${Math.ceil(cliTimeout(m.tool) / 1000) + 30}`, ...Object.entries(cliEnv()).map(([k, v]) => `--setenv=${k}=${v}`), "/bin/bash", "-c", 'd=$0; n=$1; shift; mkdir -p -m 700 "$d/uploads" && cd "$d" || exit 97; while [ "$n" -gt 0 ]; do cp -f -- "$1" "$2" || exit 98; shift 2; n=$((n-1)); done; exec "$@"', dir, String(files.length), ...files.flatMap(f => [f.src, f.rel]), bin, ...args], { env: { PATH: CLI_PATH }, detached: true, stdio });
+  run.child = child; cliRuns.set(id, run);
+  // Install terminal handlers before any persistence or stdin operation can fail.
+  child.on("error", e => finish(null, null, new Error("启动失败：" + e.message)));
+  child.on("close", (code, sig) => { exited = true; finish(code, sig); });
+  child.stdout.on("data", d => {
+    if (finished) return;
+    try { buf += d; let i; while ((i = buf.indexOf("\n")) >= 0) { onLine(buf.slice(0, i)); buf = buf.slice(i + 1); } }
+    catch (e) { finish(null, null, e); }
   });
-  child.on("error", e => { cliPush(id, { role: "error", text: "启动失败：" + e.message, ts: Date.now() }); sse("error", { message: "启动失败：" + e.message }); });
+  child.stderr.on("data", d => { if (!finished) errTail = (errTail + d).slice(-4000); });
+  res.on("close", () => { open = false; }); // 断开不杀进程：结果照样写进会话记录
+  try {
+    timer = setTimeout(() => kill("timeout"), cliTimeout(m.tool));
+    m.updatedAt = Date.now(); if (m.title === "新会话") m.title = prompt.replace(/\s+/g, " ").slice(0, 40); cliSave(m);
+    cliPush(id, { role: "user", text: prompt, ts: started, ...(files.length ? { attachments: files.map(f => ({ ...upPub(f.up), path: f.rel })) } : {}) });
+    cliAudit(req, { ev: "start", session: id, tool: m.tool, model: m.model || null, runId, prompt: prompt.slice(0, 4000), promptLen: strLen(prompt), ...(files.length ? { attachments: files.map(f => `${f.up.id} ${f.up.name} ${f.up.size}B ${f.up.mime}`) } : {}) });
+    res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-store", "x-accel-buffering": "no", connection: "keep-alive" }); open = true;
+    ping = setInterval(() => { if (open) try { res.write(": ping\n\n"); } catch { open = false; } }, 15e3);
+    sse("start", { sessionId: id, runId, tool: m.tool, ts: started });
+    if (stdinData) { child.stdin.on("error", () => {}); child.stdin.end(stdinData); }
+  } catch (e) {
+    const streaming = open; finish(null, null, e);
+    if (!streaming) throw e;
+  }
 }
 async function cliRoute(req, res, u) {
   const p = u.pathname, M = req.method; let mt;
@@ -1389,7 +1461,7 @@ async function upRoute(req, res, u) {
   if (u.pathname === "/api/uploads" && req.method === "POST") { try { const r = await upReceive(req, u); opLog(req, "uploads.put", `${r.id} ${u.searchParams.get("scope")}:${u.searchParams.get("session")} ${r.name} ${r.size}B ${r.mime}`, true); return send(res, 200, r); } catch (e) { opLog(req, "uploads.put", `${u.searchParams.get("scope")}:${u.searchParams.get("session")} ${u.searchParams.get("name")}`, false, e.message); return send(res, e.http || 500, { error: e.message, code: e.http === 413 ? "too_large" : undefined }); } }
   if (u.pathname === "/api/uploads/limits" && req.method === "GET") { try { await connect(); } catch {} const p = gwHello?.policy || {}; return send(res, 200, { maxBytes: UP_MAX, maxPerMessage: UP_MAX_PER_MSG, ttlDays: UP_TTL / 864e5, chat: { maxBytes: Math.min(UP_MAX, +p.attachments?.maxBytes || 20971520), maxImageBytes: +p.attachments?.maxImageBytes || CHAT_IMG_MAX, maxPayload: +p.maxPayload || 26214400, fromGateway: !!p.attachments }, cli: { maxBytes: UP_MAX, claudeInlineImageMax: 5242880 } }); }
   const mt = /^\/api\/uploads\/([a-f0-9]{24})$/.exec(u.pathname); const m = mt && upMeta(mt[1]); if (!m) return send(res, 404, { error: "上传不存在或已过期" });
-  if (req.method === "GET") { const f = upFile(m); const inl = u.searchParams.get("download") !== "1"; return fs.createReadStream(f).on("error", () => send(res, 404, {})).once("open", function () { res.writeHead(200, mediaHeaders(inl ? m.mime : "application/octet-stream", m.name, m.size)); this.pipe(res); }); }
+  if (req.method === "GET") { if (upExpired(m, Date.now())) return send(res, 404, { error: "上传不存在或已过期" }); const f = upFile(m); const inl = u.searchParams.get("download") !== "1"; return fs.createReadStream(f).on("error", () => send(res, 404, {})).once("open", function () { res.writeHead(200, mediaHeaders(inl ? m.mime : "application/octet-stream", m.name, m.size)); this.pipe(res); }); }
   if (req.method === "DELETE") { req.resume(); fs.rmSync(path.join(UP_DIR, m.id), { recursive: true, force: true }); opLog(req, "uploads.delete", m.id, true); return send(res, 200, { ok: true }); }
   return send(res, 404, { error: "接口不存在" });
 }
@@ -1882,11 +1954,26 @@ Object.assign(R, {
 function send(res, code, obj, h = {}) { const b = JSON.stringify(obj); res.writeHead(code, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...h }); res.end(b); }
 const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".webmanifest": "application/manifest+json" };
 const SEC = { "x-content-type-options": "nosniff", "x-frame-options": "DENY", "referrer-policy": "no-referrer", "strict-transport-security": "max-age=31536000", "content-security-policy": "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'" };
-const body = req => new Promise((r, j) => { let d = ""; req.on("data", c => { d += c; if (d.length > 2e5) { j(new Error("请求过大")); req.destroy(); } }); req.on("end", () => { try { r(d ? JSON.parse(d) : {}); } catch { j(new Error("JSON 无效")); } }); });
+const body = req => new Promise((resolve, reject) => {
+  const chunks = []; let size = 0, failed = false;
+  const fail = error => { if (!failed) { failed = true; reject(error); } };
+  req.on("data", chunk => {
+    if (failed) return;
+    const bytes = Buffer.isBuffer(chunk) ? chunk : Buffer.from(chunk); size += bytes.length;
+    if (size > 2e5) { fail(httpErr(413, "请求过大")); req.destroy(); return; }
+    chunks.push(bytes);
+  });
+  req.on("end", () => {
+    if (failed) return;
+    const text = Buffer.concat(chunks).toString("utf8");
+    try { resolve(text ? JSON.parse(text) : {}); } catch { fail(httpErr(400, "JSON 无效")); }
+  });
+  req.on("error", fail); req.on("aborted", () => fail(httpErr(400, "请求中断")));
+});
 
 http.createServer(async (req, res) => {
-  const u = new URL(req.url, "http://x");
   try {
+    let u; try { u = new URL(req.url, "http://x"); } catch { return send(res, 400, { error: "请求地址无效" }); }
     if (u.pathname.startsWith("/api/") && req.method === "POST" && req.headers["x-hs"] !== "1") return send(res, 403, { error: "拒绝跨站请求" });
     if (u.pathname === "/api/login" && req.method === "POST") {
       const ip = ipOf(req), now = Date.now(); let f = fails.get(ip);
@@ -1915,7 +2002,7 @@ http.createServer(async (req, res) => {
     if (u.pathname.startsWith("/api/")) {
       if (!authed(req)) return send(res, 401, { error: "请先登录" });
       if (u.pathname === "/api/media" && req.method === "GET") return await serveMedia(req, res, u);
-      if (u.pathname === "/api/digests/image" && req.method === "GET") { const id = u.searchParams.get("id"); if (!isDigestId(id)) return send(res, 400, { error: "id 无效" }); const f = path.join(DIGEST_DIR, id + ".png"); if (!fs.existsSync(f)) return send(res, 404, { error: "没有图片" }); return serveFile(res, f, "image/png"); }
+      if (u.pathname === "/api/digests/image" && req.method === "GET") { const id = u.searchParams.get("id"); if (!isDigestId(id)) return send(res, 400, { error: "id 无效" }); let d; try { d = JSON.parse(fs.readFileSync(path.join(DIGEST_DIR, id + ".json"), "utf8")); } catch { return send(res, 404, { error: "没有图片" }); } const f = digestImagePath(id, d.image); if (!f || !fs.existsSync(f)) return send(res, 404, { error: "没有图片" }); return serveFile(res, f, "image/png", "no-store"); }
       if (u.pathname === "/api/stickers/import" && req.method === "POST") { if (req.headers["x-hs"] !== "1") return send(res, 403, { error: "拒绝跨站请求" }); const cat = u.searchParams.get("category"); try { const r = await stkImport(req, u); opLog(req, "stickers.import", `${cat} ${r.file}`, true); return send(res, 200, r); } catch (e) { opLog(req, "stickers.import", cat, false, e.message); return send(res, e.http || 500, { error: e.message, code: e.code }); } }
       if (u.pathname === "/api/stickers/image" && req.method === "GET") { const n = u.searchParams.get("file"); if (!stickerFiles().includes(n)) return send(res, 404, { error: "表情不存在" }); const real = fs.realpathSync(path.join(STICKER_DIR, n)); if (!real.startsWith(fs.realpathSync(STICKER_DIR) + path.sep)) return send(res, 403, { error: "拒绝" }); return serveFile(res, real, MEDIA_MIME[path.extname(n).toLowerCase()] || "application/octet-stream"); }
       if (req.method === "POST" && req.headers["x-hs"] !== "1") return send(res, 403, { error: "拒绝跨站请求" });

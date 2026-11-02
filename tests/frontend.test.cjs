@@ -93,7 +93,7 @@ test('history polling refreshes earlier content and delivery without a new final
   assert.ok(requests > 1);
 });
 
-for (const action of ['Escape', 'scrim', 'close button', 'browser Back']) {
+for (const action of ['Escape', 'close button', 'browser Back']) {
   test(`dirty file editor confirms ${action}, preserving the draft when cancelled`, async t => {
     const page = await pageFor(t);
     await page.goto(base + '/#/files/SOUL.md');

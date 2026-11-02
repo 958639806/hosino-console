@@ -1,7 +1,7 @@
-import { api, setUnauthedHandler, notReady, mediaOf, rawReq } from "./api.js?v=2026.11.3.4";
-import { makeCred } from "./cred-adapter.js?v=2026.11.3.4";
+import { api, setUnauthedHandler, notReady, mediaOf, rawReq } from "./api.js?v=2026.11.3.6";
+import { makeCred } from "./cred-adapter.js?v=2026.11.3.6";
 const cred = makeCred(rawReq);
-import { md } from "./md.js?v=2026.11.3.4";
+import { md } from "./md.js?v=2026.11.3.6";
 
 // ---------- 小工具 ----------
 const $ = (s, el = document) => el.querySelector(s);
@@ -793,34 +793,39 @@ function cxRtFits(rt, m) {
 }
 const cxRtName = r => r === "codex" ? "Codex" : r === "claude-cli" ? "Claude CLI" : r;
 // /api/patch 没有稳定错误码，原样透传网关文字：只按文字里的 acp / lock 给中文提示，其他一律「保存没成功：原文」。不提供解锁入口。
-const cxPatchErr = x => { const t = `${x?.message || ""} ${x?.code || ""}`; return /\bacp\b/i.test(t) ? "这是 ACP 会话，它的模型和引擎由 ACP 那边管理，这里改不了" : /lock|locked/i.test(t) ? "这个会话的模型被锁定了，不能在这里换" : "保存没成功：" + (x?.message || "未知错误"); };
+// 网关拒绝：code 固定 INVALID_REQUEST、HTTP 502，只能看文字里有没有 ACP / locked（不区分大小写）
+const cxPatchErr = x => { const t = String(x?.message || ""); return /acp/i.test(t) ? "这是 ACP 会话，它的模型和引擎由 ACP 那边管理，这里改不了" : /locked/i.test(t) ? "这个会话的模型被锁定了，不能在这里换" : "保存没成功：" + (x?.message || "未知错误"); };
+// 这一版后端没有 /api/models/auth/login 和 /auth/order：登录按钮和账号顺序先不显示，cred-adapter 里的代码保留不用
+const CX_ORDER_UI = false;
 const CX_LOCKED = new Set(); // 本页内收到过「锁定」拒绝的会话，之后同样按锁定处理
 const cxIsAcp = k => /(^|:)acp(:|$)/i.test(String(k || ""));
-const cxIsLocked = s => !!(s?.modelLocked || s?.modelLock || s?.lockedModel || s?.locked?.model) || CX_LOCKED.has(s?.key);
+// /api/sessions 返回 runtimeSelectionLocked（模型锁定或 ACP 会话）和 modelSelectionLocked（仅模型锁定）；key 正则只作兜底
+const cxIsLocked = s => s?.modelSelectionLocked === true || CX_LOCKED.has(s?.key);
+const cxRtLocked = s => s?.runtimeSelectionLocked === true || cxIsAcp(s?.key) || cxIsLocked(s);
 function tuneSheet(sess, models, defaults) {
   const thinks = sess.thinkingOptions?.length ? sess.thinkingOptions : ["off", "minimal", "low", "medium", "high"];
   const thinkZh = { off: "关闭", minimal: "极少", low: "少量", medium: "适中", high: "深度", xhigh: "极深", adaptive: "自适应" };
   const curModel = sess.modelProvider && sess.model && !String(sess.model).includes("/") ? sess.modelProvider + "/" + sess.model : sess.model;
   const curM = cxModel(models, curModel || defaults?.model);
   // 预防为主：锁定 / ACP 会话不显示「改回自动」，也从不发 agentRuntime
-  const noRt = cxIsAcp(sess.key) || cxIsLocked(sess);
+  const noRt = cxRtLocked(sess);
   const mis = !noRt && !cxRtFits(sess.agentRuntime, curM);
   sheet(`<h2>模型和思考</h2><form id="tf">
     <label class="field"><span>模型</span><select class="select" name="model"><option value="">跟随默认${defaults?.model ? "（" + esc(defaults.model) + "）" : ""}</option>${models.map(m => { const id = m.provider ? `${m.provider}/${m.id}` : m.id; return `<option value="${esc(id)}" ${id === curModel || m.id === sess.model ? "selected" : ""} ${m.available === false ? "disabled" : ""}>${esc(m.alias || m.name || m.id)}${m.provider ? " · " + esc(m.provider) : ""}</option>`; }).join("")}</select></label>
     ${mis ? `<div class="cx-mis" id="cxmis"><span>⚠ 现在的引擎是 ${esc(cxRtName(sess.agentRuntime))}，和 ${esc(curM?.name || curM?.id || "这个模型")} 不配套</span><button type="button" class="btn sm" data-rtauto>改回自动</button></div>` : ""}
-    <div class="faint cx-note">${cxIsAcp(sess.key) ? "这是 ACP 会话，模型和引擎由 ACP 那边管理。" : cxIsLocked(sess) ? "这个会话的模型被锁定了，这里只能调思考强度。" : "换模型时会自动配好引擎，不用自己选。"}</div>
+    <div class="faint cx-note">${cxIsLocked(sess) ? "这个会话的模型被锁定了，这里只能调思考强度。" : noRt ? "这是 ACP 会话，模型和引擎由 ACP 那边管理。" : "换模型时会自动配好引擎，不用自己选。"}</div>
     <label class="field"><span>思考强度</span><div class="seg" role="group">${thinks.map(t => `<button type="button" data-t="${esc(t)}" aria-pressed="${t === (sess.thinkingLevel || sess.thinkingDefault)}">${esc(thinkZh[t] || t)}</button>`).join("")}</div></label>
     <div style="display:flex;gap:10px;margin-top:20px"><button type="button" class="btn" data-close style="flex:1">取消</button><button class="btn primary" style="flex:2">保存</button></div></form>`, (el, close) => {
     let think = sess.thinkingLevel || sess.thinkingDefault;
     el.querySelectorAll("[data-t]").forEach(b => b.onclick = () => { think = b.dataset.t; el.querySelectorAll("[data-t]").forEach(x => x.setAttribute("aria-pressed", x === b)); });
     el.querySelector("[data-close]").onclick = () => close();
-    el.querySelector("[data-rtauto]")?.addEventListener("click", async e => { e.target.disabled = true; try { await api.patch(sess.key, { agentRuntime: null }); delete sess.agentRuntime; el.querySelector("#cxmis")?.remove(); toast("已改回自动 ✓"); } catch (x) { e.target.disabled = false; if (/lock/i.test(x?.message || "")) CX_LOCKED.add(sess.key); toast(cxPatchErr(x)); } });
+    el.querySelector("[data-rtauto]")?.addEventListener("click", async e => { e.target.disabled = true; try { await api.patch(sess.key, { agentRuntime: null }); delete sess.agentRuntime; el.querySelector("#cxmis")?.remove(); toast("已改回自动 ✓"); } catch (x) { e.target.disabled = false; if (/locked/i.test(x?.message || "")) CX_LOCKED.add(sess.key); toast(cxPatchErr(x)); } });
     el.querySelector("#tf").onsubmit = async e => {
       e.preventDefault(); const f = e.target, patch = {};
       if (f.model.value !== (curModel || "")) { patch.model = f.model.value || null; const nm = cxModel(models, f.model.value || defaults?.model); if (!noRt && !cxRtFits(sess.agentRuntime, nm)) patch.agentRuntime = null; }
       if (think && think !== sess.thinkingLevel) patch.thinkingLevel = think;
       if (!Object.keys(patch).length) return close();
-      try { await api.patch(sess.key, patch); toast(patch.agentRuntime === null ? "设置已保存，引擎也自动配好了 ✓" : "设置已保存 ✓"); close(true); route(); } catch (x) { if (/lock/i.test(x?.message || "")) CX_LOCKED.add(sess.key); toast(cxPatchErr(x)); }
+      try { await api.patch(sess.key, patch); toast(patch.agentRuntime === null ? "设置已保存，引擎也自动配好了 ✓" : "设置已保存 ✓"); close(true); route(); } catch (x) { if (/locked/i.test(x?.message || "")) CX_LOCKED.add(sess.key); toast(cxPatchErr(x)); }
     };
   });
 }
@@ -1130,7 +1135,7 @@ async function cxStale(reload) {
 }
 // 预览 → 确认 → 保存；成功后弹 ping 卡片
 async function cxPlanApply(ops, ctx, title) {
-  let plan; try { plan = await api.managePlan(ops, ctx.hash); } catch (x) { return cxMErr(x, ctx.reload); }
+  let plan; try { plan = await api.managePlan(ops); } catch (x) { return cxMErr(x, ctx.reload); }
   if (!plan?.planId) return cxBlocked("restart_required", plan); // 保险：没有 planId 绝不给保存按钮
   const all = plan.apply && CX_APPLY[plan.apply] ? `<div>整体：${pill(CX_APPLY[plan.apply][0], CX_APPLY[plan.apply][1])}</div>` : "";
   if (!await confirmDialog({ title: title || "确认这些改动？", body: `<div class="faint">改前 → 改后（保存前会自动备份）</div>${all}${cxDiffHtml(plan.diff, plan.reload?.paths)}`, ok: "确认保存" })) return;
@@ -1160,9 +1165,9 @@ function cxManage(host, models) {
         <button type="button" class="btn primary" data-saveorder ${JSON.stringify(order) === JSON.stringify(ov.fallbacks || []) ? "disabled" : ""}>保存顺序</button></div></div>
       ${prov.map(p => { const c = p.credential || {}, oauth = c.kind === "oauth" || c.editable === false;
         return `<div class="card cx-prov" data-prov="${esc(p.provider)}"><div class="cx-mmh"><b>${esc(p.provider)}</b><span class="faint mono">${esc(p.api || "")}</span></div>
-        <div class="cx-cred">${oauth ? `<span>登录方式：OAuth · ${c.present ? pill("已登录", "ok") : pill("未登录", "warn")}</span>${c.note ? `<div class="faint">${esc(c.note)}</div>` : ""}<button type="button" class="btn" data-login="${esc(p.provider)}">${c.present ? "重新登录" : "登录"}</button>`
+        <div class="cx-cred">${oauth ? `<span>登录方式：OAuth · ${c.present ? pill("已登录", "ok") : pill("未登录", "warn")}</span>${c.note ? `<div class="faint">${esc(c.note)}</div>` : ""}`
           : `<span>API Key：${c.present ? pill("已设置" + (p.keyHint || c.keyHint ? " " + esc(p.keyHint || c.keyHint) : ""), "ok") : pill("未设置", "warn")}</span>${c.target ? `<div class="faint mono">${esc(c.target)}</div>` : ""}<button type="button" class="btn" data-setkey="${esc(p.provider)}">更换 API Key</button>`}</div>
-        ${(p.profiles || []).length > 1 ? `<div class="cx-mmh"><b>账号顺序</b><span class="faint">同一供应商内</span></div><ol class="cx-fb">${p.profiles.map((id, i) => `<li class="cx-fbi"><span class="grow mono">${esc(id)}</span><button type="button" class="btn sm cx-ud" data-pup="${esc(p.provider)}" data-i="${i}" ${i ? "" : "disabled"} aria-label="上移">↑</button></li>`).join("")}</ol>` : ""}
+        ${CX_ORDER_UI && (p.profiles || []).length > 1 ? `<div class="cx-mmh"><b>账号顺序</b><span class="faint">同一供应商内</span></div><ol class="cx-fb">${p.profiles.map((id, i) => `<li class="cx-fbi"><span class="grow mono">${esc(id)}</span><button type="button" class="btn sm cx-ud" data-pup="${esc(p.provider)}" data-i="${i}" ${i ? "" : "disabled"} aria-label="上移">↑</button></li>`).join("")}</ol>` : ""}
         <div class="list">${(p.models || []).map(m => `<div class="row cx-mmrow"><div class="grow"><div class="t">${esc(m.alias || m.name || m.id)} ${m.isPrimary ? pill("默认", "ac") : m.fallbackIndex >= 0 ? pill("备用 " + (m.fallbackIndex + 1)) : ""}</div><div class="d mono">${esc(m.ref)}</div>
           ${m.problem === "missing_in_gateway" ? `<div class="cx-miss">⚠ 网关里没有这个模型 <button type="button" class="btn sm" data-fix="${esc(m.ref)}">一键修复</button></div>` : ""}</div>
           <div class="r">${m.isPrimary ? "" : `<button type="button" class="btn sm cx-ud" data-primary="${esc(m.ref)}">设为默认</button>`}</div></div>`).join("")}</div></div>`; }).join("")}
@@ -2889,7 +2894,7 @@ document.addEventListener("keydown", e => {
 
 // ---- 6 PWA ----
 if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) {
-  addEventListener("load", () => navigator.serviceWorker.register("/sw.js?v=2026.11.3.4").catch(() => {}));
+  addEventListener("load", () => navigator.serviceWorker.register("/sw.js?v=2026.11.3.6").catch(() => {}));
 }
 
 

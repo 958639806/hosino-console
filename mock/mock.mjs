@@ -8,8 +8,8 @@ const sess = [
   { key: "agent:main:qqbot:group:B4EE2A7019C96343C96EEBA8CB63D8C5", displayName: "qqbot:g-b4ee2a70", channel: "qqbot", chatType: "group", updatedAt: now - 7200e3, model: "grok-4", modelProvider: "xai", deliveryContext: { channel: "qqbot", to: "qqbot:group:B4EE2A7019C96343C96EEBA8CB63D8C5", accountId: "default" } },
   { key: "agent:main:qqbot:c2c:7FE244B1202CD602DDA2C06B29C62F50", displayName: "qqbot:c2c:7FE244B1202CD602DDA2C06B29C62F50", channel: "qqbot", chatType: "direct", updatedAt: now - 9000e3, model: "grok-4", modelProvider: "xai", deliveryContext: { channel: "qqbot", to: "qqbot:c2c:7FE244B1202CD602DDA2C06B29C62F50", accountId: "default" } },
   { key: "agent:main:qqbot:c2c:CODEXMISMATCH00000000000000000001", label: "引擎配错的会话", channel: "qqbot", chatType: "direct", updatedAt: now - 9500e3, model: "grok-4", modelProvider: "xai", agentRuntime: "codex", thinkingLevel: "low" },
-  { key: "agent:main:acp:demo", label: "ACP 会话", channel: "acp", chatType: "direct", updatedAt: now - 9600e3, model: "claude-sonnet", modelProvider: "anthropic", agentRuntime: "codex" },
-  { key: "agent:main:qqbot:c2c:LOCKEDMISMATCH0000000000000000001", label: "模型锁定的会话", channel: "qqbot", chatType: "direct", updatedAt: now - 9700e3, model: "grok-4", modelProvider: "xai", agentRuntime: "codex", modelLocked: true, thinkingLevel: "low" },
+  { key: "agent:main:acp:demo", label: "ACP 会话", channel: "acp", chatType: "direct", updatedAt: now - 9600e3, model: "claude-sonnet", modelProvider: "anthropic", agentRuntime: "codex", runtimeSelectionLocked: true, modelSelectionLocked: false },
+  { key: "agent:main:qqbot:c2c:LOCKEDMISMATCH0000000000000000001", label: "模型锁定的会话", channel: "qqbot", chatType: "direct", updatedAt: now - 9700e3, model: "grok-4", modelProvider: "xai", agentRuntime: "codex", runtimeSelectionLocked: true, modelSelectionLocked: true, thinkingLevel: "low" },
   { key: "agent:main:cron:daily", displayName: "每日晨报", channel: "cron", chatType: "direct", updatedAt: now - 86400e3 * 1.2, model: "grok-4", modelProvider: "xai" },
 ];
 const R = {
@@ -484,11 +484,11 @@ http.createServer(async (req, res) => {
       if (u.pathname === "/api/models/manage/__reset") { delete globalThis.__MM; return JX(200, { ok: true }); } // 仅 mock：测试开始前复位
       const MM = globalThis.__MM ||= { hash: 1, primary: "xai/grok-4", fallbacks: ["xai/grok-4-fast", "openai/gpt-5"], extra: [], plans: new Map(), pendingRestart: false, fixed: false };
       const ov = () => { const mk = (pv, id, o = {}) => ({ ref: pv + "/" + id, id, name: null, alias: null, inProvider: true, inAllowlist: true, inGateway: true, isPrimary: MM.primary === pv + "/" + id, fallbackIndex: MM.fallbacks.indexOf(pv + "/" + id), agentRuntime: null, problem: null, ...o });
-        return { baseHash: "h" + MM.hash, primary: MM.primary, fallbacks: MM.fallbacks, pendingRestart: MM.pendingRestart, apiTypes: ["openai-completions", "anthropic-messages"], providers: [
+        return { baseHash: "h" + MM.hash, primary: MM.primary, fallbacks: MM.fallbacks, apiTypes: ["openai-completions", "anthropic-messages"], providers: [
           { provider: "xai", configured: true, api: "openai-completions", credential: { kind: "oauth", editable: false, present: true, note: "xAI 用 OAuth 登录，不能改 key" }, models: [mk("xai", "grok-4"), mk("xai", "grok-4-fast")] },
           { provider: "openai", configured: true, api: "openai-responses", credential: { kind: "oauth", editable: false, present: false, note: "OpenAI 用 OAuth 登录" }, models: [mk("openai", "gpt-5", { agentRuntime: "codex" })] },
           { provider: "anthropic", configured: true, api: "anthropic-messages", credential: { kind: "oauth", editable: false, present: true, note: "Claude 用 OAuth 登录" }, models: [mk("anthropic", "claude-sonnet")] },
-          { provider: "deepseek", configured: true, api: "openai-completions", credential: { kind: "secret-store", editable: true, present: true, target: "DEEPSEEK_API_KEY" }, profiles: ["deepseek:main", "deepseek:backup"], models: [mk("deepseek", "deepseek-chat"), ...(MM.fixed ? [mk("deepseek", "deepseek-reasoner")] : [mk("deepseek", "deepseek-reasoner", { inGateway: false, problem: "missing_in_gateway", fix: { op: "addModel", provider: "deepseek", id: "deepseek-reasoner" } })]), ...MM.extra.map(id => mk("deepseek", id))] } ] }; };
+          { provider: "deepseek", configured: true, api: "openai-completions", credential: { kind: "secret-store", editable: true, present: true, target: "DEEPSEEK_API_KEY" }, models: [mk("deepseek", "deepseek-chat"), ...(MM.fixed ? [mk("deepseek", "deepseek-reasoner")] : [mk("deepseek", "deepseek-reasoner", { inGateway: false, problem: "missing_in_gateway", fix: { op: "addModel", provider: "deepseek", id: "deepseek-reasoner" } })]), ...MM.extra.map(id => mk("deepseek", id))] } ] }; };
       if (u.pathname === "/api/models/manage" && req.method === "GET") return JX(200, ov());
       if (u.pathname === "/api/models/manage/backups") return JX(200, { backups: [{ id: "bk_7", at: new Date(now - 3600e3).toISOString(), ops: ["setFallbacks"], paths: ["agents.defaults.model.fallbacks"] }] });
       const j = await rdBody(); console.log("MOCK manage", u.pathname, JSON.stringify({ ...j, apiKey: j.apiKey ? "***" : undefined }));
@@ -518,14 +518,12 @@ http.createServer(async (req, res) => {
         MM.fallbacks = ["xai/grok-4-fast"]; MM.hash++; return JX(200, { ok: true, restart: "none" }); }
       if (u.pathname === "/api/models/manage/credential") { if (j.dryRun) return JX(200, { method: "secrets.store.set", target: "DEEPSEEK_API_KEY" }); if (j.confirm !== true) return JX(400, { code: "confirm_required", error: "需要确认" });
         return JX(200, { ok: true, method: "secrets.store.set", keyHint: "…" + String(j.apiKey || "").slice(-4), reloaded: true, restart: "none", rollback: false, pingRefs: ["deepseek/deepseek-chat"] }); }
-      if (u.pathname === "/api/models/auth/login") return JX(200, { flow: "device", url: "https://example.invalid/device", userCode: "HOSI-NO42", pollId: "w1" });
-      if (u.pathname.startsWith("/api/models/auth/login/")) return JX(200, u.pathname.endsWith("/cancel") ? { ok: true } : { state: "pending" });
-      if (u.pathname === "/api/models/auth/order") return JX(200, { ok: true });
+      // 真实后端没有 /api/models/auth/login、/login/:id、/cancel、/auth/order：落到下面的 404
       return JX(404, { error: "没有", code: "not_found" });
     }
     if (u.pathname === "/api/patch") { let b = ""; for await (const c of req) b += c; const j = JSON.parse(b || "{}"); console.log("MOCK patch", JSON.stringify(j)); const x = sess.find(y => y.key === j.key);
-      if (/acp/.test(j.key || "")) { res.writeHead(400, { "content-type": "application/json" }); return res.end('{"error":"ACP session runtime is managed by the ACP backend","code":"INVALID_REQUEST"}'); }
-      if (process.env.MOCK_MODEL_LOCK === "1" && "model" in j) { res.writeHead(400, { "content-type": "application/json" }); return res.end('{"error":"model is locked for this session","code":"INVALID_REQUEST"}'); }
+      if (/acp/.test(j.key || "")) { res.writeHead(502, { "content-type": "application/json" }); return res.end('{"error":"ACP session runtime is managed by the ACP backend","code":"INVALID_REQUEST"}'); }
+      if (process.env.MOCK_MODEL_LOCK === "1" && "model" in j) { res.writeHead(502, { "content-type": "application/json" }); return res.end('{"error":"model is locked for this session","code":"INVALID_REQUEST"}'); }
       if (x) for (const k of ["model", "agentRuntime", "thinkingLevel", "pinned", "label"]) if (k in j) { if (k === "model" && j.model) { const [pv, id] = String(j.model).includes("/") ? j.model.split("/") : [x.modelProvider, j.model]; x.model = id; x.modelProvider = pv; } else if (j[k] === null) delete x[k]; else x[k] = j[k]; }
       res.writeHead(200, { "content-type": "application/json" }); return res.end('{"ok":true}'); }
     if (u.pathname === "/api/qq/send") { let b = ""; for await (const c of req) b += c; const j = JSON.parse(b || "{}"); console.log("MOCK qq.send", j.sessionKey, j.confirm, (j.text || "").length); if ((j.attachments || []).length) { res.writeHead(400, { "content-type": "application/json" }); return res.end('{"error":"QQ 直发不支持附件","code":"attachments_unsupported"}'); } if (j.confirm !== true) { res.writeHead(400); return res.end('{"error":"需要 confirm:true 确认"}'); } }

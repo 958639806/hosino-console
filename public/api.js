@@ -181,7 +181,7 @@ export const api = {
   },
   // 模型管理（model-manage/API.md + console-5feat/API-PROPOSAL.md）：plan → 确认 → apply（confirm:true + planId）
   manage: () => get("/api/models/manage"),
-  managePlan: (ops, baseHash) => post("/api/models/manage/plan", { ops, baseHash }),
+  managePlan: ops => post("/api/models/manage/plan", { ops }),
   manageBackups: () => get("/api/models/manage/backups"),
   manageRollback: (backupId, opts) => post("/api/models/manage/rollback", { backupId, ...opts }),
   manageApply: (planId, baseHash) => post("/api/models/manage/apply", { planId, baseHash, confirm: true }),

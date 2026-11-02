@@ -1,5 +1,5 @@
-import { api, setUnauthedHandler, notReady, mediaOf } from "./api.js?v=2026.11.2-round2";
-import { md } from "./md.js?v=2026.11.2-round2";
+import { api, setUnauthedHandler, notReady, mediaOf } from "./api.js?v=2026.11.3";
+import { md } from "./md.js?v=2026.11.3";
 
 // ---------- 小工具 ----------
 const $ = (s, el = document) => el.querySelector(s);
@@ -2468,7 +2468,7 @@ document.addEventListener("keydown", e => {
 
 // ---- 6 PWA ----
 if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) {
-  addEventListener("load", () => navigator.serviceWorker.register("/sw.js?v=2026.11.2-round2").catch(() => {}));
+  addEventListener("load", () => navigator.serviceWorker.register("/sw.js?v=2026.11.3").catch(() => {}));
 }
 
 

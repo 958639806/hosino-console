@@ -1,6 +1,6 @@
 {
   "name": "hosino-console",
-  "version": "2026.11.2",
+  "version": "2026.11.3",
   "private": true,
   "description": "Hosino OpenClaw QQ bot web console",
   "engines": {"node": ">=22"},

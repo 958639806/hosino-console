@@ -2,7 +2,7 @@
 
 OpenClaw QQ bot 星野のねこ web console (backend server.mjs, frontend public/), gate/core patches (patches, staging, toolfp) and design docs (docs/).
 
-当前版本：**2026.11.2**。逐项修复和兼容性说明见 [CHANGELOG.md](CHANGELOG.md)。
+当前版本：**2026.11.3**。逐项修复和兼容性说明见 [CHANGELOG.md](CHANGELOG.md)。
 
 ## 本地开发
 
@@ -32,7 +32,7 @@ npm test
 
 也可分别运行 `npm run test:backend` 和 `npm run test:frontend`。浏览器测试可通过 `CHROMIUM_PATH` 指定已安装的 Chromium。测试使用临时目录、本地假服务和临时端口，不依赖生产凭据。
 
-本版实际结果和验收范围见 [验证记录](docs/validation-v2026.11.2.md)。
+本版实际结果和验收范围见 [第二轮修复与验证](docs/round2-fixes-and-validation.md)。旧版记录保留在 [v2026.11.2 验证记录](docs/validation-v2026.11.2.md)。
 
 历史 `staging/` 是补丁和旧版测试资料，不能作为当前版本完整验收入口。CI 运行当前回归测试和当前后端语音参数检查。
 

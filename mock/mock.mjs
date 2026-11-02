@@ -7,6 +7,9 @@ const sess = [
   { key: "agent:main:main", displayName: "agent:main:main", channel: "qqbot", chatType: "direct", updatedAt: now - 3600e3, model: "claude-sonnet", modelProvider: "anthropic", agentRuntime: "pi", thinkingLevel: "low", isMain: true, deliveryContext: { channel: "qqbot", to: "qqbot:c2c:4330BBC5A1E2F3D4C5B6A7980112233A", accountId: "default" } },
   { key: "agent:main:qqbot:group:B4EE2A7019C96343C96EEBA8CB63D8C5", displayName: "qqbot:g-b4ee2a70", channel: "qqbot", chatType: "group", updatedAt: now - 7200e3, model: "grok-4", modelProvider: "xai", deliveryContext: { channel: "qqbot", to: "qqbot:group:B4EE2A7019C96343C96EEBA8CB63D8C5", accountId: "default" } },
   { key: "agent:main:qqbot:c2c:7FE244B1202CD602DDA2C06B29C62F50", displayName: "qqbot:c2c:7FE244B1202CD602DDA2C06B29C62F50", channel: "qqbot", chatType: "direct", updatedAt: now - 9000e3, model: "grok-4", modelProvider: "xai", deliveryContext: { channel: "qqbot", to: "qqbot:c2c:7FE244B1202CD602DDA2C06B29C62F50", accountId: "default" } },
+  { key: "agent:main:qqbot:c2c:CODEXMISMATCH00000000000000000001", label: "引擎配错的会话", channel: "qqbot", chatType: "direct", updatedAt: now - 9500e3, model: "grok-4", modelProvider: "xai", agentRuntime: "codex", thinkingLevel: "low" },
+  { key: "agent:main:acp:demo", label: "ACP 会话", channel: "acp", chatType: "direct", updatedAt: now - 9600e3, model: "claude-sonnet", modelProvider: "anthropic", agentRuntime: "codex" },
+  { key: "agent:main:qqbot:c2c:LOCKEDMISMATCH0000000000000000001", label: "模型锁定的会话", channel: "qqbot", chatType: "direct", updatedAt: now - 9700e3, model: "grok-4", modelProvider: "xai", agentRuntime: "codex", modelLocked: true, thinkingLevel: "low" },
   { key: "agent:main:cron:daily", displayName: "每日晨报", channel: "cron", chatType: "direct", updatedAt: now - 86400e3 * 1.2, model: "grok-4", modelProvider: "xai" },
 ];
 const R = {
@@ -25,6 +28,7 @@ const R = {
     { id: "grok-4", name: "Grok 4", provider: "xai", contextWindow: 256000, reasoning: true, available: true, runtime: "pi" },
     { id: "grok-4-fast", name: "Grok 4 Fast", provider: "xai", contextWindow: 2000000, available: true, runtime: "pi" },
     { id: "claude-sonnet", name: "Claude Sonnet", provider: "anthropic", contextWindow: 200000, reasoning: true, available: true, runtime: "pi" },
+    { id: "gpt-5", name: "GPT-5", provider: "openai", contextWindow: 400000, reasoning: true, available: true, runtime: "codex" },
     { id: "local-qwen", name: "Qwen 本地", provider: "ollama", contextWindow: 32768, available: false } ] },
   "/api/usage": { updatedAt: now, providers: [
     { provider: "deepseek", displayName: "DeepSeek", windows: [], billing: [{ type: "balance", amount: 33.72, unit: "CNY" }], summary: "Balance ¥33.72 · Granted ¥14.93 · Topped up ¥18.78" },
@@ -63,7 +67,7 @@ Object.assign(R, {
   "/api/agent-files/set": { ok: true, backup: "/opt/hosino-console/backups/main__SOUL.md__20261020T151800.md" },
   "/api/sessions/create": { ok: true, key: "agent:main:main", sessionId: "s-new" },
 });
-R["/api/features"] = { qqSend: true, mediaProxy: true, mediaRemoteHosts: ["qqbot.ugcimg.cn"] };
+R["/api/features"] = { qqSend: true, chatRecall: process.env.MOCK_NO_RECALL ? false : true, chatRegenerate: true, mediaProxy: true, mediaRemoteHosts: ["qqbot.ugcimg.cn"] };
 R["/api/qq/send"] = { runId: "mock-run", messageId: "ROBOT1.0_mock", channel: "qqbot" };
 const ALIASES = { "4330bbc5a1e2f3d4c5b6a7980112233a": "凛", "249bdb7019c96343c96eeba8cb63d8c5": "春", "7fe244b1202cd602dda2c06b29c62f50": "离" };
 const idOf = k => (/([0-9a-f]{32})$/i.exec(k) || [])[1]?.toLowerCase();
@@ -431,6 +435,7 @@ http.createServer(async (req, res) => {
       });
       const longArgs = JSON.stringify({ command: "rg -n 'TODO|待办' /home/ubuntu/notes/" + "x".repeat(60) + " | sort | uniq -c", cwd: "/home/ubuntu", timeoutMs: 30000 });
       const extra = [
+        { id: "ann1", role: "user", turnId: "t89", idempotencyKey: "announce:v1:mock", content: "<<<BEGIN_OPENCLAW_INTERNAL_CONTEXT>>>\n子任务完成：已整理待办。\npath=/home/ubuntu/notes/todo.md\napi_key=sk-mockmockmockmock1234\n<<<END_OPENCLAW_INTERNAL_CONTEXT>>>", ts: now - 210e3 },
         { id: "x1", role: "user", turnId: "t90", content: "猫猫，群里那个广告别理它", ts: now - 200e3, sender: "7FE244B1202CD602DDA2C06B29C62F50" },
         { id: "x2", role: "assistant", turnId: "t90", content: [], ts: now - 198e3, model: "grok-4", delivery: null, tools: [{ id: "call_r", name: "read", args: { text: '{"path":"MEMORY.md"}', truncated: false, length: 20 }, result: { text: "# 记忆\n- 群规：不回广告", truncated: false, length: 14 }, isError: false, status: "ok", durationMs: 42 }] },
         { id: "x3", role: "assistant", turnId: "t90", content: [{ type: "text", text: "好的，这条广告我就不回复啦，已经记下来了～" }], ts: now - 195e3, model: "grok-4", delivery: "silent", deliveryReason: "stay_silent", deliveryConfidence: "high", tools: [
@@ -458,6 +463,71 @@ http.createServer(async (req, res) => {
     if (u.pathname === "/api/sessions") { const q = (u.searchParams.get("q") || "").toLowerCase(); const list = R["/api/sessions"].sessions.map(decorate).filter(x => !q || [x.alias, x.displayName, x.label, x.key].some(v => String(v || "").toLowerCase().includes(q))); res.writeHead(200, { "content-type": "application/json; charset=utf-8" }); return res.end(JSON.stringify({ ...R["/api/sessions"], sessions: list })); }
     if (u.pathname === "/api/aliases/set") { let b = ""; for await (const c of req) b += c; const j = JSON.parse(b || "{}"); if (j.alias) ALIASES[j.key] = j.alias.slice(0, 40); else delete ALIASES[j.key]; res.writeHead(200, { "content-type": "application/json" }); return res.end(JSON.stringify({ ok: true, key: j.key, alias: j.alias || null })); }
     if (u.pathname === "/api/aliases") { res.writeHead(200, { "content-type": "application/json; charset=utf-8" }); return res.end(JSON.stringify({ aliases: ALIASES })); }
+    // chat-actions v1 mock（不碰 QQ）：assistant 消息 self 可撤 87 秒/2 段；用户消息 admin 可撤 50 秒；m0 已过期
+    const rdBody = async () => { let b = ""; for await (const c of req) b += c; try { return JSON.parse(b || "{}"); } catch { return {}; } };
+    const JX = (code, o) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(o)); };
+    if (u.pathname === "/api/chat/recallable") { const id = u.searchParams.get("id") || ""; console.log("MOCK recallable", id);
+      if (id === "m0") return JX(200, { ok: true, self: { available: false, secondsLeft: 0, reason: "window_expired" }, admin: { available: false, secondsLeft: 0, reason: "window_expired" } });
+      const n = +id.slice(1), rr = id.startsWith("x") ? ({ x1: "user", x2: "assistant", x3: "assistant", x4: "assistant" })[id] : R["/api/history"].messages.filter(m => m.role !== "toolResult")[n]?.role; return JX(200, rr === "assistant" ? { ok: true, self: { available: true, parts: 2, secondsLeft: 87, reason: null }, admin: { available: false, secondsLeft: 0, reason: "wrong_role" } } : { ok: true, self: { available: false, secondsLeft: 0, reason: "wrong_role" }, admin: { available: true, secondsLeft: 50, reason: null } }); }
+    if (u.pathname === "/api/chat/recall" && req.method === "POST") { const j = await rdBody(); console.log("MOCK recall", JSON.stringify(j)); if (j.confirm !== true) return JX(400, { error: "需要确认", code: "confirm_required" }); return JX(200, { ok: true, mode: j.mode, recalled: j.mode === "self" ? 2 : 1, failed: 0, parts: [{ ok: true }] }); }
+    if (u.pathname === "/api/chat/regenerate" && req.method === "POST") { const j = await rdBody(); console.log("MOCK regenerate", JSON.stringify(j)); if (j.confirm !== true) return JX(400, { error: "需要确认", code: "confirm_required" }); return JX(200, { ok: true, runId: "run-mock", deliver: !!j.deliver, rewoundTo: "m0" }); }
+    // model ping mock：grok-4 快速通；grok-4-fast 上游名不同；claude-sonnet 报错；gpt-5（codex）慢 50 秒（MOCK_PING_SLOW_MS 可改）
+    if (u.pathname === "/api/models/ping" && req.method === "POST") { const j = await rdBody(); console.log("MOCK ping", j.modelRef); const [pv, ...r] = String(j.modelRef || "").split("/"); const id = r.join("/");
+      const base = { modelRef: j.modelRef, requestedModel: id, provider: pv, harness: "openclaw", runtime: "openclaw", mode: "raw", timeoutMs: 20000, at: new Date().toISOString(), stopReason: "stop", usage: { input: 42, output: 1, total: 43 }, effectiveModel: j.modelRef, fallbackUsed: false, error: null };
+      if (id === "grok-4") return JX(200, { ...base, ok: true, status: "ok", latencyMs: 1315, modelLatencyMs: 900, replyPreview: "ok", upstreamModel: "grok-4", modelMismatch: false });
+      if (id === "grok-4-fast") return JX(200, { ...base, ok: true, status: "ok", latencyMs: 1615, modelLatencyMs: 1160, replyPreview: "ok 👋", upstreamModel: "grok-4-fast-build-0917", modelMismatch: true });
+      if (id === "claude-sonnet") return JX(200, { ...base, ok: false, status: "error", latencyMs: 820, modelLatencyMs: null, replyPreview: null, upstreamModel: null, modelMismatch: false, usage: null, stage: "run", error: "上游返回 401：API key 无效或已过期" });
+      if (id === "gpt-5") { const ms = +(process.env.MOCK_PING_SLOW_MS || 50000); await new Promise(r => setTimeout(r, ms)); return JX(200, { ...base, runtime: "codex", harness: "codex", mode: "runtime", timeoutMs: 60000, ok: true, status: "ok", latencyMs: ms, modelLatencyMs: ms - 400, replyPreview: "pong", upstreamModel: "gpt-5", modelMismatch: false }); }
+      return JX(400, { error: "不是网关已配置的模型", code: "unknown_model" }); }
+    // 模型管理 mock（model-manage/API.md + API-PROPOSAL.md）：plan/apply + baseHash；setPrimary anthropic/* 判为 restart → 409 restart_required
+    if (u.pathname.startsWith("/api/models/manage") || u.pathname.startsWith("/api/models/auth/")) {
+      if (u.pathname === "/api/models/manage/__reset") { delete globalThis.__MM; return JX(200, { ok: true }); } // 仅 mock：测试开始前复位
+      const MM = globalThis.__MM ||= { hash: 1, primary: "xai/grok-4", fallbacks: ["xai/grok-4-fast", "openai/gpt-5"], extra: [], plans: new Map(), pendingRestart: false, fixed: false };
+      const ov = () => { const mk = (pv, id, o = {}) => ({ ref: pv + "/" + id, id, name: null, alias: null, inProvider: true, inAllowlist: true, inGateway: true, isPrimary: MM.primary === pv + "/" + id, fallbackIndex: MM.fallbacks.indexOf(pv + "/" + id), agentRuntime: null, problem: null, ...o });
+        return { baseHash: "h" + MM.hash, primary: MM.primary, fallbacks: MM.fallbacks, pendingRestart: MM.pendingRestart, apiTypes: ["openai-completions", "anthropic-messages"], providers: [
+          { provider: "xai", configured: true, api: "openai-completions", credential: { kind: "oauth", editable: false, present: true, note: "xAI 用 OAuth 登录，不能改 key" }, models: [mk("xai", "grok-4"), mk("xai", "grok-4-fast")] },
+          { provider: "openai", configured: true, api: "openai-responses", credential: { kind: "oauth", editable: false, present: false, note: "OpenAI 用 OAuth 登录" }, models: [mk("openai", "gpt-5", { agentRuntime: "codex" })] },
+          { provider: "anthropic", configured: true, api: "anthropic-messages", credential: { kind: "oauth", editable: false, present: true, note: "Claude 用 OAuth 登录" }, models: [mk("anthropic", "claude-sonnet")] },
+          { provider: "deepseek", configured: true, api: "openai-completions", credential: { kind: "secret-store", editable: true, present: true, target: "DEEPSEEK_API_KEY" }, profiles: ["deepseek:main", "deepseek:backup"], models: [mk("deepseek", "deepseek-chat"), ...(MM.fixed ? [mk("deepseek", "deepseek-reasoner")] : [mk("deepseek", "deepseek-reasoner", { inGateway: false, problem: "missing_in_gateway", fix: { op: "addModel", provider: "deepseek", id: "deepseek-reasoner" } })]), ...MM.extra.map(id => mk("deepseek", id))] } ] }; };
+      if (u.pathname === "/api/models/manage" && req.method === "GET") return JX(200, ov());
+      if (u.pathname === "/api/models/manage/backups") return JX(200, { backups: [{ id: "bk_7", at: new Date(now - 3600e3).toISOString(), ops: ["setFallbacks"], paths: ["agents.defaults.model.fallbacks"] }] });
+      const j = await rdBody(); console.log("MOCK manage", u.pathname, JSON.stringify({ ...j, apiKey: j.apiKey ? "***" : undefined }));
+      if (u.pathname === "/api/models/manage/plan") {
+        if (j.baseHash && j.baseHash !== "h" + MM.hash) return JX(409, { error: "配置已变化", code: "stale" });
+        const diff = []; let restart = "none";
+        for (const op of j.ops || []) {
+          if (op.op === "setFallbacks") diff.push({ path: "agents.defaults.model.fallbacks", before: MM.fallbacks, after: op.refs, apply: "immediate" });
+          else if (op.op === "setPrimary") { const rs = op.ref.startsWith("anthropic/"); if (rs) restart = "restart"; diff.push({ path: "agents.defaults.model.primary", before: MM.primary, after: op.ref, apply: rs ? "restart" : "reload" }); }
+          else if (op.op === "updateProvider") return JX(409, { error: "不在白名单", code: "not_whitelisted", blockedPaths: ["gateway.port"], reload: { paths: [{ path: "gateway.port", kind: "restart", label: "restart" }] }, diff: [{ path: "gateway.port", before: 18789, after: 18790 }] });
+          else if (op.op === "addModel") diff.push({ path: `models.providers.${op.provider}.models`, before: [{ id: "deepseek-chat" }], after: [{ id: "deepseek-chat" }, { id: op.id, name: op.name || null }], apply: "reload" });
+          else return JX(400, { error: "不支持", code: "bad_op" }); }
+        const lab = a => a === "restart" ? { kind: "restart", label: "restart" } : a === "reload" ? { kind: "hot", label: "reload" } : { kind: "none", label: "immediate" };
+        const reload = { paths: diff.map(d => ({ path: d.path, ...lab(d.apply), local: d.apply, live: d.apply })) };
+        if (restart === "restart") return JX(409, { error: "需要重启", code: "restart_required", reload, blockedPaths: diff.filter(d => d.apply === "restart").map(d => d.path), diff });
+        const planId = "mp_" + Math.random().toString(36).slice(2, 8); MM.plans.set(planId, { ops: j.ops, hash: MM.hash });
+        return JX(200, { ok: true, dryRun: true, planId, baseHash: "h" + MM.hash, expiresInSec: 600, restart: "none", apply: diff.some(d => d.apply === "reload") ? "reload" : "immediate", reload, diff, pingRefs: (j.ops || []).map(o => o.ref || (o.provider ? o.provider + "/" + o.id : null)).filter(Boolean) }); }
+      if (u.pathname === "/api/models/manage/apply") { const pl = MM.plans.get(j.planId); if (!pl) return JX(410, { error: "预览过期", code: "plan_expired" }); MM.plans.delete(j.planId);
+        if (j.confirm !== true) return JX(400, { error: "需要确认", code: "confirm_required" });
+        if (pl.hash !== MM.hash) return JX(409, { error: "配置已变化", code: "stale" });
+        for (const op of pl.ops) { if (op.op === "setFallbacks") MM.fallbacks = op.refs; if (op.op === "setPrimary") { MM.primary = op.ref; MM.fallbacks = MM.fallbacks.filter(r => r !== op.ref); } if (op.op === "addModel") { if (op.id === "deepseek-reasoner") MM.fixed = true; else MM.extra.push(op.id); } }
+        MM.hash++; return JX(200, { ok: true, backupId: "bk_" + MM.hash, diff: [], restart: "none", pingRefs: pl.ops.map(o => o.ref || (o.provider ? o.provider + "/" + o.id : null)).filter(Boolean) }); }
+      if (u.pathname === "/api/models/manage/rollback") { const conflicts = [{ path: "agents.defaults.model.fallbacks", current: MM.fallbacks, backup: ["xai/grok-4-fast"] }];
+        if (j.dryRun) return JX(200, { ok: true, dryRun: true, diff: [{ path: "agents.defaults.model.fallbacks", before: MM.fallbacks, after: ["xai/grok-4-fast"] }], reload: { paths: [{ path: "agents.defaults.model.fallbacks", kind: "none", label: "immediate" }] }, conflicts });
+        if (j.confirm !== true) return JX(400, { code: "confirm_required", error: "需要确认" });
+        if (!j.force) return JX(409, { error: "有冲突", code: "conflict", conflicts });
+        MM.fallbacks = ["xai/grok-4-fast"]; MM.hash++; return JX(200, { ok: true, restart: "none" }); }
+      if (u.pathname === "/api/models/manage/credential") { if (j.dryRun) return JX(200, { method: "secrets.store.set", target: "DEEPSEEK_API_KEY" }); if (j.confirm !== true) return JX(400, { code: "confirm_required", error: "需要确认" });
+        return JX(200, { ok: true, method: "secrets.store.set", keyHint: "…" + String(j.apiKey || "").slice(-4), reloaded: true, restart: "none", rollback: false, pingRefs: ["deepseek/deepseek-chat"] }); }
+      if (u.pathname === "/api/models/auth/login") return JX(200, { flow: "device", url: "https://example.invalid/device", userCode: "HOSI-NO42", pollId: "w1" });
+      if (u.pathname.startsWith("/api/models/auth/login/")) return JX(200, u.pathname.endsWith("/cancel") ? { ok: true } : { state: "pending" });
+      if (u.pathname === "/api/models/auth/order") return JX(200, { ok: true });
+      return JX(404, { error: "没有", code: "not_found" });
+    }
+    if (u.pathname === "/api/patch") { let b = ""; for await (const c of req) b += c; const j = JSON.parse(b || "{}"); console.log("MOCK patch", JSON.stringify(j)); const x = sess.find(y => y.key === j.key);
+      if (/acp/.test(j.key || "")) { res.writeHead(400, { "content-type": "application/json" }); return res.end('{"error":"ACP session runtime is managed by the ACP backend","code":"INVALID_REQUEST"}'); }
+      if (process.env.MOCK_MODEL_LOCK === "1" && "model" in j) { res.writeHead(400, { "content-type": "application/json" }); return res.end('{"error":"model is locked for this session","code":"INVALID_REQUEST"}'); }
+      if (x) for (const k of ["model", "agentRuntime", "thinkingLevel", "pinned", "label"]) if (k in j) { if (k === "model" && j.model) { const [pv, id] = String(j.model).includes("/") ? j.model.split("/") : [x.modelProvider, j.model]; x.model = id; x.modelProvider = pv; } else if (j[k] === null) delete x[k]; else x[k] = j[k]; }
+      res.writeHead(200, { "content-type": "application/json" }); return res.end('{"ok":true}'); }
     if (u.pathname === "/api/qq/send") { let b = ""; for await (const c of req) b += c; const j = JSON.parse(b || "{}"); console.log("MOCK qq.send", j.sessionKey, j.confirm, (j.text || "").length); if ((j.attachments || []).length) { res.writeHead(400, { "content-type": "application/json" }); return res.end('{"error":"QQ 直发不支持附件","code":"attachments_unsupported"}'); } if (j.confirm !== true) { res.writeHead(400); return res.end('{"error":"需要 confirm:true 确认"}'); } }
     if (MISSING.has(u.pathname)) { res.writeHead(404, { "content-type": "application/json; charset=utf-8" }); return res.end('{"error":"接口不存在"}'); }
     if (ERR502[u.pathname]) { res.writeHead(502, { "content-type": "application/json; charset=utf-8" }); return res.end(JSON.stringify(ERR502[u.pathname])); }

@@ -3,9 +3,12 @@
 const CSRF = { "X-HS": "1" };
 export class ApiError extends Error { constructor(msg, status, code) { super(msg); this.status = status; this.code = code; } }
 let onUnauthed = () => {};
+let authEpoch = 0;
+const notifyUnauthed = epoch => { if (epoch === authEpoch) onUnauthed(); };
 export const setUnauthedHandler = fn => { onUnauthed = fn; };
 
 async function req(method, path, body) {
+  const epoch = authEpoch;
   let r;
   try {
     r = await fetch(path, {
@@ -15,8 +18,9 @@ async function req(method, path, body) {
     });
   } catch { throw new ApiError("网络好像断开了，稍后再试试", 0); }
   let data = null; try { data = await r.json(); } catch {}
-  if (r.status === 401 && path !== "/api/login") onUnauthed();
+  if (r.status === 401 && path !== "/api/login") notifyUnauthed(epoch);
   if (!r.ok) throw new ApiError(data?.error || `请求失败（${r.status}）`, r.status, data?.code);
+  if (path === "/api/login" || path === "/api/logout") ++authEpoch;
   return data;
 }
 const get = (p, q) => req("GET", p + (q ? "?" + new URLSearchParams(Object.entries(q).filter(([, v]) => v != null && v !== "")) : ""));
@@ -45,9 +49,10 @@ export const api = {
   vvRegen: confirm => post("/api/fun/voices/regen-manual", confirm ? { confirm: true } : {}),
   // 试听（每次真合成都花 Fish 额度）：只在用户点击时调用；fetch 拿 blob，失败读 JSON 中文提示（429 rate_session/hour/day）
   vvPreviewBlob: async (id, text) => {
+    const epoch = authEpoch;
     const url = "/api/fun/voices/preview?" + new URLSearchParams(text ? { id, text } : { id });
     let r; try { r = await fetch(url, { credentials: "include", cache: "no-store", headers: { ...CSRF } }); } catch { throw new ApiError("网络好像断开了，稍后再试试", 0); }
-    if (r.status === 401) onUnauthed();
+    if (r.status === 401) notifyUnauthed(epoch);
     if (!r.ok) { let d = null; try { d = await r.json(); } catch {} throw new ApiError(d?.error || `试听失败（${r.status}）`, r.status, d?.code); }
     return r.blob();
   },
@@ -64,12 +69,13 @@ export const api = {
   uploadLimits: () => get("/api/uploads/limits"),
   uploadDelete: id => req("DELETE", `/api/uploads/${encodeURIComponent(id)}`),
   upload: (blob, { scope, session, name }, onProgress) => {
+    const epoch = authEpoch;
     const x = new XMLHttpRequest();
     const promise = new Promise((resolve, reject) => {
       x.open("POST", `/api/uploads?${new URLSearchParams({ scope, session, name })}`);
       x.withCredentials = true; x.setRequestHeader("X-HS", "1"); x.setRequestHeader("Content-Type", "application/octet-stream");
       x.upload.onprogress = e => e.lengthComputable && onProgress?.(e.loaded / e.total);
-      x.onload = () => { let d = null; try { d = JSON.parse(x.responseText); } catch {} if (x.status === 401) onUnauthed(); x.status >= 200 && x.status < 300 ? resolve(d) : reject(new ApiError(d?.error || `上传失败（${x.status}）`, x.status, d?.code)); };
+      x.onload = () => { let d = null; try { d = JSON.parse(x.responseText); } catch {} if (x.status === 401) notifyUnauthed(epoch); x.status >= 200 && x.status < 300 ? resolve(d) : reject(new ApiError(d?.error || `上传失败（${x.status}）`, x.status, d?.code)); };
       x.onerror = () => reject(new ApiError("网络好像断开了，稍后再试试", 0));
       x.onabort = () => reject(new ApiError("已取消", -1, "aborted"));
       x.send(blob);
@@ -77,10 +83,11 @@ export const api = {
     return { promise, abort: () => x.abort() };
   },
   cliRun: async (id, prompt, onEvent, signal, attachments) => {
+    const epoch = authEpoch;
     let r;
     try { r = await fetch(`/api/cli/sessions/${encodeURIComponent(id)}/run`, { method: "POST", credentials: "include", cache: "no-store", signal, headers: { ...CSRF, "Content-Type": "application/json", Accept: "text/event-stream" }, body: JSON.stringify({ prompt, ...(attachments?.length ? { attachments } : {}) }) }); }
     catch (e) { if (e.name === "AbortError") return; throw new ApiError("网络好像断开了，稍后再试试", 0); }
-    if (!r.ok || !/event-stream/.test(r.headers.get("content-type") || "")) { let d = null; try { d = await r.json(); } catch {} if (r.status === 401) onUnauthed(); throw new ApiError(d?.error || `请求失败（${r.status}）`, r.status, d?.code); }
+    if (!r.ok || !/event-stream/.test(r.headers.get("content-type") || "")) { let d = null; try { d = await r.json(); } catch {} if (r.status === 401) notifyUnauthed(epoch); throw new ApiError(d?.error || `请求失败（${r.status}）`, r.status, d?.code); }
     const rd = r.body.getReader(), dec = new TextDecoder(); let buf = "";
     const flush = blk => { let ev = "message", data = ""; for (const ln of blk.split("\n")) { if (!ln || ln.startsWith(":")) continue; const i = ln.indexOf(":"), k = i < 0 ? ln : ln.slice(0, i), v = i < 0 ? "" : ln.slice(i + 1).replace(/^ /, ""); if (k === "event") ev = v; else if (k === "data") data += (data ? "\n" : "") + v; } if (!data && ev === "message") return; let j = data; try { j = JSON.parse(data); } catch {} onEvent(ev, j); };
     try { for (;;) { const { value, done } = await rd.read(); if (done) break; buf += dec.decode(value, { stream: true }).replace(/\r\n/g, "\n"); let i; while ((i = buf.indexOf("\n\n")) >= 0) { flush(buf.slice(0, i)); buf = buf.slice(i + 2); } } if (buf.trim()) flush(buf); }
@@ -189,11 +196,12 @@ export const api = {
   stickerGenStatus: id => get("/api/stickers/generate/status", { id }),
   // 导入：原始字节，XHR 以便拿上传进度；onProgress(0..1)
   stickerImport: (blob, category, onProgress) => new Promise((resolve, reject) => {
+    const epoch = authEpoch;
     const x = new XMLHttpRequest();
     x.open("POST", `/api/stickers/import?category=${encodeURIComponent(category)}&confirm=1`);
     x.withCredentials = true; x.setRequestHeader("X-HS", "1"); x.setRequestHeader("Content-Type", "application/octet-stream");
     x.upload.onprogress = e => e.lengthComputable && onProgress?.(e.loaded / e.total);
-    x.onload = () => { let d = null; try { d = JSON.parse(x.responseText); } catch {} if (x.status === 401) onUnauthed(); x.status >= 200 && x.status < 300 ? resolve(d) : reject(new ApiError(d?.error || `请求失败（${x.status}）`, x.status, d?.code)); };
+    x.onload = () => { let d = null; try { d = JSON.parse(x.responseText); } catch {} if (x.status === 401) notifyUnauthed(epoch); x.status >= 200 && x.status < 300 ? resolve(d) : reject(new ApiError(d?.error || `请求失败（${x.status}）`, x.status, d?.code)); };
     x.onerror = () => reject(new ApiError("网络好像断开了，稍后再试试", 0));
     x.send(blob);
   }),

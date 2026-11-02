@@ -1,5 +1,5 @@
-import { api, setUnauthedHandler, notReady, mediaOf } from "./api.js?v=2026.11.2";
-import { md } from "./md.js?v=2026.11.2";
+import { api, setUnauthedHandler, notReady, mediaOf } from "./api.js?v=2026.11.2-round2";
+import { md } from "./md.js?v=2026.11.2-round2";
 
 // ---------- 小工具 ----------
 const $ = (s, el = document) => el.querySelector(s);
@@ -119,11 +119,14 @@ function toggleTheme() { const n = isDark() ? "light" : "dark"; document.documen
 // ---------- 外壳 ----------
 const app = $("#app");
 let current = null, timers = [], routeGeneration = 0;
-const clearTimers = () => { timers.forEach(clearInterval); timers = []; };
+const timerSpecs = new Map();
+const stopViewInterval = id => { clearInterval(id); timerSpecs.delete(id); };
+const clearTimers = () => { timers.forEach(stopViewInterval); timers = []; };
 // A delayed view must not start polling after navigation has detached its owner.
 function viewInterval(owner, fn, ms) {
   if (!owner.isConnected) return null;
-  const id = setInterval(() => { if (!owner.isConnected) return clearInterval(id); fn(); }, ms);
+  const id = setInterval(() => { if (!owner.isConnected) return stopViewInterval(id); fn(); }, ms);
+  timerSpecs.set(id, { owner, fn, ms });
   timers.push(id); return id;
 }
 function replaceView() {
@@ -152,11 +155,27 @@ function renderChrome() {
 }
 function top(title, sub, extra = "") { const back = current && current !== "more" && !TABS.includes(current) ? `<a class="iconbtn back" href="#/more" aria-label="返回更多">${ic("back")}</a>` : ""; return `<header class="top">${back}<h1>${esc(title)}${sub ? `<span class="sub">${esc(sub)}</span>` : ""}</h1>${extra}<button class="iconbtn" data-act="search" aria-label="全局搜索">${ic("search")}</button><button class="iconbtn" data-act="theme" aria-label="切换深浅色">${ic(isDark() ? "sun" : "moon")}</button></header>`; }
 
+const inertBeforeSheets = new Map();
+const topSheet = () => [...document.querySelectorAll("[data-v3sheet], .lightbox")].at(-1);
+function syncSheetInert() {
+  const top = topSheet();
+  if (!top) { for (const [node, inert] of inertBeforeSheets) node.inert = inert; inertBeforeSheets.clear(); return; }
+  for (const node of document.body.children) {
+    if (!inertBeforeSheets.has(node)) inertBeforeSheets.set(node, node.inert);
+    node.inert = node !== top;
+  }
+}
+const sheetTabStops = host => [...host.querySelectorAll('a[href],button,input,textarea,select,[tabindex]')].filter(node => node.tabIndex >= 0 && !node.matches(":disabled") && !node.closest("[hidden],[inert]") && node.getClientRects().length);
+function focusSheet(host, preferred) {
+  const dialog = host.querySelector(".sheet") || host;
+  const target = preferred && host.contains(preferred) && !preferred.closest("[hidden],[inert]") && preferred.getClientRects().length ? preferred : sheetTabStops(host)[0] || dialog;
+  target?.focus();
+}
 function sheet(html, onMount, kind) {
   // 同一种面板已经开着就不再叠一层（防重复绑定/双击/触摸+点击双触发）
   if (kind) { const ex = document.querySelector(`[data-sheet="${kind}"]`); if (ex) return ex._v3close; }
   const previousFocus = document.activeElement;
-  const s = document.createElement("div"); if (kind) s.dataset.sheet = kind; s.innerHTML = `<div class="scrim"></div><div class="sheet" role="dialog" aria-modal="true">${html}</div>`;
+  const s = document.createElement("div"); if (kind) s.dataset.sheet = kind; s.innerHTML = `<div class="scrim"></div><div class="sheet" role="dialog" aria-modal="true" tabindex="-1">${html}</div>`;
   s.dataset.v3sheet = "1"; document.body.append(s);
   history.pushState({ ...(history.state || {}), sheet: 1 }, "");
   // 界面关掉：不调 history.back（避免和随后的跳转抢历史），留下的空历史由 popstate 跳过
@@ -164,29 +183,78 @@ function sheet(html, onMount, kind) {
   const take = e => { const t = e.target; if (t.matches?.("input,textarea,select") && !snap.has(t)) snap.set(t, valueOf(t)); };
   for (const ev of ["focusin", "pointerdown", "keydown", "beforeinput"]) s.addEventListener(ev, take, true);
   s._v3dirty = () => !s.dataset.confirm && !s.querySelector("#gq") && ([...s.querySelectorAll("[data-save]:not([disabled])")].some(b => !b.closest("[hidden]")) || [...s.querySelectorAll("input:not([readonly]),textarea:not([readonly]),select")].some(t => snap.has(t) && snap.get(t) !== valueOf(t)));
-  let closing = null;
-  const dismiss = () => { if (s.isConnected) { s.remove(); s._onclose?.(); if (previousFocus?.isConnected) previousFocus.focus(); } return true; };
+  let closing = null, dismissed = false;
+  const dismiss = () => {
+    if (!dismissed) {
+      dismissed = true; s.remove(); s._onclose?.(); syncSheetInert();
+      const top = topSheet();
+      if (top) focusSheet(top, previousFocus);
+      else if (previousFocus?.isConnected && !previousFocus.closest("[inert]")) previousFocus.focus();
+    }
+    return true;
+  };
   const close = force => {
+    if (s._authSuspended && force !== true) return Promise.resolve(false);
     if (force === true || !s.isConnected || !s._v3dirty()) return Promise.resolve(dismiss());
     if (!closing) closing = confirmDialog({ title: "还有改动没保存", body: "确定关掉吗？改动会丢掉。", ok: "关掉", danger: true }).then(ok => ok ? dismiss() : false).finally(() => { closing = null; });
     return closing;
   };
-  close.markSaved = () => s.querySelectorAll("input,textarea,select").forEach(t => snap.set(t, valueOf(t)));
+  close.markSaved = values => s.querySelectorAll("input,textarea,select").forEach(t => snap.set(t, values?.has(t) ? values.get(t) : valueOf(t)));
   s._v3close = close;
   s.querySelector(".scrim").onclick = () => close();
   s.addEventListener("click", async e => { const a = e.target.closest("a[href^=\"#/\"]"); if (!a || e.defaultPrevented) return; e.preventDefault(); if (await close()) location.hash = a.getAttribute("href"); });
-  onMount?.(s.querySelector(".sheet"), close); return close;
+  onMount?.(s.querySelector(".sheet"), close);
+  syncSheetInert(); if (s === topSheet()) focusSheet(s);
+  return close;
 }
 document.addEventListener("keydown", e => {
-  if (e.key !== "Escape") return;
-  const host = [...document.querySelectorAll("[data-v3sheet]")].at(-1);
-  if (host) { e.preventDefault(); e.stopPropagation(); host._v3close(); }
+  const host = topSheet(); if (!host) return;
+  if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); host._v3close(); }
+  if (e.key === "Tab") {
+    const stops = sheetTabStops(host), first = stops[0], last = stops.at(-1), active = document.activeElement;
+    if (!first || !host.contains(active) || (e.shiftKey ? active === first : active === last)) { e.preventDefault(); (e.shiftKey ? last : first)?.focus(); if (!first) focusSheet(host); }
+  }
 });
-async function logout() { try { await api.logout(); } catch {} showLogin(); }
+document.addEventListener("focusin", e => { const host = topSheet(); if (host && !host.contains(e.target)) focusSheet(host); });
+let suspendedUi = null, loggingOut = false;
+const authOverlays = "[data-v3sheet], .lightbox, .undo";
+function discardSuspendedUi() {
+  if (!suspendedUi) return;
+  for (const node of [...suspendedUi.overlays.childNodes].reverse()) { if (node._v3close) node._v3close(true); else node.remove(); }
+  suspendedUi = null;
+}
+function restoreSuspendedUi() {
+  const saved = suspendedUi; suspendedUi = null;
+  app.replaceChildren(saved.content); document.body.append(saved.overlays);
+  for (const node of document.querySelectorAll(authOverlays)) node._authSuspended = false;
+  history.replaceState(saved.history, "", saved.hash); current = saved.current;
+  for (const spec of saved.intervals) viewInterval(spec.owner, spec.fn, spec.ms);
+  syncSheetInert();
+  const host = topSheet(); if (host) focusSheet(host, saved.focus); else if (saved.focus?.isConnected) saved.focus.focus();
+  window.scrollTo(0, saved.scrollY); renderChrome();
+}
+async function logout() {
+  if (loggingOut) return; loggingOut = true;
+  try { await api.logout(); showLogin({ preserve: false }); }
+  catch (error) { toast(error.message); }
+  finally { loggingOut = false; }
+}
 
 // ---------- 登录 ----------
-function showLogin() {
+function showLogin({ preserve = true } = {}) {
+  if (preserve && $(".login", app)) return;
+  if (preserve && $(".shell", app)) {
+    const content = document.createDocumentFragment(), overlays = document.createDocumentFragment();
+    suspendedUi = { content, overlays, focus: document.activeElement, current, hash: location.hash, history: history.state, scrollY, canCli: CAN_CLI, intervals: [...timerSpecs.values()] };
+    content.append(...app.childNodes);
+    for (const node of document.querySelectorAll(authOverlays)) { node._authSuspended = true; overlays.append(node); }
+  } else if (!preserve) {
+    discardSuspendedUi();
+    for (const node of [...document.querySelectorAll(authOverlays)].reverse()) { if (node._v3close) node._v3close(true); else node.remove(); }
+    V3 = null; v3pageHash = "";
+  }
   ++routeGeneration; clearTimers(); current = null;
+  clearTimeout(toastT); $("#toast").textContent = ""; $("#toast").classList.remove("show");
   app.innerHTML = `<div class="login"><form class="view" autocomplete="on">
     <img src="icon.svg" alt=""><h1>欢迎回来，凛</h1><p>星野のねこ 在等你哦</p>
     <input class="input" type="password" name="password" autocomplete="current-password" placeholder="输入密码" aria-label="密码" required autofocus>
@@ -194,9 +262,11 @@ function showLogin() {
   const f = $("form", app);
   f.onsubmit = async e => {
     e.preventDefault(); const b = $("button", f), err = $(".err", f); b.disabled = true; b.textContent = "正在验证…"; err.textContent = "";
-    try { await api.login(f.password.value); location.hash = location.hash && location.hash !== "#/login" ? location.hash : "#/overview"; boot(); }
+    try { await api.login(f.password.value); if (!suspendedUi) location.hash = location.hash && location.hash !== "#/login" ? location.hash : "#/overview"; await boot(); }
     catch (x) { err.textContent = x.message; f.classList.remove("shake"); void f.offsetWidth; f.classList.add("shake"); f.password.select(); b.disabled = false; b.textContent = "进入控制台"; }
+    finally { if (f.isConnected) { b.disabled = false; b.textContent = "进入控制台"; } }
   };
+  syncSheetInert(); f.password.focus();
 }
 
 // ---------- 路由 ----------
@@ -445,11 +515,13 @@ function renderMedia(list, seen) {
     : `<a class="filelink" href="${esc(x.url)}" download="${esc(x.name)}">📎 ${esc(x.name)}${x.size ? ` <span class="faint">${bytes(x.size)}</span>` : ""}</a>`).join("")}</div>`;
 }
 function lightbox(url, name) {
-  const d = document.createElement("div"); d.className = "lightbox"; d.setAttribute("role", "dialog"); d.setAttribute("aria-label", name || "图片");
+  const previousFocus = document.activeElement;
+  const d = document.createElement("div"); d.className = "lightbox"; d.setAttribute("role", "dialog"); d.setAttribute("aria-label", name || "图片"); d.tabIndex = -1;
   d.innerHTML = `<img src="${esc(url)}" alt="${esc(name || "")}"><a class="iconbtn lb-dl" href="${esc(url)}" download aria-label="下载">⤓</a>`;
-  const close = () => { d.classList.add("out"); setTimeout(() => d.remove(), 200); removeEventListener("keydown", k); };
-  const k = e => e.key === "Escape" && close();
-  d.onclick = e => { if (!e.target.closest(".lb-dl")) close(); }; addEventListener("keydown", k); document.body.append(d);
+  const finish = () => { d.remove(); syncSheetInert(); const host = topSheet(); if (host) focusSheet(host, previousFocus); else if (previousFocus?.isConnected && !previousFocus.closest("[inert]")) previousFocus.focus(); };
+  const close = force => { if (d._authSuspended && force !== true) return; d.classList.add("out"); if (force === true) finish(); else setTimeout(finish, 200); };
+  d._v3close = close;
+  d.onclick = e => { if (!e.target.closest(".lb-dl")) close(); }; document.body.append(d); syncSheetInert(); focusSheet(d);
 }
 const DR = { "delivery-mirror": "网关确认已投递", "mirror-unconfirmed": "网关未确认投递", "no-channel": "这个会话不连 QQ", "silent-token": "静默回复（NO_REPLY 等）", "stay_silent": "这一轮选择了不说话（stay_silent）", "keepalive": "只是缓存保活", "run-failed": "回复前运行失败了", "non-channel-trigger": "这一轮不是 QQ 消息触发的", "intermediate-text": "中间段文本，不一定发出", "qq-send-ok": "网关日志有 qq-send-ok", "no-send-ok-log": "日志里没有发送成功记录", "final-reply-inferred": "按最终回复推断，没有日志可证" };
 const tdur = ms => ms == null ? "" : ms < 1000 ? ms + "ms" : (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + "s";
@@ -1088,7 +1160,7 @@ async function cliPane(pane, id, ctx) {
     let cur = null, txt = "", got = false;
     cm.insertAdjacentHTML("beforeend", `<div class="cli-wait"><div class="cli-spin" aria-hidden="true"></div><div><b>${esc(cliToolNm(sess.tool))} 正在思考…</b><div class="fs">${esc(cliWaitTxt(sess))}</div><div class="fs faint">已等待 <span class="cw-s">0</span> 秒</div></div></div>`); scroll();
     const wait = cm.lastElementChild, wt = viewInterval(pane, () => { const n = wait.querySelector(".cw-s"); if (n) n.textContent = Math.round((Date.now() - t0) / 1000); }, 1000);
-    const unwait = () => { if (!got) { got = true; wait.remove(); clearInterval(wt); } };
+    const unwait = () => { if (!got) { got = true; wait.remove(); stopViewInterval(wt); } };
     let lastErr = "";
     const bubble = () => { if (!cur) { cm.insertAdjacentHTML("beforeend", `<div class="msg assistant md cli-a"></div>`); cur = cm.lastElementChild; txt = ""; } return cur; };
     try {
@@ -1868,18 +1940,25 @@ async function fileEditor(name) {
     <div style="display:flex;gap:10px;margin-top:12px;align-items:center"><span class="faint" id="dirty" style="font-size:12.5px;flex:1">${f.updatedAtMs ? ago(f.updatedAtMs) + "修改" : ""}</span><button class="btn" data-close>关闭</button>${ro ? "" : `<button class="btn primary" data-save disabled>保存</button>`}</div>`, (el, cl) => {
     el.classList.add("wide");
     const ta = el.querySelector("textarea"), pv = el.querySelector(".mdbox"), sv = el.querySelector("[data-save]") || { disabled: true }, dirty = el.querySelector("#dirty");
-    ta.oninput = () => { const ch = ta.value !== (f.content || ""); sv.disabled = !ch; dirty.textContent = ch ? "有未保存的修改" : ""; };
+    let saving = false, savedNote = dirty.textContent;
+    const syncDirty = () => { const ch = ta.value !== (f.content || ""); sv.disabled = saving || !ch; dirty.textContent = ch ? "有未保存的修改" : savedNote; };
+    ta.oninput = syncDirty;
     el.querySelectorAll("[data-m]").forEach(b => b.onclick = () => { const view = b.dataset.m === "view"; el.querySelectorAll("[data-m]").forEach(x => x.setAttribute("aria-pressed", x === b)); ta.hidden = view; pv.hidden = !view; if (view) pv.innerHTML = md(ta.value); });
     el.querySelector("[data-close]").onclick = async () => { if (await cl()) location.hash = "#/files"; };
     sv.onclick = async () => {
-      const diff = ta.value.split("\n").length - (f.content || "").split("\n").length;
-      if (!await confirmDialog({ title: `保存 ${name}？`, body: `这会改变星野のねこ 的行为（${diff >= 0 ? "+" : ""}${diff} 行）。<br>旧版本会自动备份，需要时可以找回。`, ok: "保存" })) return;
-      sv.disabled = true; sv.textContent = "保存中…";
-      try { const r = await api.agentFileSet(name, ta.value, "main"); f = { ...f, ...(r.file || {}), content: ta.value }; cl.markSaved(); toast(r.backup ? "已保存，旧版本已备份 ✓" : "已保存 ✓"); dirty.textContent = r.backup ? "备份：" + r.backup.split("/").pop() : "刚刚保存"; sv.textContent = "保存"; }
-      catch (e) { sv.disabled = false; sv.textContent = "保存";
+      if (saving) return;
+      const submitted = ta.value, diff = submitted.split("\n").length - (f.content || "").split("\n").length;
+      saving = true; syncDirty();
+      try {
+        if (!await confirmDialog({ title: `保存 ${name}？`, body: `这会改变星野のねこ 的行为（${diff >= 0 ? "+" : ""}${diff} 行）。<br>旧版本会自动备份，需要时可以找回。`, ok: "保存" })) return;
+        sv.textContent = "保存中…";
+        const r = await api.agentFileSet(name, submitted, "main"); f = { ...f, ...(r.file || {}), content: submitted }; cl.markSaved(new Map([[ta, submitted]])); savedNote = r.backup ? "备份：" + r.backup.split("/").pop() : "刚刚保存";
+        toast(ta.value !== submitted ? "已保存提交内容，后续修改还没保存" : r.backup ? "已保存，旧版本已备份 ✓" : "已保存 ✓");
+      } catch (e) {
         if (e.status === 409 || /hash|conflict|changed|modified|stale|冲突|已被修改/i.test(e.message)) {
           if (await confirmDialog({ title: "文件刚被别处改过了", body: "为了不覆盖别人的修改，这次没有保存。<br>重新加载后会看到最新内容——你的改动会丢失，建议先复制一份。", ok: "重新加载" })) { cl(true); fileEditor(name); }
         } else toast(notReady(e) ? "保存接口还没开放" : e.message); }
+      finally { saving = false; sv.textContent = "保存"; syncDirty(); }
     };
   });
 }
@@ -2389,7 +2468,7 @@ document.addEventListener("keydown", e => {
 
 // ---- 6 PWA ----
 if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) {
-  addEventListener("load", () => navigator.serviceWorker.register("/sw.js?v=2026.11.2").catch(() => {}));
+  addEventListener("load", () => navigator.serviceWorker.register("/sw.js?v=2026.11.2-round2").catch(() => {}));
 }
 
 
@@ -2471,7 +2550,13 @@ async function v3renderSec(T, s, body) {
 }
 // 去掉旧页面自带的标题栏和分页条；长列表只显示前几条
 function v3tidy(body, k, sid) {
-  body.querySelectorAll(":scope > .view > header.top, :scope > .view > .toolbar:has(.stk-tabs)").forEach(x => x.remove());
+  body.querySelectorAll(":scope > .view > header.top").forEach(header => {
+    if (!header.querySelector('[data-x="newcron"], [data-x="imp"]')) return header.remove();
+    // Keep the original action nodes inside their original delegated event root.
+    header.querySelectorAll("h1, .back, [data-act]").forEach(x => x.remove());
+    header.classList.remove("top"); header.classList.add("toolbar");
+  });
+  body.querySelectorAll(":scope > .view > .toolbar:has(.stk-tabs)").forEach(x => x.remove());
   const all = v3st(k).all || {};
   body.querySelectorAll(":scope > .view > .list, :scope > .view .card > .list:not(.flat), :scope > .view .dg-list, :scope > .view .stk-grid").forEach((L, i) => {
     const lim = L.classList.contains("stk-grid") ? 12 : 5, n = L.children.length, key = sid + ":" + i;
@@ -2600,6 +2685,8 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener("change", renderChro
 async function boot() {
   let me; try { me = await api.me(); } catch { me = { authed: false }; }
   if (!me.authed) return showLogin();
+  if (suspendedUi && cliAllowed(me) === suspendedUi.canCli) { CAN_CLI = cliAllowed(me); restoreSuspendedUi(); return; }
+  discardSuspendedUi();
   CAN_CLI = cliAllowed(me); if ($(".shell") && !CAN_CLI) app.innerHTML = "";
   if (!$(".shell")) shell();
   route();

@@ -2,11 +2,11 @@
 
 OpenClaw QQ bot 星野のねこ web console (backend server.mjs, frontend public/), gate/core patches (patches, staging, toolfp) and design docs (docs/).
 
-当前版本：**2026.11.3**。逐项修复和兼容性说明见 [CHANGELOG.md](CHANGELOG.md)。
+当前工作版本：**2026.11.4-rc.1（未发布）**。基于 `v2026.11.3.7` 快照合入稳定版回归与修复，逐项记录见 [CHANGELOG.md](CHANGELOG.md)。旧标签和 Release 保留。
 
 ## 本地开发
 
-需要 Node.js 22 或更新版本（本次使用 Node.js 24 验证）。
+需要 Node.js 22.13 或更新版本（建议 Node.js 24，模型直连使用 Node SQLite API）。
 
 ```sh
 npm ci
@@ -32,7 +32,7 @@ npm test
 
 也可分别运行 `npm run test:backend` 和 `npm run test:frontend`。浏览器测试可通过 `CHROMIUM_PATH` 指定已安装的 Chromium。测试使用临时目录、本地假服务和临时端口，不依赖生产凭据。
 
-本版实际结果和验收范围见 [第二轮修复与验证](docs/round2-fixes-and-validation.md)。旧版记录保留在 [v2026.11.2 验证记录](docs/validation-v2026.11.2.md)。
+本轮功能、验证及部署边界见 [快照补全记录](docs/panels-completion-and-validation.md)，新增接口见 [API.md](API.md)。历史记录保留在 [v2026.11.3 验证记录](docs/round2-fixes-and-validation.md) 和 [v2026.11.2 验证记录](docs/validation-v2026.11.2.md)。
 
 历史 `staging/` 是补丁和旧版测试资料，不能作为当前版本完整验收入口。CI 运行当前回归测试和当前后端语音参数检查。
 

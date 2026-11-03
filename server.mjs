@@ -5,7 +5,13 @@ import crypto from "node:crypto";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { createRequire } from "node:module";
+import { fileURLToPath } from "node:url";
 const require = createRequire(import.meta.url);
+import { makeChatActions } from "./chat-actions.mjs"; // HOSINO-CHAT-ACTIONS v1
+import { makeMemorySearch } from "./memory-search.mjs"; // HOSINO-MEMORY-SEARCH v1
+import { makeAllowlist } from "./allowlist.mjs";
+import { makeSecrets } from "./secrets.mjs";
+import { makeModelAuth } from "./model-auth.mjs";
 const bcrypt = require("bcryptjs");
 
 const PORT = +process.env.PORT || 18890;
@@ -14,10 +20,10 @@ const CFG = process.env.OPENCLAW_CONFIG || "/home/ubuntu/.openclaw/openclaw.json
 const GW = process.env.GATEWAY_URL || "wss://127.0.0.1:18789";
 const QDRANT = process.env.QDRANT_URL || "http://127.0.0.1:6333";
 const MEMCOL = process.env.MEM_COLLECTION || "mem0_full_timestamped_20260926";
-const PUB = path.join(path.dirname(new URL(import.meta.url).pathname), "public");
+const PUB = path.join(path.dirname(fileURLToPath(import.meta.url)), "public");
 // 网关自签证书：只对这一条 wss 连接做证书固定（CA=该证书 + SHA-256 指纹比对），不再全局关闭 TLS 校验
 const WS = require("ws");
-const GW_CERT = process.env.GATEWAY_CERT || path.join(path.dirname(new URL(import.meta.url).pathname), "gateway-cert.pem");
+const GW_CERT = process.env.GATEWAY_CERT || path.join(path.dirname(fileURLToPath(import.meta.url)), "gateway-cert.pem");
 const GW_FP = (process.env.GATEWAY_FP || "").toUpperCase();
 const gwTls = () => { const ca = fs.readFileSync(GW_CERT, "utf8"); const fp = GW_FP || new crypto.X509Certificate(ca).fingerprint256; return { ca, checkServerIdentity: (h, cert) => cert.fingerprint256 === fp ? undefined : new Error("网关证书指纹不匹配") }; };
 
@@ -62,7 +68,7 @@ function connect() {
           s.send(JSON.stringify({ type: "req", id, method: "connect", params: { minProtocol: 4, maxProtocol: 4, client: { id: "gateway-client", displayName: "hosino-console", version: "1.0", platform: "linux", mode: "backend" }, role: "operator", scopes: ["operator.admin"], auth: { token: authToken } } }));
           return;
         }
-        if (d.type === "res" && pend.has(d.id)) { const p = pend.get(d.id); if (p.socket !== s) return; pend.delete(d.id); d.ok ? p.res(d.payload) : p.rej(Object.assign(new Error(d.error?.message || "网关错误"), { code: d.error?.code })); }
+        if (d.type === "res" && pend.has(d.id)) { const p = pend.get(d.id); if (p.socket !== s) return; if (p.accepted && d.ok && d.payload?.status === "accepted") { p.accepted(d.payload); return; } pend.delete(d.id); d.ok ? p.res(d.payload) : p.rej(Object.assign(new Error(d.error?.message || "网关错误"), { code: d.error?.code })); }
       } catch (e) {
         fail(e);
       }
@@ -269,20 +275,45 @@ const mimoUsage = () => cached("mimo", 10 * 60e3, async () => {
 });
 
 // ---------- v2：写操作审计 / 确认 ----------
-const ROOT = path.dirname(new URL(import.meta.url).pathname);
+const ROOT = path.dirname(fileURLToPath(import.meta.url));
 const OPSLOG = path.join(ROOT, "logs", "ops.log"), BACKUPS = path.join(ROOT, "backups");
 const httpErr = (code, msg) => Object.assign(new Error(msg), { http: code });
 const need = (b, ...ks) => { for (const k of ks) if (b?.[k] == null || b[k] === "") throw httpErr(400, "缺少参数：" + k); };
 const confirmOk = b => { if (b?.confirm !== true) throw httpErr(400, "需要 confirm:true 确认"); };
-function opLog(req, ep, target, ok, err) {
-  try { fs.mkdirSync(path.dirname(OPSLOG), { recursive: true, mode: 0o700 }); const line = JSON.stringify({ t: new Date().toISOString(), ip: req ? ipOf(req) : "", ep, target: String(target ?? "").slice(0, 200), ok, ...(err ? { err: String(err).slice(0, 300) } : {}) }) + "\n"; fs.appendFileSync(OPSLOG, line, { mode: 0o600 }); fs.chmodSync(OPSLOG, 0o600); } catch {}
+// Error messages are untrusted gateway output. Audit only locally defined codes.
+const OP_ERROR_CODES = new Set(["quiet_window", "unknown_model", "rate_limited", "busy", "restart_required", "not_whitelisted", "baseHash_mismatch", "plan_expired", "conflict", "oauth_managed", "inline_key", "credential_write_failed", "attachments_unsupported", "DUPLICATE", "too_many_attachments", "rate_session", "rate_hour", "rate_day", "dup_id", "dup_name", "locked"]);
+const normalizedEscapes = s => s.replace(/%[\da-f]{2}/gi, x => x.toUpperCase()).replace(/\\u([\da-f]{4})/gi, (_, h) => "\\u" + h.toUpperCase());
+function redactKnownSecrets(value, secrets = []) {
+  let text = normalizedEscapes(String(value ?? "")); const variants = new Set();
+  for (const secret of secrets) {
+    if (typeof secret !== "string" || !secret) continue;
+    const forms = [secret, JSON.stringify(secret).slice(1, -1), secret.split("").map(c => "\\u" + c.charCodeAt(0).toString(16).padStart(4, "0")).join("")];
+    try { forms.push(encodeURIComponent(secret), encodeURI(secret), new URLSearchParams({ v: secret }).toString().slice(2)); } catch {}
+    const base64 = Buffer.from(secret).toString("base64"); forms.push(base64, base64.replace(/=+$/, ""), Buffer.from(secret).toString("base64url"));
+    for (const form of forms) { variants.add(normalizedEscapes(form)); variants.add(normalizedEscapes(JSON.stringify(form).slice(1, -1))); variants.add(normalizedEscapes(form.replace(/\//g, "\\/"))); }
+  }
+  for (const variant of [...variants].sort((a, b) => b.length - a.length)) text = text.split(variant).join("••••••");
+  return text;
+}
+const operationText = (value, secrets = [], limit = 300) => redactText(redactKnownSecrets(value, secrets)).replace(/\s+/g, " ").trim().slice(0, limit);
+const operationErrorCode = err => OP_ERROR_CODES.has(err?.code) ? err.code : Number.isInteger(err?.http) && err.http >= 400 && err.http <= 599 ? "http_" + err.http : "operation_failed";
+function opLog(req, ep, target, ok, err, secrets = []) {
+  try { fs.mkdirSync(path.dirname(OPSLOG), { recursive: true, mode: 0o700 }); const line = JSON.stringify({ t: new Date().toISOString(), ip: req ? ipOf(req) : "", ep, target: operationText(target, secrets, 200), ok, ...(err ? { err: operationErrorCode(err) } : {}) }) + "\n"; fs.appendFileSync(OPSLOG, line, { mode: 0o600 }); fs.chmodSync(OPSLOG, 0o600); } catch {}
 }
 const dropCache = (...pre) => { for (const k of [...cache.keys()]) if (pre.some(p => k.startsWith(p))) cache.delete(k); };
 // 包装写操作：确认、审计、清缓存
+// HOSINO-QUIET-WINDOW v1：每天 21:55-22:10（含两端，新加坡时间）只拦写操作/重启，读不拦。HOSINO_QUIET_WINDOW=off 关闭。
+const QUIET = (() => { const v = process.env.HOSINO_QUIET_WINDOW ?? "21:55-22:10"; const m = /^(\d\d):(\d\d)-(\d\d):(\d\d)$/.exec(v); return m ? { a: +m[1] * 60 + +m[2], b: +m[3] * 60 + +m[4] } : null; })();
+const QUIET_READ_EPS = new Set(["models.ping", "models.auth.login.cancel"]); // 检测和登录清理不写配置、不重启
+function quietLeftMs(now = Date.now()) {
+  if (!QUIET) return 0; const p = Object.fromEntries(new Intl.DateTimeFormat("en-GB", { timeZone: "Asia/Singapore", hour12: false, hour: "2-digit", minute: "2-digit", second: "2-digit" }).formatToParts(new Date(now)).map(x => [x.type, +x.value]));
+  const m = (p.hour % 24) * 60 + p.minute; if (m < QUIET.a || m > QUIET.b) return 0; return ((QUIET.b - m + 1) * 60 - p.second) * 1000;
+}
+const quietGuard = ep => { if (QUIET_READ_EPS.has(ep)) return; const left = quietLeftMs(); if (left > 0) throw Object.assign(httpErr(423, "每天 21:55-22:10（新加坡时间）是静默窗口，暂停写操作和重启，读不受影响"), { code: "quiet_window", body: { retryAfterMs: left } }); };
 const W = (ep, target, fn, { confirm = false, drop = [] } = {}) => async (u, b, req) => {
-  b = b || {}; const tg = typeof target === "function" ? target(b) : target;
-  try { if (confirm) confirmOk(b); const r = await fn(b, u, req); dropCache(...drop); opLog(req, ep, tg, true); return r ?? { ok: true }; }
-  catch (e) { opLog(req, ep, tg, false, e.message); throw e; }
+  b = b || {}; const tg = typeof target === "function" ? target(b) : target; const secrets = Object.entries(b).filter(([k, v]) => /^(?:apiKey|value|password|token|secret|clientSecret)$/i.test(k) && typeof v === "string").flatMap(([, v]) => [v, v.trim()]);
+  try { quietGuard(ep); if (confirm) confirmOk(b); const r = await fn(b, u, req); dropCache(...drop); opLog(req, ep, tg, true, null, secrets); return r ?? { ok: true }; }
+  catch (e) { opLog(req, ep, tg, false, e, secrets); throw e; }
 };
 const qi = (u, k, d, max) => { const v = parseInt(u.searchParams.get(k)); return Number.isFinite(v) && v > 0 ? Math.min(max || v, v) : d; };
 
@@ -368,7 +399,360 @@ const groups = jsonStore("groups.json", () => ({ groups: [] }));
 function groupOf(key) { for (const g of groups.load().groups) if (g.sessionKeys.includes(key)) return g.id; return null; }
 const strLen = v => [...String(v ?? "")].length;
 
+// ---------- HOSINO-PLUGIN-PROTECT v1：GET /api/plugins 的 protected/error（只读）----------
+// protected = 控制台不许停用的插件：插件槽位占用者（plugins.slots.*，如 memory→openclaw-mem0）、已配置渠道对应的插件（channels.qqbot→openclaw-qqbot）、
+// plugins.load.paths 里的本地守卫插件（qq-group-owner-guard、qq-group-followup-gate），外加固定兜底名单。每次现读 openclaw.json（只读）。
+const PLUGIN_PROTECT_FIXED = ["openclaw-mem0", "openclaw-qqbot", "qq-group-owner-guard", "qq-group-followup-gate"];
+const PLUGIN_PROTECT_RULE = "槽位占用者（plugins.slots）、已配置渠道的插件、plugins.load.paths 本地守卫插件、固定名单 " + PLUGIN_PROTECT_FIXED.join("/");
+function pluginProtected() {
+  const m = new Map(PLUGIN_PROTECT_FIXED.map(id => [id, "fixed"]));
+  let c = {}; try { c = JSON.parse(fs.readFileSync(CFG, "utf8")) || {}; } catch {}
+  for (const [slot, id] of Object.entries(c.plugins?.slots || {})) if (typeof id === "string" && id) m.set(id, `slot:${slot}`);
+  const ids = Object.keys(c.plugins?.entries || {});
+  for (const ch of Object.keys(c.channels || {})) for (const id of ids) if (id === ch || id === `openclaw-${ch}`) m.set(id, `channel:${ch}`);
+  for (const lp of c.plugins?.load?.paths || []) if (typeof lp === "string") { const id = path.basename(lp.replace(/\/+$/, "")); if (id) m.set(id, "local-guard"); }
+  return m;
+}
 // ---------- 路由 ----------
+// ---------- HOSINO-MODEL-PING v2：经网关测单个模型（临时 incognito 会话，测完即删；不投递、不订阅事件、不碰网关配置） ----------
+// 普通模型：agent{modelRun:true,promptMode:"none"} 裸调一次模型（无工具/无系统提示/不落会话）；
+// CLI/外部运行时模型（claude-cli、codex 等）：raw 模式会绕开运行时，改走 promptMode:"minimal" 的真实运行时一轮。
+const PING_TIMEOUT = Math.max(1000, +process.env.MODEL_PING_TIMEOUT_MS || 20000);
+const PING_TIMEOUT_CLI = Math.max(PING_TIMEOUT, +process.env.MODEL_PING_CLI_TIMEOUT_MS || 60000);
+const PING_GAP = 10e3, PING_MAX = 2, PING_MSG = "Connectivity test. Reply with exactly: ok";
+const pingLast = new Map(); let pingActive = 0;
+const pingSan = s => redactText(String(s ?? "")).replace(/\s+/g, " ").trim().slice(0, 300);
+const pingStr = (v, n = 120) => typeof v === "string" && v ? v.slice(0, n) : null;
+// 等 agent 请求的最终响应（网关对同一 id 先回 accepted 再回最终结果）
+function callFinal(method, params, timeout, onAccepted) {
+  return connect().then(s => new Promise((res, rej) => {
+    const id = "r" + (++seq); const t = setTimeout(() => { pend.delete(id); rej(Object.assign(new Error("网关调用超时：" + method), { code: "PING_TIMEOUT" })); }, timeout);
+    pend.set(id, { socket: s, accepted: v => { try { onAccepted?.(v); } catch {} }, res: v => { clearTimeout(t); res(v); }, rej: e => { clearTimeout(t); rej(e); } });
+    try { s.send(JSON.stringify({ type: "req", id, method, params })); } catch (e) { pend.delete(id); clearTimeout(t); rej(e); }
+  }));
+}
+// ---------- HOSINO-MODEL-PING-DIRECT v1：deepseek/qianfan/xiaomi 直连上游测（不经网关，避免插件 discovery 卡网关）----------
+// 凭证只读：~/.openclaw/.env（只解析指定变量名）与 ~/.openclaw/state/openclaw.sqlite 的 secret_store_entries（只读打开）。key 绝不回显/记日志。
+const OC_HOME = process.env.OPENCLAW_HOME || "/home/ubuntu/.openclaw";
+const DIRECT_ENV_FILE = process.env.PING_DIRECT_ENV_FILE || path.join(OC_HOME, ".env");
+const DIRECT_SECRET_DB = process.env.PING_DIRECT_SECRET_DB || path.join(OC_HOME, "state", "openclaw.sqlite");
+const PING_DIRECT_TIMEOUT = Math.max(1000, +process.env.MODEL_PING_DIRECT_TIMEOUT_MS || 20000);
+const DIRECT_PROV = {
+  deepseek: { env: "DEEPSEEK_API_KEY", src: "env", defBase: "https://api.deepseek.com" },
+  qianfan: { env: "QIANFAN_API_KEY", src: "env", defBase: "https://qianfan.baidubce.com/v2" },
+  "xiaomi-token-plan": { env: "XIAOMI_MIMO_API_KEY", src: "secret", defBase: "https://token-plan-cn.xiaomimimo.com/v1" },
+};
+const GATEWAY_STALL_PROV = new Set(["xai"]);
+const GATEWAY_STALL_MSG = "此检测通过网关执行，耗时和结果包含网关路由；与供应商直连检测的验证范围不同。";
+const DIRECT_NOTE = "直连测试只证明上游接口和 key 可用，不经过网关（不验证网关路由/回退/插件）";
+function directEnvKey(name) {
+  let txt; try { txt = fs.readFileSync(DIRECT_ENV_FILE, "utf8"); } catch { return null; }
+  for (const line of txt.split(/\r?\n/)) {
+    const m = line.match(/^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*)$/);
+    if (!m || m[1] !== name) continue;
+    let v = m[2].trim(); const q = v[0];
+    if ((q === '"' || q === "'") && v.endsWith(q) && v.length >= 2) v = v.slice(1, -1); else v = v.replace(/\s+#.*$/, "");
+    return v || null;
+  }
+  return null;
+}
+async function directSecretKey(name) {
+  if (!fs.existsSync(DIRECT_SECRET_DB)) return null;
+  const { DatabaseSync } = await import("node:sqlite");
+  const db = new DatabaseSync(DIRECT_SECRET_DB, { readOnly: true });
+  try { const r = db.prepare("SELECT value FROM secret_store_entries WHERE scope_kind='team' AND scope_id='' AND name=? AND deleted_at_ms IS NULL").get(name); return r && typeof r.value === "string" && r.value ? r.value : null; }
+  finally { try { db.close(); } catch {} }
+}
+async function directKey(prov) {
+  const d = DIRECT_PROV[prov]; if (!d) return { key: null, from: null };
+  const from = d.src === "env" ? `${DIRECT_ENV_FILE}#${d.env}` : `${DIRECT_SECRET_DB}:secret_store_entries/${d.env}`;
+  let key = null; try { key = d.src === "env" ? directEnvKey(d.env) : await directSecretKey(d.env); } catch { key = null; }
+  return { key, from };
+}
+function directBase(prov) {
+  let pc = null; try { pc = JSON.parse(fs.readFileSync(CFG, "utf8"))?.models?.providers?.[prov] || null; } catch {}
+  const api = pc?.api || "openai-completions";
+  const base = String(pc?.baseUrl || DIRECT_PROV[prov].defBase).replace(/\/+$/, "");
+  return { base, api };
+}
+const directRedact = (s, key) => { let t = String(s ?? ""); if (key) t = t.split(key).join("••••"); return pingSan(t.replace(/Bearer\s+[A-Za-z0-9._\-]+/gi, "Bearer ••••")); };
+async function directPing(ref, prov, id, t0, base0) {
+  const base = { ...base0, mode: "direct", timeoutMs: PING_DIRECT_TIMEOUT, via: "direct", note: DIRECT_NOTE };
+  const { key, from } = await directKey(prov);
+  const fail = (error, extra = {}) => ({ ok: false, status: "error", latencyMs: Date.now() - t0, modelLatencyMs: null, upstreamModel: null, effectiveModel: null, modelMismatch: false, fallbackUsed: false, replyPreview: null, stopReason: null, harness: "direct", error: directRedact(error, key) || "未知错误", credentialSource: from, ...extra, ...base });
+  if (!key) return fail("凭证里没找到这个供应商的 key", { stage: "key" });
+  const { base: url0, api } = directBase(prov);
+  if (api !== "openai-completions") return fail(`直连只支持 openai-completions 接口（当前 ${api}）`, { stage: "config" });
+  const ac = new AbortController(), tm = setTimeout(() => ac.abort(), PING_DIRECT_TIMEOUT);
+  const t1 = Date.now();
+  try {
+    let r; try {
+      r = await fetch(url0 + "/chat/completions", { method: "POST", signal: ac.signal, headers: { "content-type": "application/json", authorization: `Bearer ${key}` },
+        body: JSON.stringify({ model: id, messages: [{ role: "user", content: PING_MSG }], max_tokens: 1, stream: false }) });
+    } catch (e) {
+      if (ac.signal.aborted) return fail(`超时（${Math.round(PING_DIRECT_TIMEOUT / 1000)} 秒内没有完成）`, { status: "timeout", stage: "run" });
+      return fail("连不上上游：" + (e?.cause?.code || e?.message || e), { stage: "run" });
+    }
+    const raw = await r.text().catch(() => ""); const ml = Date.now() - t1;
+    let j = null; try { j = JSON.parse(raw); } catch {}
+    if (!r.ok) return fail(`上游返回 HTTP ${r.status}：` + (j?.error?.message || j?.message || raw.slice(0, 200)), { stage: "run", httpStatus: r.status, modelLatencyMs: ml });
+    const ch = j?.choices?.[0]; if (!ch) return fail("上游响应里没有 choices", { stage: "run", httpStatus: r.status, modelLatencyMs: ml });
+    const up = pingStr(j?.model), txt = ch?.message?.content ?? ch?.text ?? "";
+    const usage = j?.usage && typeof j.usage === "object" ? Object.fromEntries(Object.entries(j.usage).filter(([, v]) => typeof v === "number")) : undefined;
+    return { ok: true, status: "ok", latencyMs: Date.now() - t0, modelLatencyMs: ml, upstreamModel: up, effectiveModel: ref, modelMismatch: !!up && up !== id, fallbackUsed: false,
+      replyPreview: typeof txt === "string" ? directRedact(txt, key).slice(0, 200) : null, stopReason: pingStr(ch?.finish_reason, 40), harness: "direct", error: null, credentialSource: from, ...(usage ? { usage } : {}), ...base };
+  } finally { clearTimeout(tm); }
+}
+async function modelPing(b) {
+  need(b, "modelRef"); const ref = String(b.modelRef).trim(); if (ref.length > 200) throw httpErr(400, "modelRef 太长");
+  const i = ref.indexOf("/"); if (i <= 0 || i === ref.length - 1) throw httpErr(400, "modelRef 格式应为 provider/model");
+  const prov = ref.slice(0, i), id = ref.slice(i + 1);
+  const list = (await R["GET /api/models"]()).models || [];
+  const m = list.find(x => x.provider === prov && x.id === id) || list.find(x => `${x.provider}/${x.id}` === ref);
+  if (!m) throw Object.assign(httpErr(400, "不是网关已配置的模型"), { code: "unknown_model" });
+  const runtime = m.runtime && !["pi", "openclaw", "default"].includes(m.runtime) ? m.runtime : null;
+  const mode = runtime ? "runtime" : "raw", limit = runtime ? PING_TIMEOUT_CLI : PING_TIMEOUT;
+  const last = pingLast.get(ref) || 0, wait = last + PING_GAP - Date.now();
+  if (wait > 0) throw Object.assign(httpErr(429, `同一模型 10 秒内只能测一次，请 ${Math.ceil(wait / 1000)} 秒后再试`), { code: "rate_limited" });
+  if (pingActive >= PING_MAX) throw Object.assign(httpErr(429, "同时最多测 2 个模型，请稍后"), { code: "busy" });
+  pingLast.set(ref, Date.now()); pingActive++;
+  const at = new Date().toISOString(), t0 = Date.now();
+  const base = { modelRef: ref, requestedModel: id, provider: prov, runtime: runtime || "openclaw", mode, timeoutMs: limit, at };
+  let key = null, runId = null, timedOut = false;
+  const stall = GATEWAY_STALL_PROV.has(prov) ? { warn: "gateway_stall", warnMessage: GATEWAY_STALL_MSG } : {};
+  const fail = (error, extra = {}) => ({ ok: false, status: "error", latencyMs: Date.now() - t0, upstreamModel: null, effectiveModel: null, replyPreview: null, error: pingSan(error) || "未知错误", ...extra, ...stall, ...base });
+  try {
+    if (DIRECT_PROV[prov] && !runtime) return await directPing(ref, prov, id, t0, base);
+    let cr; try { cr = await call("sessions.create", { incognito: true, model: ref, displayName: "模型连通性测试（自动删除）", permissionMode: "read-only", toolOverrides: { webSearch: false } }, 15000); }
+    catch (e) { return fail("开临时会话失败：" + e.message, { stage: "create" }); }
+    key = cr?.key; if (!key) return fail("网关没返回临时会话 key", { stage: "create" });
+    const left = () => Math.max(1000, limit - (Date.now() - t0));
+    const p = { sessionKey: key, message: PING_MSG, provider: prov, model: id, deliver: false, disableMessageTool: true, timeout: Math.ceil(left() / 1000), idempotencyKey: crypto.randomUUID(),
+      ...(mode === "raw" ? { modelRun: true, promptMode: "none" } : { promptMode: "minimal", bootstrapContextMode: "lightweight" }) };
+    let fin; try { fin = await callFinal("agent", p, left() + 2000, a => { runId = a?.runId || runId; }); }
+    catch (e) { if (e.code === "PING_TIMEOUT") { timedOut = true; return fail(`超时（${Math.round(limit / 1000)} 秒内没有完成）`, { status: "timeout", stage: "run" }); } return fail(e.message, { stage: "run" }); }
+    const meta = fin?.result?.meta || {}, am = meta.agentMeta || {}, rc = am.terminalReceipt || {}, eff = rc.effective || {}, tr = meta.executionTrace || {};
+    const txt = meta.finalAssistantVisibleText ?? (fin?.result?.payloads || []).map(x => x?.text || "").join("");
+    const effModel = eff.provider && eff.model ? `${eff.provider}/${eff.model}` : (tr.winnerProvider && tr.winnerModel ? `${tr.winnerProvider}/${tr.winnerModel}` : null);
+    const fellBack = tr.fallbackUsed === true || rc.rerouted === true || (!!effModel && effModel !== ref);
+    const usage = am.usage && typeof am.usage === "object" ? Object.fromEntries(Object.entries(am.usage).filter(([, v]) => typeof v === "number")) : undefined;
+    const ok = fin?.status === "ok" && !fellBack && meta.aborted !== true;
+    const errMsg = ok ? null : fellBack ? `目标模型没有直接响应，网关改用了 ${effModel || "其它模型"}` : pingSan(fin?.error?.message ?? fin?.error ?? meta.error ?? fin?.summary ?? "运行未成功");
+    return { ok, status: ok ? "ok" : "error", latencyMs: Date.now() - t0, modelLatencyMs: Number.isFinite(meta.durationMs) ? meta.durationMs : null,
+      upstreamModel: pingStr(eff.responseModel), effectiveModel: effModel, modelMismatch: !!eff.responseModel && eff.responseModel !== id, fallbackUsed: fellBack,
+      replyPreview: typeof txt === "string" ? pingSan(txt).slice(0, 200) : null, stopReason: pingStr(meta.stopReason || meta.completion?.stopReason, 40), harness: pingStr(am.agentHarnessId, 40),
+      error: errMsg, ...(usage ? { usage } : {}), ...stall, ...base };
+  } finally {
+    pingActive--;
+    if (key) { const k = key;
+      await (async () => { if (timedOut) await call("chat.abort", { sessionKey: k, ...(runId ? { runId } : {}) }, 10000).catch(() => {});
+        for (let n = 0; n < 3; n++) { try { await call("sessions.delete", { key: k, deleteTranscript: true }, 8000); return; } catch (e) { if (n === 2) console.error("[model-ping] 临时会话删除失败", k, e.message); else await new Promise(r => setTimeout(r, 2000)); } } })();
+    }
+  }
+}
+// ===== HOSINO-MODEL-MANAGE v1：模型/供应商管理（只走网关官方 RPC：config.get/config.patch、secrets.store.set、models.authSetApiKey）=====
+// 只允许改 models.providers.* / agents.defaults.model / agents.defaults.models（网关热更新，不重启）；凭证只写不读；改配置前自动备份可回滚。
+const MM_DIR = path.join(BACKUPS, "model-manage");
+const MM_API = ["openai-completions", "openai-responses", "anthropic-messages", "google-generative-ai", "ollama"];
+const MM_OAUTH = new Set(["xai", "openai", "openai-codex", "anthropic", "claude-cli", "google-gemini-cli"]);
+const MM_PROTECT = new Set(["xai", "openai", "anthropic"]); // 不允许删除供应商（OAuth/Claude 配置）
+const MM_ENVKEY = { "xiaomi-token-plan": "XIAOMI_MIMO_API_KEY" }; // 已知走 secret store 的供应商
+const MM_ID = /^[a-z0-9][a-z0-9_-]{0,63}$/i, MM_MID = /^[A-Za-z0-9][A-Za-z0-9._:@\/+-]{0,127}$/;
+// <MM-RELOAD> 移植自 openclaw 2026.9.8 dist/config-reload-plan-rRfXEBRU.mjs（CORE_RELOAD_POLICIES + DEFAULT_RELOAD_POLICIES，只读照抄，未匹配=restart）
+const MM_RL_CORE = [
+  [["gateway.remote", "gateway.reload"], "none"],
+  [["gateway.auth.token", "gateway.auth.password", "mcp.apps", "secrets.egressProxy", "gateway.portals"], "restart"],
+  [["gateway.http.endpoints", "gateway.http.securityHeaders.strictTransportSecurity", "gateway.tools", "gateway.uploads", "gateway.cliAgents", "gateway.controlUi.enabled", "gateway.controlUi.environment", "gateway.controlUi.communityInvite", "gateway.controlUi.newSessionModelDefaults", "gateway.controlUi.github", "gateway.controlUi.sessionObserver", "gateway.controlUi.embedSandbox", "gateway.controlUi.allowExternalEmbedUrls", "gateway.controlUi.automaticallyFetchFavicons", "gateway.controlUi.experimental.customPlugins", "gateway.controlUi.allowedOrigins", "gateway.controlUi.dangerouslyAllowHostHeaderOriginFallback", "gateway.nodes.browser", "gateway.nodes.pairing", "gateway.nodes.commands", "gateway.nodes.pluginTools.enabled", "gateway.nodes.allowSkills", "gateway.push.apns.relay", "gateway.terminal", "gateway.auth.rateLimit", "gateway.roles", "gateway.trustedProxies", "gateway.allowRealIpFallback", "gateway.auth.allowTailscale", "gateway.auth.identityScopes", "gateway.auth.trustedProxy", "diagnostics.enabled", "discovery.mdns.mode", "mcp.apps.sandboxOrigin", "agents.defaults", "desktop.host", "cloudWorkers"], "hot"],
+  [["hooks.gmail", "hooks.internal", "agents.defaults.workspace", "hooks"], "hot"],
+  [["agents.defaults.heartbeat", "agents.defaults.models", "agents.defaults.modelPolicy", "agents.defaults.model", "models", "agent.heartbeat"], "hot"],
+  [["agents.entries", "agents.entries.*.decisionModel", "agents.defaults.sessionStore", "agents.ownership", "skills.workshop.autonomous.mode", "agents.defaults.decisionModel", "plugins.load", "plugins.installs", "cron", "transcripts", "cloudWorkers.profiles", "mcp", "gateway.publicOrigin", "talk.provider", "talk.realtime.provider"], "hot"],
+];
+const MM_RL_DEFAULT = [
+  [["meta", "identity", "wizard", "logging", "agents", "bindings", "audio", "agent", "routing", "messages", "session", "talk", "skills", "secrets", "tui", "ui"], "none"],
+  [["tools", "approvals.exec", "approvals.plugin", "auth.order", "auth.profiles", "broadcast", "memory.citations", "worktreeRoot", "worktreeAcceleration", "security.audit.suppressions", "security.installPolicy", "diagnostics.cacheTrace.enabled", "acp", "attachments.ttlHours", "update.checkOnStart", "update.channel", "update.auto.enabled", "telemetry.enabled", "telemetry.consentedAt"], "hot"],
+  [["plugins"], "hot"], [["channels"], "hot"], [["gateway", "discovery"], "restart"],
+];
+const mmRlMatch = (p, pre) => pre.includes("*") ? (s => pre.split(".").every((g, i) => g === "*" ? !!s[i] : g === s[i]))(p.split(".")) : p === pre || p.startsWith(pre + ".");
+const mmRlCmp = (a, b) => { const l = a.prefix.split("."), r = b.prefix.split("."); return r.length - l.length || l.filter(x => x === "*").length - r.filter(x => x === "*").length; };
+// 与网关一致：先 CORE 再 session.scope/store 再 DEFAULT，各自展开后整体按段数稳定排序，取第一个匹配
+const MM_RL_RULES = [...MM_RL_CORE, [["session.scope", "session.store"], "hot"], ...MM_RL_DEFAULT].flatMap(([ps, kind]) => ps.map(prefix => ({ prefix, kind }))).sort(mmRlCmp);
+const mmIsObj = v => v !== null && typeof v === "object" && !Array.isArray(v);
+function mmDiffPaths(a, b, prefix = "", out = []) { // 同 diffConfigPaths：两边都是普通对象就往下走，否则整段算一个变更路径
+  if (mmIsObj(a) && mmIsObj(b)) { for (const k of new Set([...Object.keys(a), ...Object.keys(b)])) mmDiffPaths(a[k], b[k], prefix ? `${prefix}.${k}` : k, out); return out; }
+  if (JSON.stringify(a) !== JSON.stringify(b)) out.push(prefix || "<root>"); return out;
+}
+const mmLocalKind = p => /^plugins\.installs\..+\.(installedAt|resolvedAt)$/.test(p) ? "none" : (MM_RL_RULES.find(r => mmRlMatch(p, r.prefix))?.kind ?? "restart");
+const MM_RL_RANK = { none: 0, hot: 1, restart: 2 }, MM_RL_LABEL = { none: "immediate", hot: "reload", restart: "restart" };
+const mmStricter = (a, b) => (MM_RL_RANK[b] ?? 2) > (MM_RL_RANK[a] ?? 2) ? b : a;
+const MM_ALLOW_PATH = /^(models\.providers\.[^.]+(\.|$)|agents\.defaults\.models\.|agents\.defaults\.model(\.|$))/;
+// 写前判定：restart 类一律拒（只有凛能批准重启）；白名单外（gateway.* / plugins.* 等，哪怕网关算作 hot）也拒
+function mmGuardVerdict(paths) { const restart = paths.filter(x => x.kind === "restart").map(x => x.path), outside = paths.filter(x => !MM_ALLOW_PATH.test(x.path)).map(x => x.path);
+  return restart.length ? { code: "restart_required", paths: restart } : outside.length ? { code: "not_whitelisted", paths: outside } : null; }
+// </MM-RELOAD>
+// 本地规则 + 网关 config.schema.lookup 实时 reloadKind（含插件注册的规则），取更严的；网关查不到就只用本地
+async function mmReloadPlan(src, next) {
+  const paths = mmDiffPaths(src, next); const out = [];
+  for (const p of paths) { const local = mmLocalKind(p); let live = null;
+    try { const r = await call("config.schema.lookup", { path: p.replace(/[^A-Za-z0-9_./\[\]\-*]/g, "*").slice(0, 1024) }, 8000); if (r && ["none", "hot", "restart"].includes(r.reloadKind)) live = r.reloadKind; } catch {}
+    const kind = live ? mmStricter(local, live) : local; out.push({ path: p, kind, label: MM_RL_LABEL[kind], local, live }); }
+  return { paths: out, restartRequired: out.some(x => x.kind === "restart"), label: out.some(x => x.kind === "restart") ? "restart" : out.some(x => x.kind === "hot") ? "reload" : "immediate" };
+}
+function mmBlockRestart(rp, extra = {}) { const v = mmGuardVerdict(rp.paths); if (!v) return;
+  throw Object.assign(httpErr(v.code === "restart_required" ? 409 : 403, v.code === "restart_required" ? "这些改动会让网关自动重启（" + v.paths.join("、") + "），只有凛能批准重启，控制台不写" : "这些路径不在控制台允许修改的范围：" + v.paths.join("、")), { code: v.code, body: { reload: rp, blockedPaths: v.paths, ...extra } }); }
+const mmPlans = new Map(); const MM_PLAN_TTL = 10 * 60e3;
+const mmClone = v => v === undefined ? undefined : JSON.parse(JSON.stringify(v));
+const mmGet = (o, p) => p.reduce((a, k) => a == null ? undefined : a[k], o);
+function mmSet(o, p, v) { let a = o; for (const k of p.slice(0, -1)) { if (a[k] == null || typeof a[k] !== "object") a[k] = {}; a = a[k]; } if (v === undefined) delete a[p.at(-1)]; else a[p.at(-1)] = v; }
+const mmSplit = ref => { const s = String(ref ?? "").trim(), i = s.indexOf("/"); if (i <= 0 || i === s.length - 1) throw httpErr(400, "模型格式应为 provider/model"); return [s.slice(0, i), s.slice(i + 1)]; };
+async function mmSnapshot() {
+  const r = await call("config.get", {}, 15000); let c = r.config || r.parsed; if (!c && r.raw) try { c = JSON.parse(r.raw); } catch { c = null; }
+  if (!c || typeof c !== "object") throw httpErr(502, "网关没返回配置"); if (r.valid === false) throw httpErr(409, "网关当前配置校验不通过，先修好再改");
+  return { cfg: c, hash: r.hash || r.baseHash || null };
+}
+function mmRefsInPlugins(cfg) { const s = JSON.stringify({ plugins: cfg.plugins, memory: cfg.memory, embedding: cfg.embedding }); return p => s.includes(`"${p}"`) || s.includes(`"${p}/`); }
+async function mmSecretNames() { try { const r = await call("secrets.store.list", {}, 10000); return new Map((r?.entries || []).map(e => [e.name, e.kind])); } catch { return new Map(); } } // 只留名字和类型，值当场丢弃
+function mmCredOf(prov, pc, names, authProv) {
+  const ak = pc?.apiKey, m = typeof ak === "string" && /^\$\{([A-Z0-9_]+)\}$/.exec(ak);
+  const env = m ? m[1] : ak && typeof ak === "object" && (ak.id || ak.name) ? String(ak.id || ak.name) : MM_ENVKEY[prov];
+  if (pc?.auth === "oauth" || MM_OAUTH.has(prov)) return { kind: "oauth", editable: false, note: "OAuth 登录，不能改 key，需要在终端重新登录" };
+  if (env && names.has(env)) return { kind: "secret-store", editable: true, target: env, present: true };
+  if (typeof ak === "string" && ak && !m) return { kind: "inline", editable: true, present: true };
+  const prof = (authProv?.profiles || []).length; return { kind: "auth-profile", editable: true, present: prof > 0 || !!authProv?.hasKey || !!env };
+}
+async function mmOverview() {
+  const [{ cfg, hash }, names, live, auth] = await Promise.all([mmSnapshot(), mmSecretNames(), R["GET /api/models"]().catch(() => ({ models: [] })), call("models.authStatus", {}, 20000).catch(() => null)]);
+  const provs = cfg.models?.providers || {}, d = cfg.agents?.defaults || {}, allow = d.models || {}, prim = typeof d.model === "string" ? d.model : d.model?.primary, fb = d.model?.fallbacks || [];
+  const liveSet = new Set((live.models || []).map(m => `${m.provider}/${m.id}`)), inPlug = mmRefsInPlugins(cfg);
+  const authOf = p => (auth?.providers || []).find(x => x.provider === p) || null;
+  const ids = new Set([...Object.keys(provs), ...Object.keys(allow).map(r => r.split("/")[0]), ...(auth?.providers || []).map(p => p.provider), ...(auth?.providerCapabilities || []).map(p => p.provider)].filter(p => typeof p === "string" && /^[A-Za-z0-9][A-Za-z0-9._-]{0,63}$/.test(p)));
+  const providers = [...ids].sort().map(p => { const pc = provs[p] || {};
+    const refs = new Set([...(pc.models || []).map(m => `${p}/${m.id}`), ...Object.keys(allow).filter(r => r.startsWith(p + "/"))]);
+    const authInfo = modelAuth.describe(auth, p), credential = mmCredOf(p, pc, names, authOf(p));
+    if (credential.kind === "oauth" && authInfo.capabilities.login) credential.note = "OAuth 凭据由登录向导管理，请用下方登录入口授权或重新登录";
+    return { provider: p, configured: !!provs[p], baseUrl: pc.baseUrl || null, api: pc.api || null, auth: pc.auth || null, credential, protected: MM_PROTECT.has(p), usedByPlugins: inPlug(p), ...authInfo,
+      models: [...refs].sort().map(ref => { const id = ref.slice(p.length + 1), pm = (pc.models || []).find(m => m.id === id), a = allow[ref];
+        return { ref, id, name: pm?.name || null, alias: a?.alias || null, inProvider: !!pm, inAllowlist: !!a, inGateway: liveSet.has(ref), isPrimary: prim === ref, fallbackIndex: fb.indexOf(ref), agentRuntime: a?.agentRuntime?.id || a?.agentRuntime || null,
+          contextWindow: pm?.contextWindow ?? null, maxTokens: pm?.maxTokens ?? null, reasoning: pm?.reasoning ?? null,
+          ...(a && !liveSet.has(ref) ? { problem: "missing_in_gateway", fix: { op: "addModel", provider: p, id } } : {}) }; }) }; });
+  return { baseHash: hash, primary: prim || null, fallbacks: fb, apiTypes: MM_API, providers };
+}
+const mmStr = (v, w, max = 200) => { if (v == null) return undefined; if (typeof v !== "string" || v.length > max) throw httpErr(400, `${w} 应为 ≤${max} 字符的字符串`); return v.trim(); };
+const mmInt = (v, w) => { if (v == null) return undefined; if (!Number.isInteger(v) || v < 1 || v > 1e8) throw httpErr(400, `${w} 应为正整数`); return v; };
+function mmModelFields(o) { const f = {}; const name = mmStr(o.name, "name", 120), cw = mmInt(o.contextWindow, "contextWindow"), mt = mmInt(o.maxTokens, "maxTokens");
+  if (name !== undefined) f.name = name; if (cw !== undefined) f.contextWindow = cw; if (mt !== undefined) f.maxTokens = mt;
+  if (o.reasoning != null) { if (typeof o.reasoning !== "boolean") throw httpErr(400, "reasoning 应为布尔值"); f.reasoning = o.reasoning; }
+  if (o.input != null) { if (!Array.isArray(o.input) || o.input.some(x => !["text", "image"].includes(x))) throw httpErr(400, "input 只能是 text/image"); f.input = [...new Set(o.input)]; } return f; }
+// 把 ops 套到配置副本上，返回 after 与被改动的路径
+function mmApplyOps(cfg, ops) {
+  const next = mmClone(cfg), touched = new Map(), inPlug = mmRefsInPlugins(cfg); const T = (p, arr = false) => touched.set(JSON.stringify(p), { path: p, arr });
+  const provs = () => (next.models ??= {}).providers ??= {}; const defs = () => (next.agents ??= {}).defaults ??= {};
+  const allow = () => defs().models ??= {}; const model = () => { const d = defs(); if (typeof d.model === "string") d.model = { primary: d.model }; return d.model ??= {}; };
+  const needProv = p => { const pc = provs()[p]; if (!pc) throw httpErr(404, `供应商 ${p} 不存在`); return pc; };
+  if (!Array.isArray(ops) || !ops.length || ops.length > 20) throw httpErr(400, "ops 应为 1–20 项的数组");
+  for (const o of ops) { if (!o || typeof o !== "object") throw httpErr(400, "op 格式不对");
+    switch (o.op) {
+      case "addProvider": { const p = String(o.provider || ""); if (!MM_ID.test(p)) throw httpErr(400, "provider 只能用字母数字 _ -"); if (provs()[p]) throw httpErr(409, `供应商 ${p} 已存在`);
+        let u; try { u = new URL(String(o.baseUrl || "")); } catch { throw httpErr(400, "baseUrl 不是合法网址"); } if (!/^https?:$/.test(u.protocol)) throw httpErr(400, "baseUrl 只能是 http/https");
+        if (!MM_API.includes(o.api)) throw httpErr(400, "api 类型不支持"); provs()[p] = { baseUrl: u.href.replace(/\/$/, ""), api: o.api, models: [] }; T(["models", "providers", p]); break; }
+      case "updateProvider": { const p = String(o.provider || ""), pc = needProv(p); if (pc.auth === "oauth" || MM_PROTECT.has(p)) throw httpErr(409, `${p} 是 OAuth/受保护供应商，不改连接参数`);
+        if (o.baseUrl != null) { let u; try { u = new URL(String(o.baseUrl)); } catch { throw httpErr(400, "baseUrl 不是合法网址"); } if (!/^https?:$/.test(u.protocol)) throw httpErr(400, "baseUrl 只能是 http/https"); pc.baseUrl = u.href.replace(/\/$/, ""); T(["models", "providers", p, "baseUrl"]); }
+        if (o.api != null) { if (!MM_API.includes(o.api)) throw httpErr(400, "api 类型不支持"); pc.api = o.api; T(["models", "providers", p, "api"]); } break; }
+      case "removeProvider": { const p = String(o.provider || ""), pc = needProv(p); if (MM_PROTECT.has(p) || pc.auth === "oauth") throw httpErr(409, `${p} 受保护，不能删`); if (inPlug(p)) throw httpErr(409, `${p} 被插件（记忆/嵌入等）引用，不能删`);
+        if (pc.apiKey != null || pc.headers != null) throw httpErr(409, `${p} 配置里带凭证字段，控制台无法安全回滚，不能在这里删`);
+        const used = [model().primary, ...(model().fallbacks || [])].filter(r => r && r.startsWith(p + "/")); if (used.length) throw httpErr(409, `先把 ${used.join("、")} 从默认/备用里去掉`);
+        delete provs()[p]; T(["models", "providers", p]); for (const r of Object.keys(allow())) if (r.startsWith(p + "/")) { delete allow()[r]; T(["agents", "defaults", "models", r]); } break; }
+      case "addModel": { const p = String(o.provider || ""), id = String(o.id || "").trim(), pc = needProv(p); if (!MM_MID.test(id)) throw httpErr(400, "模型 id 格式不对");
+        const arr = pc.models ??= []; if (arr.some(m => m.id === id)) throw httpErr(409, `${p}/${id} 已在供应商模型列表里`);
+        arr.push({ id, name: id, ...mmModelFields(o) }); T(["models", "providers", p, "models"], true);
+        if (o.addToAllowlist !== false) { const ref = `${p}/${id}`, a = allow()[ref] || {}; const al = mmStr(o.alias, "alias", 40); allow()[ref] = { ...a, ...(al ? { alias: al } : {}) }; T(["agents", "defaults", "models", ref]); } break; }
+      case "updateModel": { const [p, id] = mmSplit(o.ref), ref = `${p}/${id}`; const pc = provs()[p]; const pm = pc?.models?.find(m => m.id === id); const f = mmModelFields(o);
+        if (Object.keys(f).length) { if (!pm) throw httpErr(404, `${ref} 不在供应商模型列表里，先 addModel`); Object.assign(pm, f); T(["models", "providers", p, "models"], true); }
+        if ("alias" in o) { const al = o.alias === null || o.alias === "" ? null : mmStr(o.alias, "alias", 40); const a = { ...(allow()[ref] || {}) }; if (al) a.alias = al; else delete a.alias; allow()[ref] = a; T(["agents", "defaults", "models", ref]); } break; }
+      case "removeModel": { const [p, id] = mmSplit(o.ref), ref = `${p}/${id}`; const a = allow()[ref]; let hit = false;
+        if (a?.agentRuntime) throw httpErr(409, `${ref} 带 Claude/CLI 运行时配置，不在这里删`); if (model().primary === ref) throw httpErr(409, "这是默认模型，先换默认再删");
+        const pc = provs()[p]; if (pc?.models?.some(m => m.id === id)) { pc.models = pc.models.filter(m => m.id !== id); hit = true; T(["models", "providers", p, "models"], true); }
+        if (a) { delete allow()[ref]; hit = true; T(["agents", "defaults", "models", ref]); }
+        const fb = model().fallbacks || []; if (fb.includes(ref)) { model().fallbacks = fb.filter(r => r !== ref); T(["agents", "defaults", "model", "fallbacks"], true); }
+        if (!hit) throw httpErr(404, `${ref} 不存在`); break; }
+      case "setPrimary": { const [p, id] = mmSplit(o.ref), ref = `${p}/${id}`; if (!allow()[ref] && !provs()[p]?.models?.some(m => m.id === id)) throw httpErr(404, `${ref} 不是已配置的模型`);
+        model().primary = ref; T(["agents", "defaults", "model", "primary"]); if ((model().fallbacks || []).includes(ref)) { model().fallbacks = model().fallbacks.filter(r => r !== ref); T(["agents", "defaults", "model", "fallbacks"], true); } break; }
+      case "setFallbacks": { if (!Array.isArray(o.refs) || o.refs.length > 8) throw httpErr(400, "refs 应为 ≤8 项的数组"); const refs = [...new Set(o.refs.map(r => mmSplit(r).join("/")))];
+        for (const r of refs) { const [p, id] = mmSplit(r); if (!allow()[r] && !provs()[p]?.models?.some(m => m.id === id)) throw httpErr(404, `${r} 不是已配置的模型`); if (r === model().primary) throw httpErr(400, "备用里不能放默认模型"); }
+        model().fallbacks = refs; T(["agents", "defaults", "model", "fallbacks"], true); break; }
+      default: throw httpErr(400, "未知 op：" + o.op);
+    } }
+  for (const { path: p } of touched.values()) { const s = p.join("."); if (!(s.startsWith("models.providers.") || s.startsWith("agents.defaults.model.") || s.startsWith("agents.defaults.models."))) throw httpErr(500, "内部错误：越界路径 " + s); }
+  return { next, touched: [...touched.values()] };
+}
+// 由 touched 路径生成 merge patch（数组整段替换），以及逆向 patch（回滚用）
+function mmPatch(src, dst, touched) { const patch = {}, replacePaths = []; const under = p => touched.some(x => x.path.length < p.length && x.path.every((k, i) => k === p[i])); for (const { path: p, arr } of touched) { if (under(p)) continue; const v = mmGet(dst, p); mmSet(patch, p, v === undefined ? null : mmClone(v)); if (arr && v !== undefined) replacePaths.push(p.join(".")); } return { patch, replacePaths }; }
+function mmDiff(src, dst, touched) { return touched.map(({ path: p }) => ({ path: p.join("."), keys: p, before: redact(mmClone(mmGet(src, p)) ?? null), after: redact(mmClone(mmGet(dst, p)) ?? null) })).filter(x => JSON.stringify(x.before) !== JSON.stringify(x.after)); }
+function mmPingRefs(ops, next) { const out = new Set(); for (const o of ops) { if (o.op === "addModel") out.add(`${o.provider}/${String(o.id).trim()}`); if (o.op === "updateModel" || o.op === "setPrimary") out.add(mmSplit(o.ref).join("/")); if (o.op === "updateProvider") for (const m of next.models?.providers?.[o.provider]?.models || []) out.add(`${o.provider}/${m.id}`); if (o.op === "setFallbacks") for (const r of o.refs) out.add(r); } return [...out].slice(0, 10); }
+async function mmPlan(b) {
+  const { cfg, hash } = await mmSnapshot(); const { next, touched } = mmApplyOps(cfg, b.ops); const diff = mmDiff(cfg, next, touched); if (!diff.length) throw httpErr(400, "没有实际改动");
+  const { patch, replacePaths } = mmPatch(cfg, next, touched), inv = mmPatch(next, cfg, touched);
+  const reload = await mmReloadPlan(cfg, next); mmBlockRestart(reload, { diff });
+  for (const [k, v] of mmPlans) if (v.t + MM_PLAN_TTL < Date.now()) mmPlans.delete(k);
+  const planId = "mp_" + crypto.randomBytes(8).toString("hex"); mmPlans.set(planId, { t: Date.now(), baseHash: hash, ops: b.ops, patch, replacePaths, inv, diff, pingRefs: mmPingRefs(b.ops, next) });
+  return { ok: true, dryRun: true, planId, baseHash: hash, expiresInSec: MM_PLAN_TTL / 1000, restart: "none", apply: reload.label, reload, diff, pingRefs: mmPlans.get(planId).pingRefs };
+}
+function mmCommitResult(r) { const rs = r?.restart; const unexpected = !!(rs && (rs.required === true || rs.scheduled === true || rs.kind === "restart")) || r?.requiresRestart === true; // 写前已拦截；这里只做异常告警
+  if (unexpected) console.error("[model-manage] 网关回报需要重启，但写前判定为热更新；请人工检查"); return { restart: "none", ...(unexpected ? { warning: "网关回报需要重启（写前判定为热更新，可能规则不一致），请立刻告诉凛" } : {}) }; }
+async function mmCall(patch, replacePaths, baseHash, note) {
+  const p = { raw: JSON.stringify(patch), note: "hosino-console: " + note }; if (baseHash) p.baseHash = baseHash; if (replacePaths.length) p.replacePaths = replacePaths;
+  try { return await call("config.patch", p, 30000); } catch (e) { if (/hash|revision|stale|changed/i.test(e.message)) throw Object.assign(httpErr(409, "配置在你预览后被改过了，请重新预览"), { code: "baseHash_mismatch", body: { legacyCode: "stale" } }); throw httpErr(502, "网关拒绝了改动：" + pingSan(e.message)); }
+}
+function mmSaveBackup(o) { fs.mkdirSync(MM_DIR, { recursive: true, mode: 0o700 }); const id = new Date().toISOString().replace(/[:.]/g, "-") + "-" + crypto.randomBytes(3).toString("hex"); fs.writeFileSync(path.join(MM_DIR, id + ".json"), JSON.stringify({ id, ...o }, null, 1), { mode: 0o600 });
+  const all = fs.readdirSync(MM_DIR).filter(f => f.endsWith(".json")).sort(); for (const f of all.slice(0, -50)) fs.rmSync(path.join(MM_DIR, f), { force: true }); return id; }
+async function mmApply(b) {
+  need(b, "planId"); const pl = mmPlans.get(b.planId); if (!pl || pl.t + MM_PLAN_TTL < Date.now()) throw Object.assign(httpErr(410, "预览已过期，请重新预览"), { code: "plan_expired" });
+  mmPlans.delete(b.planId);
+  { const { cfg } = await mmSnapshot(); let nx; try { nx = mmApplyOps(cfg, pl.ops).next; } catch (e) { throw Object.assign(httpErr(409, "配置在你预览后被改过了，请重新预览"), { code: "baseHash_mismatch", body: { legacyCode: "stale" } }); } mmBlockRestart(await mmReloadPlan(cfg, nx)); }
+  const backupId = mmSaveBackup({ at: new Date().toISOString(), baseHash: pl.baseHash, ops: pl.ops, diff: pl.diff, inverse: pl.inv, forward: { patch: pl.patch, replacePaths: pl.replacePaths } });
+  let r; try { r = await mmCall(pl.patch, pl.replacePaths, pl.baseHash, "model-manage " + backupId); } catch (e) { fs.rmSync(path.join(MM_DIR, backupId + ".json"), { force: true }); throw e; }
+  dropCache("models", "cfg", "mauth"); return { ok: true, backupId, diff: pl.diff, ...mmCommitResult(r), pingRefs: pl.pingRefs, pingHint: "保存后可逐个调用 POST /api/models/ping 测试（同一模型 10 秒一次）" };
+}
+async function mmRollback(b) {
+  need(b, "backupId"); if (!/^[0-9TZ-]+-[0-9a-f]{6}$/.test(b.backupId)) throw httpErr(400, "backupId 格式不对"); let bk; try { bk = JSON.parse(fs.readFileSync(path.join(MM_DIR, b.backupId + ".json"), "utf8")); } catch { throw httpErr(404, "备份不存在"); }
+  const { cfg, hash } = await mmSnapshot(); const conflicts = bk.diff.filter(x => JSON.stringify(redact(mmClone(mmGet(cfg, x.keys)) ?? null)) !== JSON.stringify(x.after));
+  if (conflicts.length && b.force !== true) throw Object.assign(httpErr(409, "这些地方之后又被改过，回滚会覆盖：" + conflicts.map(x => x.path).join("、") + "；确认覆盖请带 force:true"), { code: "conflict", body: { conflicts: conflicts.map(x => x.path) } });
+  const rnext = mmClone(cfg); for (const x of bk.diff) mmSet(rnext, x.keys, mmClone(x.before) ?? undefined); const reload = await mmReloadPlan(cfg, rnext); mmBlockRestart(reload);
+  if (b.dryRun === true) return { ok: true, dryRun: true, reload, diff: bk.diff.map(x => ({ path: x.path, before: x.after, after: x.before })), conflicts: conflicts.map(x => x.path) };
+  confirmOk(b);
+  const r = await mmCall(bk.inverse.patch, bk.inverse.replacePaths, hash, "model-manage rollback " + b.backupId); dropCache("models", "cfg", "mauth");
+  return { ok: true, rolledBack: b.backupId, ...mmCommitResult(r) };
+}
+async function mmCredential(b) {
+  const key = typeof b?.apiKey === "string" ? b.apiKey.trim() : "";
+  try {
+    need(b, "provider"); const p = String(b.provider); if (!MM_ID.test(p)) throw httpErr(400, "provider 格式不对");
+    if (b.dryRun !== true && (key.length < 8 || key.length > 4096 || /\s/.test(key))) throw httpErr(400, "apiKey 应为 8–4096 位、不含空白");
+    const [{ cfg }, names, auth] = await Promise.all([mmSnapshot(), mmSecretNames(), call("models.authStatus", {}, 20000).catch(() => null)]);
+    const pc = cfg.models?.providers?.[p]; if (!pc && !Object.keys(cfg.agents?.defaults?.models || {}).some(r => r.startsWith(p + "/"))) throw httpErr(404, `供应商 ${p} 不存在`);
+    const cr = mmCredOf(p, pc, names, (auth?.providers || []).find(x => x.provider === p)); if (!cr.editable) throw Object.assign(httpErr(409, `${p} 用 OAuth 登录，不能在这里改 key`), { code: "oauth_managed" });
+    if (cr.kind === "inline") throw Object.assign(httpErr(409, `${p} 的 key 直接写在配置里，控制台不改这种（避免明文落盘），请改成 secret store`), { code: "inline_key" });
+    const method = cr.kind === "secret-store" ? "secrets.store.set" : "models.authSetApiKey"; const hint = key ? "…" + key.slice(-4) : null;
+    if (b.dryRun === true) return { ok: true, dryRun: true, provider: p, method, target: cr.target || null, restart: "none" };
+    confirmOk(b); let r;
+    try { r = method === "secrets.store.set" ? await call("secrets.store.set", { name: cr.target, value: key, kind: names.get(cr.target) === "secret" ? "secret" : "env" }, 20000) : await call("models.authSetApiKey", { provider: p, apiKey: key }, 20000); }
+    catch (e) { throw Object.assign(httpErr(502, "网关拒绝了新 key：" + operationText(e?.message, [key])), { code: "credential_write_failed" }); }
+    dropCache("models", "mauth"); const pingRefs = Object.keys(cfg.agents?.defaults?.models || {}).filter(r => r.startsWith(p + "/")).slice(0, 5);
+    return { ok: true, provider: p, method, keyHint: hint, reloaded: r?.reloaded !== false, ...(r?.warning ? { warning: operationText(r.warning, [key]) } : {}), restart: "none", rollback: "旧 key 不保留（只写不读），要恢复只能再填一次旧 key", pingRefs };
+  } catch (e) {
+    // Rebuild the error: upstream code/body can contain the submitted key too.
+    const err = httpErr(Number.isInteger(e?.http) && e.http >= 400 && e.http <= 599 ? e.http : 502, operationText(e?.message || "凭据操作失败", [key]));
+    if (OP_ERROR_CODES.has(e?.code) && e.code !== key) err.code = e.code;
+    throw err;
+  }
+}
+const MM_ROUTES = {
+  "GET /api/models/manage": async () => mmOverview(),
+  "POST /api/models/manage/plan": W("models.manage.plan", b => (b.ops || []).map(o => o?.op).join(",").slice(0, 200), b => mmPlan(b)),
+  "POST /api/models/manage/apply": W("models.manage.apply", b => String(b.planId || "").slice(0, 40), b => mmApply(b), { confirm: true }),
+  "POST /api/models/manage/credential": W("models.manage.credential", b => `${String(b.provider || "").slice(0, 64)}${b.dryRun === true ? " dry" : ""}`, b => mmCredential(b)),
+  "GET /api/models/manage/backups": async () => { let fl = []; try { fl = fs.readdirSync(MM_DIR).filter(f => f.endsWith(".json")).sort().reverse(); } catch {} return { backups: fl.slice(0, 50).map(f => { try { const j = JSON.parse(fs.readFileSync(path.join(MM_DIR, f), "utf8")); return { id: j.id, at: j.at, ops: (j.ops || []).map(o => o.op), paths: (j.diff || []).map(x => x.path) }; } catch { return { id: f.replace(/\.json$/, ""), broken: true }; } }) }; },
+  "POST /api/models/manage/rollback": W("models.manage.rollback", b => String(b.backupId || "").slice(0, 60), b => mmRollback(b), { confirm: false }),
+};
 const R = {
 
 
@@ -416,7 +800,10 @@ const R = {
     const a = { ...loadAliases() }; if (alias) a[key] = alias; else delete a[key]; saveAliases(a); return { ok: true, key, alias: alias || null };
   }),
   // ===== v2.1 =====
-  "GET /api/features": async () => ({ qqSend: QQ_SEND(), mediaProxy: true, mediaRemoteHosts: [...MEDIA_HOSTS] }),
+  "GET /api/features": async () => ({ qqSend: QQ_SEND(), mediaProxy: true, mediaRemoteHosts: [...MEDIA_HOSTS], chatRecall: CHAT_RECALL(), chatRegenerate: true }),
+  "GET /api/chat/recallable": async u => chatActions.recallable(u.searchParams.get("key"), u.searchParams.get("id")),
+  "POST /api/chat/recall": W("chat.recall", b => `${b.mode} ${b.key} ${String(b.id || "").slice(0, 40)}`, async b => chatActions.recall(b)),
+  "POST /api/chat/regenerate": W("chat.regenerate", b => `${b.key} ${String(b.id || "").slice(0, 40)} deliver=${b.deliver === true}`, async b => { const r = await chatActions.regenerate(b); dropCache("hist:", "ss:"); return r; }),
   "POST /api/qq/send": async (u, b, req) => {
     b = b || {}; if (b.attachments != null && !(Array.isArray(b.attachments) && !b.attachments.length)) throw Object.assign(httpErr(400, "QQ 直发不支持附件"), { code: "attachments_unsupported" }); const text = typeof b.text === "string" ? b.text : ""; let tg = b.target || b.sessionKey || "";
     try {
@@ -489,6 +876,7 @@ const R = {
   "GET /api/usage/cost": async u => { const sd = u.searchParams.get("startDate"), ed = u.searchParams.get("endDate"); const p = sd && ed ? { startDate: sd, endDate: ed } : { days: qi(u, "days", 30, 366) }; return cached("cost:" + JSON.stringify(p), 120e3, () => call("usage.cost", p, 30000)); },
   "GET /api/models/auth": async () => cached("mauth", 60e3, () => call("models.authStatus", {}, 20000).then(redact)),
   "POST /api/models/probe": W("models.probe", b => `${b.provider}${b.profileId ? "/" + b.profileId : ""}`, async b => { need(b, "provider"); const p = { provider: b.provider }; if (b.profileId) p.profileId = b.profileId; p.timeoutMs = Number.isInteger(b.timeoutMs) ? Math.min(30000, b.timeoutMs) : 20000; return redact(await call("models.probe", p, 45000)); }, { drop: ["mauth"] }),
+  "POST /api/models/ping": W("models.ping", b => String(b.modelRef ?? "").slice(0, 200), b => modelPing(b)),
   "GET /api/ops-log": async u => { let t = ""; try { t = fs.readFileSync(OPSLOG, "utf8"); } catch {} const lines = t.trim().split("\n").filter(Boolean).slice(-qi(u, "limit", 200, 2000)).reverse().map(l => { try { return JSON.parse(l); } catch { return { raw: l }; } }); return { lines }; },
 
   "GET /api/overview": async () => cached("ov", 8000, async () => {
@@ -499,7 +887,7 @@ const R = {
   "GET /api/sessions": async u => { const r = await R["__sessionsRaw"](u); const q = (u.searchParams.get("q") || "").trim().toLowerCase(); const ss = r.sessions.map(x => { const alias = aliasFor(x.key); return { ...x, alias, groupId: groupOf(x.key), gatewayDisplayName: x.displayName, displayName: alias || qqIdOf(x.key) || x.displayName || x.key }; }); return { ...r, sessions: q ? ss.filter(x => [x.alias, x.displayName, x.label, x.key].some(v => String(v || "").toLowerCase().includes(q))) : ss }; },
   "__sessionsRaw": async u => cached("ss:" + u.searchParams.get("offset"), 4000, async () => {
     const r = await call("sessions.list", { limit: 200, offset: +u.searchParams.get("offset") || 0 });
-    return { totalCount: r.totalCount, defaults: r.defaults, sessions: r.sessions.map(s => ({ key: s.key, displayName: s.displayName, label: s.label, kind: s.kind, chatType: s.chatType, channel: s.channel, updatedAt: s.updatedAt, pinned: s.pinned, unread: s.unread, archived: s.archived, status: s.status, hasActiveRun: s.hasActiveRun, model: s.model, modelProvider: s.modelProvider, modelOverrideSource: s.modelOverrideSource, agentRuntime: s.agentRuntime?.id, thinkingLevel: s.thinkingLevel, thinkingDefault: s.thinkingDefault, thinkingOptions: s.thinkingOptions, totalTokens: s.totalTokens, contextTokens: s.contextTokens, participantCount: s.participantCount, isMain: s.isMain, sessionId: s.sessionId, runtimeMs: s.runtimeMs })) };
+    return { totalCount: r.totalCount, defaults: r.defaults, sessions: r.sessions.map(s => ({ key: s.key, displayName: s.displayName, label: s.label, kind: s.kind, chatType: s.chatType, channel: s.channel, updatedAt: s.updatedAt, pinned: s.pinned, unread: s.unread, archived: s.archived, status: s.status, hasActiveRun: s.hasActiveRun, model: s.model, modelProvider: s.modelProvider, modelOverrideSource: s.modelOverrideSource, modelSelectionLocked: s.modelSelectionLocked === true, runtimeSelectionLocked: s.runtimeSelectionLocked === true, agentRuntime: s.agentRuntime?.id, thinkingLevel: s.thinkingLevel, thinkingDefault: s.thinkingDefault, thinkingOptions: s.thinkingOptions, totalTokens: s.totalTokens, contextTokens: s.contextTokens, participantCount: s.participantCount, isMain: s.isMain, sessionId: s.sessionId, runtimeMs: s.runtimeMs })) };
   }),
   "GET /api/history": async u => {
     const key = u.searchParams.get("key"); need({ key }, "key"); const limit = qi(u, "limit", 60, 200); const bf = u.searchParams.get("before");
@@ -527,11 +915,14 @@ const R = {
   "GET /api/vpn": async () => vpnStatus(),
   "GET /api/link": async () => vpnStatus(), // 线路状态（与旧接口同一份数据）
   "GET /api/channels": async () => cached("ch", 8000, () => call("channels.status").then(redact)),
-  "GET /api/plugins": async () => cached("pl", 60e3, async () => { const r = await call("plugins.list"); return { plugins: r.plugins.filter(p => p.installed || p.enabled).map(p => ({ id: p.id, name: p.name, description: p.description, version: p.version, origin: p.origin, enabled: p.enabled, state: p.state, runtime: p.runtime?.state })) }; }),
+  "GET /api/plugins": async () => cached("pl", 60e3, async () => { const r = await call("plugins.list"); const prot = pluginProtected(); return { protectedRule: PLUGIN_PROTECT_RULE, plugins: r.plugins.filter(p => p.installed || p.enabled).map(p => { const pr = prot.get(p.id) || null; const err = typeof p.runtime?.error === "string" && p.runtime.error ? redactText(p.runtime.error).slice(0, 500) : null;
+    return { id: p.id, name: p.name, description: p.description, version: p.version, origin: p.origin, enabled: p.enabled, state: p.state, runtime: p.runtime?.state, protected: !!pr, protectedReason: pr, error: err }; }) }; }),
   "GET /api/skills": async () => cached("sk", 60e3, () => call("skills.status").then(redact)),
   "GET /api/cron": async () => cached("cron", 15e3, () => call("cron.list").then(redact)),
-  "GET /api/logs": async u => { const r = await call("logs.tail", { limit: Math.min(500, +u.searchParams.get("limit") || 200) }, 20000); const LV = ["TRACE","DEBUG","INFO","WARN","ERROR","FATAL"]; const min = LV.indexOf(String(u.searchParams.get("level") || "").toUpperCase()); return { file: r.file, lines: (r.lines || []).map(l => { try { const j = JSON.parse(l); let sub = ""; try { sub = JSON.parse(j[0]).subsystem; } catch {} return { t: j.time || j._meta?.date, lv: j._meta?.logLevelName, sub, msg: String(j.message ?? j[1] ?? "").slice(0, 2000) }; } catch { return { msg: String(l).slice(0, 2000) }; } }).filter(x => min < 0 || (x.lv && LV.indexOf(String(x.lv).toUpperCase()) >= min)) }; },
+  "GET /api/logs": async u => { const r = await call("logs.tail", { limit: Math.min(500, +u.searchParams.get("limit") || 200) }, 20000); const LV = ["TRACE","DEBUG","INFO","WARN","ERROR","FATAL"]; const min = LV.indexOf(String(u.searchParams.get("level") || "").toUpperCase()); return { file: r.file, lines: (r.lines || []).map(l => { try { const j = JSON.parse(l); let sub = ""; try { sub = JSON.parse(j[0]).subsystem; } catch {} return { t: j.time || j._meta?.date, lv: j._meta?.logLevelName, sub, msg: redactText(String(j.message ?? j[1] ?? "")).slice(0, 2000) }; } catch { return { msg: redactText(String(l)).slice(0, 2000) }; } }).filter(x => min < 0 || (x.lv && LV.indexOf(String(x.lv).toUpperCase()) >= min)) }; },
   "GET /api/config": async () => cached("cfg", 30e3, async () => { const r = await call("config.get"); let c = r.config || r.parsed; if (!c && r.raw) try { c = JSON.parse(r.raw); } catch { c = null; } return { path: r.path, config: redact(c) }; }),
+  "POST /api/memory/search": async (u, b, req) => memSearch.search(b, "sid:" + crypto.createHash("sha256").update(String(cookieSid(req))).digest("hex").slice(0, 16)),
+  "GET /api/memory/users": async () => cached("memusers", 60e3, () => memSearch.users()),
   "GET /api/memory": async u => {
     const all = await memAll(); const qs = (u.searchParams.get("q") || "").trim().toLowerCase(); const off = +u.searchParams.get("offset") || 0;
     const hit = qs ? all.filter(m => String(m.data || "").toLowerCase().includes(qs)) : all;
@@ -539,6 +930,28 @@ const R = {
     return { collection: MEMCOL, points: info.points_count, total: hit.length, items: hit.slice(off, off + 50) };
   },
 };
+const modelAuth = makeModelAuth({ call, quietGuard, onChanged: () => dropCache("mauth", "models", "cfg") });
+const allowlists = makeAllowlist({ call, reloadPlan: mmReloadPlan, quietLeftMs, onApplied: () => dropCache("cfg", "ch", "models") });
+const secretStore = makeSecrets({ call, onChanged: () => dropCache("cfg", "mauth", "models") });
+Object.assign(R, MM_ROUTES, {
+  "GET /api/allowlist": () => allowlists.read(),
+  "POST /api/allowlist/preview": (u, b) => allowlists.preview(b),
+  "POST /api/allowlist/apply": W("allowlist.apply", b => Array.isArray(b.changes) ? b.changes.map(c => c?.path).join(",").slice(0, 200) : "", b => allowlists.apply(b), { confirm: true }),
+  "GET /api/secrets": () => secretStore.list(),
+  "POST /api/secrets/set": W("secrets.set", b => b.name, b => secretStore.set(b), { confirm: true }),
+  "POST /api/secrets/clear": W("secrets.clear", b => b.name, b => secretStore.clear(b), { confirm: true }),
+  "POST /api/models/auth/login": W("models.auth.login", "oauth", (b, u, req) => modelAuth.start(b, cookieSid(req)), { confirm: true }),
+  "POST /api/models/auth/order": W("models.auth.order", "profiles", b => modelAuth.order(b), { confirm: true }),
+});
+function modelAuthRoute(method, pathname) {
+  const match = /^\/api\/models\/auth\/login\/([^/]+)(?:\/(answer|cancel))?$/.exec(pathname);
+  if (!match) return null;
+  let id; try { id = decodeURIComponent(match[1]); } catch { throw httpErr(400, "登录流程编号无效"); }
+  if (method === "GET" && !match[2]) return (u, b, req) => modelAuth.poll(id, cookieSid(req));
+  if (method === "POST" && match[2] === "answer") return W("models.auth.login.answer", "oauth", (b, u, req) => modelAuth.answer(id, b, cookieSid(req)), { confirm: true });
+  if (method === "POST" && match[2] === "cancel") return W("models.auth.login.cancel", "oauth", (b, u, req) => modelAuth.cancel(id, b, cookieSid(req)), { confirm: true });
+  return null;
+}
 
 // ---------- v2.6：每日群报 / 星野日记 / 互动统计 / 表情库 / 主动行为参数 ----------
 // 生成阶段不向 QQ 发送（生图与总结走本机 CLI `openclaw infer`，一次性推理、无会话、无投递）。v2.13 起新增“投递”阶段，见下方 HS-DIGEST-DELIVER v1：只发送已生成好的群报，开关默认开，可在 digest-settings.json / API 调整。
@@ -1477,7 +1890,7 @@ const FUN_DEFAULTS = {
   enabled: false, killPhrase: "星野正经点", killOwnerOnly: true, optOutAllPhrase: "别整我", optOut: {},
   grudge: { enabled: false, defaultEnabled: false, perGroup: {}, recallProbability: 0.10, recallCooldownDays: 7, maxEntriesPerPerson: 20, maxQuoteChars: 40, optOutPhrase: "别记我仇", clearPhrase: "撕本本" },
   gag: { enabled: false, defaultEnabled: false, perGroup: {}, minScore: 4, minDistinctPeople: 2, windowMin: 3, requireApproval: true, cooldownDays: 3, maxUses: 5, perGroupDailyCap: 2, optOutPhrase: "别拿我的话玩梗", deletePhrase: "这梗删了" },
-  jealousy: { enabled: false, tierA: true, tierB: false, tierBProbability: 0.3, defaultEnabled: false, perGroup: {}, otherBots: [{ id: "OTHER_BOT_OPENID", name: "芙宁娜" }], perPersonDailyCap: 1, personCooldownMin: 30, groupCooldownMin: 120, optOutPhrase: "星野别吃醋" },
+  jealousy: { enabled: false, tierA: true, tierB: false, tierBProbability: 0.3, defaultEnabled: false, perGroup: {}, otherBots: [{ id: "A6902CCDF6FD63D47AC7B9A6BD44E201", name: "芙宁娜" }], perPersonDailyCap: 1, personCooldownMin: 30, groupCooldownMin: 120, optOutPhrase: "星野别吃醋" },
   lexicon: { enabled: false, defaultEnabled: false, perGroup: {}, maxSlang: 3, maxNames: 3, includeDerogatory: false },
 };
 // 类型：b=布尔 p=0–1 i:min:max=整数 s:max=非空短文本
@@ -1954,6 +2367,10 @@ Object.assign(R, {
 function send(res, code, obj, h = {}) { const b = JSON.stringify(obj); res.writeHead(code, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...h }); res.end(b); }
 const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".webmanifest": "application/manifest+json" };
 const SEC = { "x-content-type-options": "nosniff", "x-frame-options": "DENY", "referrer-policy": "no-referrer", "strict-transport-security": "max-age=31536000", "content-security-policy": "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'" };
+// HOSINO-CHAT-ACTIONS v1：撤回（self/admin，QQ 官方 DELETE 接口）+ 重新生成（sessions.rewind + chat.send）
+const CHAT_RECALL = () => !/^(0|false|off|no)$/i.test(process.env.QQ_RECALL_ENABLED || "");
+const memSearch = makeMemorySearch({ readCfg: () => JSON.parse(fs.readFileSync(CFG, "utf8")), qdrantUrl: QDRANT, collection: MEMCOL, log: (ep, target, ok, msg) => console.log(`[memsearch] ${ep} ${ok ? "ok" : "fail"} ${target}${msg ? " " + msg : ""}`) });
+const chatActions = makeChatActions({ call, readCfg: () => JSON.parse(fs.readFileSync(CFG, "utf8")), receiptsDir: process.env.QQ_RECEIPT_DIR || "/home/ubuntu/.openclaw/qqbot/delivery-receipts", enabled: CHAT_RECALL });
 const body = req => new Promise((resolve, reject) => {
   const chunks = []; let size = 0, failed = false;
   const fail = error => { if (!failed) { failed = true; reject(error); } };
@@ -1974,7 +2391,7 @@ const body = req => new Promise((resolve, reject) => {
 http.createServer(async (req, res) => {
   try {
     let u; try { u = new URL(req.url, "http://x"); } catch { return send(res, 400, { error: "请求地址无效" }); }
-    if (u.pathname.startsWith("/api/") && req.method === "POST" && req.headers["x-hs"] !== "1") return send(res, 403, { error: "拒绝跨站请求" });
+    if (u.pathname.startsWith("/api/") && req.method === "POST" && req.headers["x-hs"] !== "1") return send(res, 403, { error: "拒绝跨站请求", code: "missing_xhs" });
     if (u.pathname === "/api/login" && req.method === "POST") {
       const ip = ipOf(req), now = Date.now(); let f = fails.get(ip);
       if (f?.lockUntil > now) return send(res, 429, { error: `尝试次数过多，请 ${Math.ceil((f.lockUntil - now) / 60e3)} 分钟后再试` });
@@ -1996,19 +2413,19 @@ http.createServer(async (req, res) => {
         clearTimeout(timer); loginPending.delete(ip);
       }
     }
-    if (u.pathname === "/api/logout") { const s = cookieSid(req); if (s) sessions.delete(s); return send(res, 200, { ok: true }, { "set-cookie": "hs_sid=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0" }); }
+    if (u.pathname === "/api/logout") { const s = cookieSid(req); if (s) { sessions.delete(s); modelAuth.closeOwner(s); } return send(res, 200, { ok: true }, { "set-cookie": "hs_sid=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0" }); }
     if (u.pathname === "/api/me") { const a = !!authed(req); return send(res, 200, { authed: a, isOwner: a }); } // 单密码登录：登录即主人
     if (u.pathname.startsWith("/api/cli/") && !authed(req)) return send(res, 403, { error: "仅主人可用", code: "forbidden" });
     if (u.pathname.startsWith("/api/")) {
       if (!authed(req)) return send(res, 401, { error: "请先登录" });
       if (u.pathname === "/api/media" && req.method === "GET") return await serveMedia(req, res, u);
       if (u.pathname === "/api/digests/image" && req.method === "GET") { const id = u.searchParams.get("id"); if (!isDigestId(id)) return send(res, 400, { error: "id 无效" }); let d; try { d = JSON.parse(fs.readFileSync(path.join(DIGEST_DIR, id + ".json"), "utf8")); } catch { return send(res, 404, { error: "没有图片" }); } const f = digestImagePath(id, d.image); if (!f || !fs.existsSync(f)) return send(res, 404, { error: "没有图片" }); return serveFile(res, f, "image/png", "no-store"); }
-      if (u.pathname === "/api/stickers/import" && req.method === "POST") { if (req.headers["x-hs"] !== "1") return send(res, 403, { error: "拒绝跨站请求" }); const cat = u.searchParams.get("category"); try { const r = await stkImport(req, u); opLog(req, "stickers.import", `${cat} ${r.file}`, true); return send(res, 200, r); } catch (e) { opLog(req, "stickers.import", cat, false, e.message); return send(res, e.http || 500, { error: e.message, code: e.code }); } }
+      if (u.pathname === "/api/stickers/import" && req.method === "POST") { if (req.headers["x-hs"] !== "1") return send(res, 403, { error: "拒绝跨站请求", code: "missing_xhs" }); const cat = u.searchParams.get("category"); try { const r = await stkImport(req, u); opLog(req, "stickers.import", `${cat} ${r.file}`, true); return send(res, 200, r); } catch (e) { opLog(req, "stickers.import", cat, false, e.message); return send(res, e.http || 500, { error: e.message, code: e.code }); } }
       if (u.pathname === "/api/stickers/image" && req.method === "GET") { const n = u.searchParams.get("file"); if (!stickerFiles().includes(n)) return send(res, 404, { error: "表情不存在" }); const real = fs.realpathSync(path.join(STICKER_DIR, n)); if (!real.startsWith(fs.realpathSync(STICKER_DIR) + path.sep)) return send(res, 403, { error: "拒绝" }); return serveFile(res, real, MEDIA_MIME[path.extname(n).toLowerCase()] || "application/octet-stream"); }
-      if (req.method === "POST" && req.headers["x-hs"] !== "1") return send(res, 403, { error: "拒绝跨站请求" });
-      if (u.pathname === "/api/uploads" || u.pathname.startsWith("/api/uploads/")) { if (req.method === "DELETE" && req.headers["x-hs"] !== "1") return send(res, 403, { error: "拒绝跨站请求" }); return await upRoute(req, res, u); }
-      if (u.pathname.startsWith("/api/cli/")) { if (req.method === "DELETE" && req.headers["x-hs"] !== "1") return send(res, 403, { error: "拒绝跨站请求" }); return await cliRoute(req, res, u); }
-      const pm = req.method === "GET" && /^\/api\/profiles\/([^/]+)$/.exec(u.pathname); const h = pm ? (u2 => R["GET /api/profiles/:id"](u2, decodeURIComponent(pm[1]))) : R[req.method + " " + u.pathname]; if (!h) return send(res, 404, { error: "接口不存在" });
+      if (req.method === "POST" && req.headers["x-hs"] !== "1") return send(res, 403, { error: "拒绝跨站请求", code: "missing_xhs" });
+      if (u.pathname === "/api/uploads" || u.pathname.startsWith("/api/uploads/")) { if (req.method === "DELETE" && req.headers["x-hs"] !== "1") return send(res, 403, { error: "拒绝跨站请求", code: "missing_xhs" }); return await upRoute(req, res, u); }
+      if (u.pathname.startsWith("/api/cli/")) { if (req.method === "DELETE" && req.headers["x-hs"] !== "1") return send(res, 403, { error: "拒绝跨站请求", code: "missing_xhs" }); return await cliRoute(req, res, u); }
+      const pm = req.method === "GET" && /^\/api\/profiles\/([^/]+)$/.exec(u.pathname); const h = modelAuthRoute(req.method, u.pathname) || (pm ? (u2 => R["GET /api/profiles/:id"](u2, decodeURIComponent(pm[1]))) : R[req.method + " " + u.pathname]); if (!h) return send(res, 404, { error: "接口不存在" });
       const b = req.method === "POST" ? await body(req) : null;
       const out = await h(u, b, req); if (out?.__raw) { res.writeHead(200, { "content-type": out.__raw.type, "content-length": out.__raw.buf.length, "cache-control": "no-store", "x-content-type-options": "nosniff", ...out.__raw.headers }); return res.end(out.__raw.buf); } /* HOSINO-VOICES v1 raw audio/image */
       return send(res, 200, out);
@@ -2016,5 +2433,5 @@ http.createServer(async (req, res) => {
     let p = path.normalize(u.pathname).replace(/^(\.\.[/\\])+/, ""); if (p === "/" || !path.extname(p)) p = "/index.html";
     const fp = path.join(PUB, p); if (!fp.startsWith(PUB)) return send(res, 403, {});
     fs.readFile(fp, (e, d) => { if (e) { res.writeHead(404); return res.end(); } res.writeHead(200, { "content-type": MIME[path.extname(fp)] || "application/octet-stream", "cache-control": p === "/index.html" ? "no-cache" : "max-age=3600", ...SEC }); res.end(d); });
-  } catch (e) { send(res, e.http || 502, { error: e.message, code: e.code }); }
+  } catch (e) { send(res, e.http || 502, { error: e.message, code: e.code, ...(e.body && typeof e.body === "object" ? e.body : {}) }); }
 }).listen(PORT, "127.0.0.1", () => console.log("hosino-console on", PORT));

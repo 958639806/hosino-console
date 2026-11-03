@@ -12,6 +12,7 @@ import { makeMemorySearch } from "./memory-search.mjs"; // HOSINO-MEMORY-SEARCH 
 import { makeAllowlist } from "./allowlist.mjs";
 import { makeSecrets } from "./secrets.mjs";
 import { makeModelAuth } from "./model-auth.mjs";
+import { makePluginCenter } from "./plugin-center.mjs";
 const bcrypt = require("bcryptjs");
 
 const PORT = +process.env.PORT || 18890;
@@ -933,7 +934,12 @@ const R = {
 const modelAuth = makeModelAuth({ call, quietGuard, onChanged: () => dropCache("mauth", "models", "cfg") });
 const allowlists = makeAllowlist({ call, reloadPlan: mmReloadPlan, quietLeftMs, onApplied: () => dropCache("cfg", "ch", "models") });
 const secretStore = makeSecrets({ call, onChanged: () => dropCache("cfg", "mauth", "models") });
+const pluginCenter = makePluginCenter({ call, reloadPlan: mmReloadPlan, protectedPlugins: pluginProtected, quietGuard, onChanged: () => dropCache("pl", "sk", "cfg") });
 Object.assign(R, MM_ROUTES, {
+  "GET /api/plugin-center": () => pluginCenter.list(),
+  "GET /api/plugin-center/detail": u => pluginCenter.detail(u.searchParams.get("id")),
+  "POST /api/plugin-center/plan": (u, b, req) => pluginCenter.plan(b, cookieSid(req)),
+  "POST /api/plugin-center/apply": W("plugin-center.apply", "native-plugin-config", (b, u, req) => pluginCenter.apply(b, cookieSid(req)), { confirm: true }),
   "GET /api/allowlist": () => allowlists.read(),
   "POST /api/allowlist/preview": (u, b) => allowlists.preview(b),
   "POST /api/allowlist/apply": W("allowlist.apply", b => Array.isArray(b.changes) ? b.changes.map(c => c?.path).join(",").slice(0, 200) : "", b => allowlists.apply(b), { confirm: true }),

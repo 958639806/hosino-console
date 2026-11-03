@@ -1,6 +1,7 @@
 // 本地预览用的假后端（按 API.md 的结构返回示例数据）
 import http from "node:http"; import fs from "node:fs"; import path from "node:path";
 import { makeControlPanels } from "./control-panels.mjs";
+import { makePluginCenterMock } from "./plugin-center.mjs";
 const PUB = path.resolve("../public"); const now = Date.now(); const GB = 1024 ** 3;
 const AUTH = process.env.AUTH !== "0";
 const sess = [
@@ -223,14 +224,19 @@ function hlApply(p) {
 const hlOut = () => ({ params: hlMerge(), stored: HL_ST, defaults: HL_DEF, suggestions: { quirkPhrases: HL_SUG }, consumers: false, requires: HL_REQ, note: "消费这些参数的技能和 gate 补丁还没做，现在只保存设置，不会改变星野的行为。" });
 const controlPanels = makeControlPanels({ memories: () => MEM, initialConfig: R["/api/config"].config, initialModels: R["/api/models"].models, initialAuth: R["/api/models/auth"] });
 R["/api/config"].config = controlPanels.config;
+const pluginCenter = makePluginCenterMock();
 http.createServer(async (req, res) => {
   const J = (o, st = 200) => { res.writeHead(st, { "content-type": "application/json; charset=utf-8" }); return res.end(JSON.stringify(o)); };
   try {
   const u = new URL(req.url, "http://x");
   if (u.pathname.startsWith("/api/")) {
-    if (req.method === "POST" && req.headers["x-hs"] !== "1") return J({ error: "拒绝跨站请求", code: "missing_xhs" }, 403);
+    if (req.method === "POST" && req.headers["x-hs"] !== "1") return J({ error: "拒绝跨站请求", code: "missing_xhs", ...(pluginCenter.handles(req.method, u.pathname) ? { mock: true } : {}) }, 403);
     if (u.pathname === "/api/media") { const pth = u.searchParams.get("path") || ""; const f = /\.(png|jpe?g)$/.test(pth) ? path.join(PUB, "icon-512.png") : null; if (!f) { res.writeHead(404); return res.end(); } res.writeHead(200, { "content-type": "image/png" }); return fs.createReadStream(f).pipe(res); }
     const body = async () => { let b = ""; for await (const c of req) b += c; return JSON.parse(b || "{}"); };
+    if (pluginCenter.handles(req.method, u.pathname)) {
+      if (!AUTH) return J({ error: "MOCK：请先登录", code: "unauthorized", mock: true }, 401);
+      return J(await pluginCenter.handle(req.method, u, req.method === "POST" ? await body() : undefined));
+    }
     if (controlPanels.handles(req.method, u.pathname)) {
       if (!AUTH) return J({ error: "MOCK：请先登录", code: "unauthorized", mock: true }, 401);
       return J(await controlPanels.handle(req.method, u.pathname, req.method === "POST" ? await body() : undefined));

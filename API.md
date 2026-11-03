@@ -1,4 +1,4 @@
-# 控制台 API 增量（2026.11.4-rc.1，未发布）
+# 控制台 API 增量（2026.11.4-rc.2，未发布）
 
 原有接口见 [docs/API.md](docs/API.md)。以下记录新增接口及更新后的约定。
 
@@ -99,3 +99,20 @@ embedding 配置从 openclaw.json 的 `plugins.entries.openclaw-mem0.config.oss.
 - 向导支持 note、progress、text、select、multiselect、confirm、action；需要答案的步骤必须由用户提交，不自动接受授权。选项值通过随机标识映射，敏感输入及上游诊断不落审计。
 - 正在推进的登录步骤和账号排序遵循静默窗口；取消登录仍可用。窗口结束后可继续当前未过期向导。
 - SDK 参数和桥接依据见 [docs/new-auth-contract.md](docs/new-auth-contract.md)。
+
+## 9. OpenClaw 原生插件中心
+
+入口 `#/abilities#plugin-center`，与原有插件/技能状态页并存。使用已有 OpenClaw 插件接口，不运行 AstrBot 或兼容框架。
+
+| 方法 | 路径 | 请求 / 结果 |
+| --- | --- | --- |
+| GET | `/api/plugin-center` | 原生插件列表、受保护状态、能力及操作边界。 |
+| GET | `/api/plugin-center/detail?id=PLUGIN_ID` | 详情、声明组件、配置 schema、脱敏 `config.values`、`secretFields` 与配置版本。 |
+| POST | `/api/plugin-center/plan` | `{action:"config",id,baseHash,config}` 生成差异；原生安装候选使用 `{action:"install",source,spec,baseHash}`。只读，可在静默窗口预览。 |
+| POST | `/api/plugin-center/apply` | `{planId,baseHash,confirm:true}`；仅对受审核名单、实时无需重载且未触及保护范围的配置生效。默认审核名单为空。 |
+
+预览返回 `planId/baseHash/diff/apply/canApply/blockedCode/blockedReason/export`。`export.content` 是不含凭据的 JSON 变更单，标记 `executable:false`，不是可直接执行的脚本。原生安装候选只检查标识格式，不下载、验证或执行包。
+
+当前所有插件生命周期动作只生成维护计划，不调用 `plugins.install/setEnabled/uninstall/reload`。配置需维护、影响未知或未经审核时，`canApply:false`，不能用调用 apply 绕过限制。受保护插件与同包成员拒绝变更；版本冲突、过期计划、静默窗口和上游故障分别返回受控错误。
+
+更多约束与未来原生插件接入流程见 [docs/plugin-center.md](docs/plugin-center.md)。

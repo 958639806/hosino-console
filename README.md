@@ -2,7 +2,7 @@
 
 OpenClaw QQ bot 星野のねこ web console (backend server.mjs, frontend public/), gate/core patches (patches, staging, toolfp) and design docs (docs/).
 
-当前工作版本：**2026.11.4-rc.2（未发布）**。在快照补全版本上增加 OpenClaw 原生插件中心，逐项记录见 [CHANGELOG.md](CHANGELOG.md)。旧标签和 Release 保留。
+当前版本：**2026.11.4**。包含快照功能补全、回归修复和 OpenClaw 原生插件中心，更新内容与验证边界见 [发布说明](docs/release-v2026.11.4.md) 和 [CHANGELOG.md](CHANGELOG.md)。旧标签和 Release 保留。
 
 插件中心入口为“更多 → 能力与任务 → 插件中心”，提供原生插件详情、配置差异预览和变更单导出，见 [功能与边界](docs/plugin-center.md)。仍使用现有 OpenClaw 与 QQ 接入，无额外机器人运行框架。
 

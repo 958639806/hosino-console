@@ -1,10 +1,10 @@
-import { api, setUnauthedHandler, notReady, mediaOf, rawReq } from "./api.js?v=2026.11.4-rc.2";
-import { makeCred } from "./cred-adapter.js?v=2026.11.4-rc.2";
+import { api, setUnauthedHandler, notReady, mediaOf, rawReq } from "./api.js?v=2026.11.4";
+import { makeCred } from "./cred-adapter.js?v=2026.11.4";
 const cred = makeCred(rawReq);
-import { makeMemSearch, ALL as MS_ALL } from "./memsearch-adapter.js?v=2026.11.4-rc.2";
+import { makeMemSearch, ALL as MS_ALL } from "./memsearch-adapter.js?v=2026.11.4";
 const memSearch = makeMemSearch(rawReq);
-import { md } from "./md.js?v=2026.11.4-rc.2";
-import { pluginCenter } from "./plugin-center.js?v=2026.11.4-rc.2";
+import { md } from "./md.js?v=2026.11.4";
+import { pluginCenter } from "./plugin-center.js?v=2026.11.4";
 
 // ---------- 小工具 ----------
 const $ = (s, el = document) => el.querySelector(s);
@@ -2960,7 +2960,7 @@ document.addEventListener("keydown", e => {
 
 // ---- 6 PWA ----
 if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) {
-  addEventListener("load", () => navigator.serviceWorker.register("/sw.js?v=2026.11.4-rc.2").catch(() => {}));
+  addEventListener("load", () => navigator.serviceWorker.register("/sw.js?v=2026.11.4").catch(() => {}));
 }
 
 

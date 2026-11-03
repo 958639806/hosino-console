@@ -1,0 +1,53 @@
+name: Upload verified v2026.11.4 packages
+on:
+  push:
+    branches: [release/v2026.11.4]
+    paths: [.github/workflows/publish-v2026.11.4.yml]
+permissions:
+  contents: write
+  actions: read
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: v2026.11.4
+      SOURCE_SHA: ba97fa91c16a6449d92db9f2cac907313d7c36ed
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Verify immutable source, prior tags and successful source CI
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse 'v2026.11.4^{commit}')" = "$SOURCE_SHA"
+          test "$(git rev-parse v2026.11.2)" = c59695333db0e55024aec22f64ee76c21fbe0c09
+          test "$(git rev-parse v2026.11.3)" = d05bbf8028f442ef754a1292937c195f56f43ec7
+          test "$(git rev-parse 'v2026.11.3.7^{commit}')" = 646701999eec2d12834a2d7475404b9c11f23414
+          gh api "repos/$GITHUB_REPOSITORY/actions/runs/41592943425" > source-ci.json
+          jq -e '.head_sha == "ba97fa91c16a6449d92db9f2cac907313d7c36ed" and .conclusion == "success"' source-ci.json
+          gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --jq '.[] | select(.tag_name == "v2026.11.4")' > release.json
+          jq -e '.id == 432366246 and .draft == true and (.assets | length) == 0' release.json
+      - name: Rebuild and verify exact release artifacts
+        shell: bash
+        run: |
+          set -euo pipefail
+          python3 scripts/build-release.py --ref "$SOURCE_SHA" --version 2026.11.4 --output-dir packages
+          cd packages
+          sha256sum --check hosino-console-v2026.11.4-SHA256SUMS.txt
+          printf '%s\n' \
+            'e82d5c482ac83b4d423afe37d7ebd237937dd6897bc3096de8b86538ccf6e59a  hosino-console-v2026.11.4.tar.gz' \
+            '9823cb881876f8ee6495812da422b8cdcdf6f300a82168fdaa4e7272e1106046  hosino-console-v2026.11.4.zip' \
+            '34e86bcc2bfbbbcf350c682b18d5e6abbd472dcd49927a311e8489f4634802ed  hosino-console-v2026.11.4-SHA256SUMS.txt' > expected-checksums.txt
+          sha256sum --check expected-checksums.txt
+      - name: Upload new assets without overwriting
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release upload "$RELEASE_TAG" \
+            packages/hosino-console-v2026.11.4.tar.gz \
+            packages/hosino-console-v2026.11.4.zip \
+            packages/hosino-console-v2026.11.4-SHA256SUMS.txt \
+            --repo "$GITHUB_REPOSITORY"

@@ -1,0 +1,16 @@
+{
+  "name": "hosino-console",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "engines": { "node": ">=22.0.0" },
+  "scripts": {
+    "start": "node server.mjs",
+    "check": "node --check server.mjs && node --check mobile-runtime.mjs",
+    "test": "node --test tests/*.test.mjs"
+  },
+  "dependencies": {
+    "bcryptjs": "3.0.3",
+    "ws": "8.22.1"
+  }
+}

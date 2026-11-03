@@ -817,13 +817,7 @@ function tuneSheet(sess, models, defaults) {
     ${mis ? `<div class="cx-mis" id="cxmis"><span>⚠ 现在的引擎是 ${esc(cxRtName(sess.agentRuntime))}，和 ${esc(curM?.name || curM?.id || "这个模型")} 不配套</span><button type="button" class="btn sm" data-rtauto>改回自动</button></div>` : ""}
     <div class="faint cx-note">${cxIsLocked(sess) ? "这个会话的模型被锁定了，这里只能调思考强度。" : noRt ? "这是 ACP 会话，模型和引擎由 ACP 那边管理。" : "换模型时会自动配好引擎，不用自己选。"}</div>
     <label class="field"><span>思考强度</span><div class="seg" role="group">${thinks.map(t => `<button type="button" data-t="${esc(t)}" aria-pressed="${t === (sess.thinkingLevel || sess.thinkingDefault)}">${esc(thinkZh[t] || t)}</button>`).join("")}</div></label>
-    <div style="display:flex;gap:10px;margin-top:20px"><button type="button" class="btn" data-close style="flex:1">取消</button><button class="btn primary" style="flex:2">保存</button></div></form>
-    <label class="field" style="margin-top:18px"><span>分组</span><select class="select" id="mvg"><option value="">未分组</option>${GROUPS.map(g => `<option value="${esc(g.id)}" ${g.id === groupOf(sess) ? "selected" : ""}>${esc(g.name)}</option>`).join("")}</select></label>
-    <div class="section" style="margin:24px 0 10px">会话操作</div>
-    <div class="grid g3"><button class="btn" data-op="compact">压缩上下文</button><button class="btn" data-op="reset">重置会话</button><button class="btn danger" data-op="delete">${ic("trash")}删除会话</button></div>
-    ${sess.chatType === "group" || qqTarget(sess.key)?.kind === "group" ? `<div class="grid g2" style="margin-top:10px"><a class="btn" href="#/interactions/${encodeURIComponent(sess.key)}" data-close>${ic("people")}互动统计</a><a class="btn" href="#/digest" data-close>${ic("digest")}群报设置</a></div>` : ""}`, (el, close) => {
-    el.querySelectorAll("[data-op]").forEach(b => b.onclick = () => sessionOp(b.dataset.op, sess, close));
-    el.querySelector("#mvg").onchange = e => moveToGroup(sess.key, e.target.value || null, () => { close(true); route(); });
+    <div style="display:flex;gap:10px;margin-top:20px"><button type="button" class="btn" data-close style="flex:1">取消</button><button class="btn primary" style="flex:2">保存</button></div></form>`, (el, close) => {
     let think = sess.thinkingLevel || sess.thinkingDefault;
     el.querySelectorAll("[data-t]").forEach(b => b.onclick = () => { think = b.dataset.t; el.querySelectorAll("[data-t]").forEach(x => x.setAttribute("aria-pressed", x === b)); });
     el.querySelector("[data-close]").onclick = () => close();
@@ -2403,25 +2397,51 @@ VIEWS.files = async (v, name) => {
     <div class="list">${(d.files || []).map(f => `<a class="row" href="#/files/${encodeURIComponent(f.name)}"><div class="avatar" style="font-size:12px">${esc(f.name.replace(/\.md$/i, "").slice(0, 2))}</div><div class="grow"><div class="t mono">${esc(f.name)}</div><div class="d">${f.missing ? "还没有创建" : bytes(f.size) + (f.updatedAtMs ? " · " + ago(f.updatedAtMs) + "修改" : "")}</div></div>${f.missing ? pill("空") : EDITABLE.has(f.name) ? pill("可编辑", "ac") : pill("只读")}</a>`).join("") || `<div class="empty">没有文件</div>`}</div>`);
   if (d && name) fileEditor(name);
 };
+// 行级改动统计：去掉首尾相同行，中间段小的话用 LCS，大的话按段长估算
+function lineDiff(a, b) {
+  const A = a.split("\n"), B = b.split("\n"); let i = 0, j = 0;
+  while (i < A.length && i < B.length && A[i] === B[i]) i++;
+  while (j < A.length - i && j < B.length - i && A[A.length - 1 - j] === B[B.length - 1 - j]) j++;
+  const x = A.slice(i, A.length - j), y = B.slice(i, B.length - j);
+  if (!x.length || !y.length || x.length * y.length > 4e6) return { add: y.length, del: x.length };
+  let prev = new Uint32Array(y.length + 1);
+  for (const l of x) { const cur = new Uint32Array(y.length + 1); for (let k = 0; k < y.length; k++) cur[k + 1] = l === y[k] ? prev[k] + 1 : Math.max(prev[k + 1], cur[k]); prev = cur; }
+  const same = prev[y.length]; return { add: y.length - same, del: x.length - same };
+}
+const diffTxt = d => d.add || d.del ? `+${d.add} −${d.del} 行` : "";
+// 键盘弹出时跟着可视区域收缩（iOS/Android 的 visualViewport）
+function trackViewport(el) {
+  const vv = window.visualViewport; if (!vv) return () => {};
+  const fit = () => { el.style.setProperty("--vvh", vv.height + "px"); el.style.setProperty("--vvt", vv.offsetTop + "px"); };
+  fit(); vv.addEventListener("resize", fit); vv.addEventListener("scroll", fit);
+  return () => { vv.removeEventListener("resize", fit); vv.removeEventListener("scroll", fit); };
+}
 async function fileEditor(name) {
   let f; try { const r = await api.agentFile(name, "main"); f = r.file || r; } catch (e) { return toast(notReady(e) ? "文件接口还没开放" : e.message); }
   const ro = !EDITABLE.has(name);
-  sheet(`<h2 class="mono">${esc(name)} ${ro ? pill("只读") : ""}</h2><div class="seg" style="margin-bottom:10px"><button data-m="edit" aria-pressed="true">编辑</button><button data-m="view" aria-pressed="false">预览</button></div>
-    <textarea class="input mono editor" spellcheck="false" ${ro ? "readonly" : ""}>${esc(f.content || "")}</textarea><div class="md mdbox" hidden></div>
-    <div style="display:flex;gap:10px;margin-top:12px;align-items:center"><span class="faint" id="dirty" style="font-size:12.5px;flex:1">${f.updatedAtMs ? ago(f.updatedAtMs) + "修改" : ""}</span><button class="btn" data-close>关闭</button>${ro ? "" : `<button class="btn primary" data-save disabled>保存</button>`}</div>`, (el, cl) => {
-    el.classList.add("wide");
-    const ta = el.querySelector("textarea"), pv = el.querySelector(".mdbox"), sv = el.querySelector("[data-save]") || { disabled: true }, dirty = el.querySelector("#dirty");
+  sheet(`<header class="fse-bar"><button class="iconbtn" data-close aria-label="关闭编辑">${ic("back")}</button>
+      <div class="fse-title"><b class="mono">${esc(name)}</b><span class="fse-sub" id="dirty" aria-live="polite">${ro ? "只读" : f.updatedAtMs ? ago(f.updatedAtMs) + "修改" : ""}</span></div>
+      <i class="fse-dot" hidden aria-hidden="true"></i>${ro ? "" : `<button class="btn primary fse-save" data-save disabled>保存</button>`}</header>
+    <div class="fse-tools"><div class="seg"><button data-m="edit" aria-pressed="true">编辑</button><button data-m="view" aria-pressed="false">预览</button></div><span class="fse-meta mono" id="fsemeta"></span></div>
+    <textarea class="mono editor fse-ta" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="${esc(name)} 内容" placeholder="${ro ? "" : "文件是空的，从这里开始写…"}" ${ro ? "readonly" : ""}>${esc(f.content || "")}</textarea><div class="md fse-pv" hidden></div>`, (el, cl) => {
+    el.classList.add("fse"); el.setAttribute("aria-label", "编辑 " + name);
+    const host = el.parentElement; host.classList.add("fse-host");
+    const untrack = trackViewport(el); const prevClose = host._onclose; host._onclose = () => { untrack(); prevClose?.(); };
+    const ta = el.querySelector("textarea"), pv = el.querySelector(".fse-pv"), sv = el.querySelector("[data-save]") || { disabled: true }, dirty = el.querySelector("#dirty"), dot = el.querySelector(".fse-dot"), meta = el.querySelector("#fsemeta");
     let saving = false, savedNote = dirty.textContent;
-    const syncDirty = () => { const ch = ta.value !== (f.content || ""); sv.disabled = saving || !ch; dirty.textContent = ch ? "有未保存的修改" : savedNote; };
-    ta.oninput = syncDirty;
-    el.querySelectorAll("[data-m]").forEach(b => b.onclick = () => { const view = b.dataset.m === "view"; el.querySelectorAll("[data-m]").forEach(x => x.setAttribute("aria-pressed", x === b)); ta.hidden = view; pv.hidden = !view; if (view) pv.innerHTML = md(ta.value); });
+    let t;
+    const syncStats = () => { clearTimeout(t); const ch = ta.value !== (f.content || ""), d = ch ? diffTxt(lineDiff(f.content || "", ta.value)) : ""; dirty.textContent = ch ? "未保存" + (d ? " · " + d : "") : savedNote; meta.textContent = `${ta.value ? ta.value.split("\n").length : 0} 行`; };
+    const syncDirty = () => { const ch = ta.value !== (f.content || ""); sv.disabled = saving || !ch; dot.hidden = !ch; syncStats(); };
+    ta.oninput = () => { const ch = ta.value !== (f.content || ""); sv.disabled = saving || !ch; dot.hidden = !ch; clearTimeout(t); t = setTimeout(syncStats, 120); };
+    syncDirty();
+    el.querySelectorAll("[data-m]").forEach(b => b.onclick = () => { const view = b.dataset.m === "view"; el.querySelectorAll("[data-m]").forEach(x => x.setAttribute("aria-pressed", x === b)); ta.hidden = view; pv.hidden = !view; if (view) pv.innerHTML = ta.value.trim() ? md(ta.value) : `<div class="faint">还没有内容</div>`; });
     el.querySelector("[data-close]").onclick = async () => { if (await cl()) location.hash = "#/files"; };
     sv.onclick = async () => {
       if (saving) return;
-      const submitted = ta.value, diff = submitted.split("\n").length - (f.content || "").split("\n").length;
+      const submitted = ta.value, d = lineDiff(f.content || "", submitted);
       saving = true; syncDirty();
       try {
-        if (!await confirmDialog({ title: `保存 ${name}？`, body: `这会改变星野のねこ 的行为（${diff >= 0 ? "+" : ""}${diff} 行）。<br>旧版本会自动备份，需要时可以找回。`, ok: "保存" })) return;
+        if (!await confirmDialog({ title: `保存 ${name}？`, body: `这会改变星野のねこ 的行为（${diffTxt(d) || "无行变化"}）。<br>旧版本会自动备份，需要时可以找回。`, ok: "保存" })) return;
         sv.textContent = "保存中…";
         const r = await api.agentFileSet(name, submitted, "main"); f = { ...f, ...(r.file || {}), content: submitted }; cl.markSaved(new Map([[ta, submitted]])); savedNote = r.backup ? "备份：" + r.backup.split("/").pop() : "刚刚保存";
         toast(ta.value !== submitted ? "已保存提交内容，后续修改还没保存" : r.backup ? "已保存，旧版本已备份 ✓" : "已保存 ✓");

@@ -93,17 +93,17 @@ test('history polling refreshes earlier content and delivery without a new final
   assert.ok(requests > 1);
 });
 
-for (const action of ['Escape', 'scrim', 'close button', 'browser Back']) {
+for (const action of ['Escape', 'visible return button', 'browser Back']) {
   test(`dirty file editor confirms ${action}, preserving the draft when cancelled`, async t => {
     const page = await pageFor(t);
     await page.goto(base + '/#/files/SOUL.md');
     const editor = page.locator('.sheet').filter({ has: page.locator('textarea') });
     await editor.locator('textarea').fill('unsaved draft');
+    assert.equal(await editor.evaluate(el => el.classList.contains('fse')), true, 'the released full-screen editor stays in use');
     assert.equal(await editor.locator('[data-save]').isEnabled(), true);
     const trigger = async () => {
       if (action === 'Escape') await page.keyboard.press('Escape');
-      else if (action === 'scrim') await editor.locator('..').locator('.scrim').click({ position: { x: 5, y: 5 } });
-      else if (action === 'close button') await editor.locator('[data-close]').click();
+      else if (action === 'visible return button') await editor.getByRole('button', { name: '关闭编辑', exact: true }).click();
       else await page.goBack();
     };
     await trigger();
@@ -116,6 +116,25 @@ for (const action of ['Escape', 'scrim', 'close button', 'browser Back']) {
     await editor.waitFor({ state: 'detached' });
   });
 }
+
+test('a non-fullscreen voice editor confirms scrim dismissal and preserves a cancelled draft', async t => {
+  const page = await pageFor(t);
+  await page.route('**/api/fun/voices', route => route.fulfill({ json: { voices: [] } }));
+  await page.goto(base + '/#/voice#voices');
+  await page.locator('#vvurl').fill('1234567890abcdef1234567890abcdef');
+  await page.locator('[data-vvurl]').click();
+  await page.locator('#vva-al').fill('scrim_voice_draft');
+  const voice = page.locator('.sheet').filter({ has: page.locator('#vva-al') });
+  const scrim = voice.locator('..').locator('.scrim');
+  await scrim.click({ position: { x: 5, y: 5 } });
+  await page.getByRole('heading', { name: '还有改动没保存', exact: true }).waitFor();
+  await page.locator('.sheet [data-no]').last().click();
+  assert.equal(await page.locator('#vva-al').inputValue(), 'scrim_voice_draft');
+  await scrim.click({ position: { x: 5, y: 5 } });
+  await page.getByRole('heading', { name: '还有改动没保存', exact: true }).waitFor();
+  await page.locator('.sheet [data-yes]').last().click();
+  await voice.waitFor({ state: 'detached' });
+});
 
 test('saving an edited file clears dirty state before the editor is closed', async t => {
   const page = await pageFor(t);

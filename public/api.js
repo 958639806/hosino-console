@@ -1,11 +1,14 @@
 // 统一的接口层：与 server.mjs 路由一一对应
 // 所有请求携带 Cookie（credentials:'include'）与 CSRF 头 X-HS: 1
 const CSRF = { "X-HS": "1" };
-export class ApiError extends Error { constructor(msg, status, code) { super(msg); this.status = status; this.code = code; } }
+export class ApiError extends Error { constructor(msg, status, code, detail, data) { super(msg); this.status = status; this.code = code; this.detail = detail; this.data = data; } }
 let onUnauthed = () => {};
+let authEpoch = 0;
+const notifyUnauthed = epoch => { if (epoch === authEpoch) onUnauthed(); };
 export const setUnauthedHandler = fn => { onUnauthed = fn; };
 
 async function req(method, path, body) {
+  const epoch = authEpoch;
   let r;
   try {
     r = await fetch(path, {
@@ -15,12 +18,15 @@ async function req(method, path, body) {
     });
   } catch { throw new ApiError("网络好像断开了，稍后再试试", 0); }
   let data = null; try { data = await r.json(); } catch {}
-  if (r.status === 401 && path !== "/api/login") onUnauthed();
-  if (!r.ok) throw new ApiError(data?.error || `请求失败（${r.status}）`, r.status, data?.code);
+  if (r.status === 401 && path !== "/api/login") notifyUnauthed(epoch);
+  if (!r.ok) throw new ApiError(data?.error || `请求失败（${r.status}）`, r.status, data?.code, data?.detail, data);
+  if (path === "/api/login" || path === "/api/logout") ++authEpoch;
   return data;
 }
 const get = (p, q) => req("GET", p + (q ? "?" + new URLSearchParams(Object.entries(q).filter(([, v]) => v != null && v !== "")) : ""));
 const post = (p, b) => req("POST", p, b || {});
+// 给独立适配层（cred-adapter.js）用的原始请求：同样带 X-HS:1 和统一错误
+export const rawReq = (method, path, body) => req(method, path, body);
 
 export const api = {
   // v2.12 小脾气参数（POST 全部带 confirm:true）
@@ -45,9 +51,10 @@ export const api = {
   vvRegen: confirm => post("/api/fun/voices/regen-manual", confirm ? { confirm: true } : {}),
   // 试听（每次真合成都花 Fish 额度）：只在用户点击时调用；fetch 拿 blob，失败读 JSON 中文提示（429 rate_session/hour/day）
   vvPreviewBlob: async (id, text) => {
+    const epoch = authEpoch;
     const url = "/api/fun/voices/preview?" + new URLSearchParams(text ? { id, text } : { id });
     let r; try { r = await fetch(url, { credentials: "include", cache: "no-store", headers: { ...CSRF } }); } catch { throw new ApiError("网络好像断开了，稍后再试试", 0); }
-    if (r.status === 401) onUnauthed();
+    if (r.status === 401) notifyUnauthed(epoch);
     if (!r.ok) { let d = null; try { d = await r.json(); } catch {} throw new ApiError(d?.error || `试听失败（${r.status}）`, r.status, d?.code); }
     return r.blob();
   },
@@ -64,12 +71,13 @@ export const api = {
   uploadLimits: () => get("/api/uploads/limits"),
   uploadDelete: id => req("DELETE", `/api/uploads/${encodeURIComponent(id)}`),
   upload: (blob, { scope, session, name }, onProgress) => {
+    const epoch = authEpoch;
     const x = new XMLHttpRequest();
     const promise = new Promise((resolve, reject) => {
       x.open("POST", `/api/uploads?${new URLSearchParams({ scope, session, name })}`);
       x.withCredentials = true; x.setRequestHeader("X-HS", "1"); x.setRequestHeader("Content-Type", "application/octet-stream");
       x.upload.onprogress = e => e.lengthComputable && onProgress?.(e.loaded / e.total);
-      x.onload = () => { let d = null; try { d = JSON.parse(x.responseText); } catch {} if (x.status === 401) onUnauthed(); x.status >= 200 && x.status < 300 ? resolve(d) : reject(new ApiError(d?.error || `上传失败（${x.status}）`, x.status, d?.code)); };
+      x.onload = () => { let d = null; try { d = JSON.parse(x.responseText); } catch {} if (x.status === 401) notifyUnauthed(epoch); x.status >= 200 && x.status < 300 ? resolve(d) : reject(new ApiError(d?.error || `上传失败（${x.status}）`, x.status, d?.code)); };
       x.onerror = () => reject(new ApiError("网络好像断开了，稍后再试试", 0));
       x.onabort = () => reject(new ApiError("已取消", -1, "aborted"));
       x.send(blob);
@@ -77,10 +85,11 @@ export const api = {
     return { promise, abort: () => x.abort() };
   },
   cliRun: async (id, prompt, onEvent, signal, attachments) => {
+    const epoch = authEpoch;
     let r;
     try { r = await fetch(`/api/cli/sessions/${encodeURIComponent(id)}/run`, { method: "POST", credentials: "include", cache: "no-store", signal, headers: { ...CSRF, "Content-Type": "application/json", Accept: "text/event-stream" }, body: JSON.stringify({ prompt, ...(attachments?.length ? { attachments } : {}) }) }); }
     catch (e) { if (e.name === "AbortError") return; throw new ApiError("网络好像断开了，稍后再试试", 0); }
-    if (!r.ok || !/event-stream/.test(r.headers.get("content-type") || "")) { let d = null; try { d = await r.json(); } catch {} if (r.status === 401) onUnauthed(); throw new ApiError(d?.error || `请求失败（${r.status}）`, r.status, d?.code); }
+    if (!r.ok || !/event-stream/.test(r.headers.get("content-type") || "")) { let d = null; try { d = await r.json(); } catch {} if (r.status === 401) notifyUnauthed(epoch); throw new ApiError(d?.error || `请求失败（${r.status}）`, r.status, d?.code); }
     const rd = r.body.getReader(), dec = new TextDecoder(); let buf = "";
     const flush = blk => { let ev = "message", data = ""; for (const ln of blk.split("\n")) { if (!ln || ln.startsWith(":")) continue; const i = ln.indexOf(":"), k = i < 0 ? ln : ln.slice(0, i), v = i < 0 ? "" : ln.slice(i + 1).replace(/^ /, ""); if (k === "event") ev = v; else if (k === "data") data += (data ? "\n" : "") + v; } if (!data && ev === "message") return; let j = data; try { j = JSON.parse(data); } catch {} onEvent(ev, j); };
     try { for (;;) { const { value, done } = await rd.read(); if (done) break; buf += dec.decode(value, { stream: true }).replace(/\r\n/g, "\n"); let i; while ((i = buf.indexOf("\n\n")) >= 0) { flush(buf.slice(0, i)); buf = buf.slice(i + 2); } } if (buf.trim()) flush(buf); }
@@ -153,6 +162,29 @@ export const api = {
   // ---------- v2.1（API.md v2.1） ----------
   features: () => get("/api/features"), // { qqSend, 媒体中转开关, mediaRemoteHosts }
   // 以星野のねこ身份直发到 QQ（不触发 agent 回合）。危险操作，必须 confirm:true
+  // chat-actions v1（staging/chat-actions/API.md）：撤回 / 重新生成，都带 confirm:true
+  recallable: (key, id) => get("/api/chat/recallable", { key, id }),
+  recall: (key, id, mode) => post("/api/chat/recall", { key, id, mode, confirm: true }),
+  regenerate: (key, id, deliver) => post("/api/chat/regenerate", { key, id, deliver: deliver === true, confirm: true }),
+  // 模型 ping（model-ping/FRONTEND-SPEC.md）：CLI 运行时最长 60 秒，前端 75 秒超时，可用 signal 取消
+  modelPing: async (modelRef, signal) => {
+    const ac = new AbortController(), t = setTimeout(() => ac.abort("timeout"), 75000);
+    const stop = () => ac.abort("cancel"); signal?.addEventListener("abort", stop);
+    try {
+      const r = await fetch("/api/models/ping", { method: "POST", credentials: "include", cache: "no-store", headers: { ...CSRF, "Content-Type": "application/json" }, body: JSON.stringify({ modelRef }), signal: ac.signal });
+      let d = null; try { d = await r.json(); } catch {}
+      if (r.status === 401) notifyUnauthed(authEpoch);
+      if (!r.ok) throw new ApiError(d?.error || `请求失败（${r.status}）`, r.status, d?.code);
+      return d;
+    } catch (e) { if (e instanceof ApiError) throw e; if (ac.signal.aborted) throw new ApiError(ac.signal.reason === "cancel" ? "已取消" : "等了 75 秒还没回来，算超时", 0, ac.signal.reason === "cancel" ? "cancelled" : "client_timeout"); throw new ApiError("网络好像断开了，稍后再试试", 0); }
+    finally { clearTimeout(t); signal?.removeEventListener("abort", stop); }
+  },
+  // 模型管理（model-manage/API.md + console-5feat/API-PROPOSAL.md）：plan → 确认 → apply（confirm:true + planId）
+  manage: () => get("/api/models/manage"),
+  managePlan: ops => post("/api/models/manage/plan", { ops }),
+  manageBackups: () => get("/api/models/manage/backups"),
+  manageRollback: (backupId, opts) => post("/api/models/manage/rollback", { backupId, ...opts }),
+  manageApply: (planId, baseHash) => post("/api/models/manage/apply", { planId, baseHash, confirm: true }),
   qqSend: (sessionKey, text) => post("/api/qq/send", { sessionKey, text, confirm: true }),
   // 会话别名（API.md v2.2，存控制台 aliases.json）：key = 会话 key 或 32 位 QQ id；alias 空串 = 清除；≤40 字
   aliases: () => get("/api/aliases"),
@@ -189,11 +221,12 @@ export const api = {
   stickerGenStatus: id => get("/api/stickers/generate/status", { id }),
   // 导入：原始字节，XHR 以便拿上传进度；onProgress(0..1)
   stickerImport: (blob, category, onProgress) => new Promise((resolve, reject) => {
+    const epoch = authEpoch;
     const x = new XMLHttpRequest();
     x.open("POST", `/api/stickers/import?category=${encodeURIComponent(category)}&confirm=1`);
     x.withCredentials = true; x.setRequestHeader("X-HS", "1"); x.setRequestHeader("Content-Type", "application/octet-stream");
     x.upload.onprogress = e => e.lengthComputable && onProgress?.(e.loaded / e.total);
-    x.onload = () => { let d = null; try { d = JSON.parse(x.responseText); } catch {} if (x.status === 401) onUnauthed(); x.status >= 200 && x.status < 300 ? resolve(d) : reject(new ApiError(d?.error || `请求失败（${x.status}）`, x.status, d?.code)); };
+    x.onload = () => { let d = null; try { d = JSON.parse(x.responseText); } catch {} if (x.status === 401) notifyUnauthed(epoch); x.status >= 200 && x.status < 300 ? resolve(d) : reject(new ApiError(d?.error || `请求失败（${x.status}）`, x.status, d?.code)); };
     x.onerror = () => reject(new ApiError("网络好像断开了，稍后再试试", 0));
     x.send(blob);
   }),

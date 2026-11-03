@@ -1,9 +1,10 @@
-import { api, setUnauthedHandler, notReady, mediaOf, rawReq } from "./api.js?v=2026.11.4-rc.1";
-import { makeCred } from "./cred-adapter.js?v=2026.11.4-rc.1";
+import { api, setUnauthedHandler, notReady, mediaOf, rawReq } from "./api.js?v=2026.11.4-rc.2";
+import { makeCred } from "./cred-adapter.js?v=2026.11.4-rc.2";
 const cred = makeCred(rawReq);
-import { makeMemSearch, ALL as MS_ALL } from "./memsearch-adapter.js?v=2026.11.4-rc.1";
+import { makeMemSearch, ALL as MS_ALL } from "./memsearch-adapter.js?v=2026.11.4-rc.2";
 const memSearch = makeMemSearch(rawReq);
-import { md } from "./md.js?v=2026.11.4-rc.1";
+import { md } from "./md.js?v=2026.11.4-rc.2";
+import { pluginCenter } from "./plugin-center.js?v=2026.11.4-rc.2";
 
 // ---------- 小工具 ----------
 const $ = (s, el = document) => el.querySelector(s);
@@ -1342,7 +1343,7 @@ VIEWS.plugins = async v => {
   const [p, s] = await Promise.all([api.plugins(), api.skills().catch(() => null)]);
   const skills = asArr(s?.skills ?? s);
   let tab = "plugins", q = "";
-  const root = paint(v, top("插件与技能") + `<div class="toolbar"><div class="seg"><button data-tab="plugins" aria-pressed="true">插件 ${p.plugins.length}</button><button data-tab="skills" aria-pressed="false">技能 ${skills.length}</button></div><div class="search" style="flex:1;min-width:180px">${ic("search")}<input class="input" placeholder="搜一搜" aria-label="搜索"></div></div><p class="faint cp-note" data-cp="plugins">这一轮只看状态：不能在这里开关或安装。</p><div id="pl"></div>`);
+  const root = paint(v, top("插件与技能") + `<div class="toolbar"><div class="seg"><button data-tab="plugins" aria-pressed="true">插件 ${p.plugins.length}</button><button data-tab="skills" aria-pressed="false">技能 ${skills.length}</button></div><div class="search" style="flex:1;min-width:180px">${ic("search")}<input class="input" placeholder="搜一搜" aria-label="搜索"></div></div><p class="faint cp-note" data-cp="plugins">这一轮只看状态：不能在这里开关或安装。 <a href="#/abilities#plugin-center">打开插件中心 ›</a></p><div id="pl"></div>`);
   const draw = () => {
     const f = x => !q || JSON.stringify([x.name, x.id, x.description]).toLowerCase().includes(q);
     $("#pl", root).innerHTML = tab === "plugins"
@@ -2959,7 +2960,7 @@ document.addEventListener("keydown", e => {
 
 // ---- 6 PWA ----
 if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) {
-  addEventListener("load", () => navigator.serviceWorker.register("/sw.js?v=2026.11.4-rc.1").catch(() => {}));
+  addEventListener("load", () => navigator.serviceWorker.register("/sw.js?v=2026.11.4-rc.2").catch(() => {}));
 }
 
 
@@ -3144,8 +3145,8 @@ const V3T = [
     ["people", "按人看", { v: "memory", s: "" }, ""], ["search", "语义搜索", { fn: b => cpMemSearch(b) }, "用一句话找记忆 · 点了才查"], ["flags", "记错的", { v: "memory", s: "flags" }, ""], ["files", "记忆文件", { v: "memory", s: "files" }, "只能看"], ["backups", "删除备份", { v: "memory", s: "backups" }, ""]]],
   ["groups", "群", "people", "群报 · 互动统计 · 各群一览", [
     ["digest", "群报", { v: "digest", s: "" }, "每天到点自动生成"], ["stats", "互动统计", { v: "interactions", s: "" }, ""], ["overview", "各群一览", { fn: v4Overview }, "这个群开了什么（只看，点了去改）"]]],
-  ["abilities", "能力与任务", "plug", "插件与技能 · 工具 · 定时任务", [
-    ["plugins", "插件与技能", { v: "plugins", s: "" }, ""], ["tools", "工具与扩展", { v: "tools", s: "" }, ""], ["cron", "定时任务", { v: "cron", s: "" }, ""]]],
+  ["abilities", "能力与任务", "plug", "插件与技能 · 插件中心 · 工具 · 定时任务", [
+    ["plugins", "插件与技能", { v: "plugins", s: "" }, ""], ["plugin-center", "插件中心", { fn: body => pluginCenter(body, { rawReq, sheet, confirmDialog, toast, md }) }, "原生插件 · 配置与变更预览"], ["tools", "工具与扩展", { v: "tools", s: "" }, ""], ["cron", "定时任务", { v: "cron", s: "" }, ""]]],
   ["system", "系统与权限", "gear", "技术模式 · 渠道 · 审批与配对 · 诊断 · 白名单 · 密钥 · 配置", [
     ["tech", "技术模式", { fn: v3Tech }, "回复模式开关和关键词"], ["channels", "渠道", { v: "channels", s: "" }, "连接状态"], ["approvals", "审批与配对", { v: "approvals", s: "" }, "需要你点头的事"], ["audit", "审计与诊断", { v: "audit", s: "" }, ""], ["allowlist", "白名单", { fn: b => cpAllowlist(b) }, "先看改动再确认 · 标立即/重载/重启"], ["secrets", "密钥", { fn: b => cpSecrets(b) }, "只显示「已设置」 · 只写不读"], ["config", "配置", { v: "config", s: "" }, "网关配置"]]],
 ];

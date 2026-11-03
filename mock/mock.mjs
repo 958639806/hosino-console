@@ -39,7 +39,7 @@ const R = {
     { provider: "moonshot", displayName: "Kimi", windows: [], billing: [{ type: "balance", amount: 0, unit: "CNY" }], summary: "Balance ¥0.00" },
     { provider: "ollama", displayName: "Ollama", windows: [] } ] },
   "/api/channels": { ts: now, channelOrder: ["qqbot"], channelLabels: { qqbot: "QQ Bot" }, channelDetailLabels: { qqbot: "QQ Bot" }, channelMeta: [{ id: "qqbot", label: "QQ Bot" }], eventLoop: { degraded: false }, channels: { qqbot: { configured: true, tokenSource: "••••••（已隐藏）", running: true, connected: true, lastConnectedAt: now - 3200e3, lastError: null } }, channelAccounts: { qqbot: [{ accountId: "default", enabled: true, lastConnectedAt: now - 3200e3, lastInboundAt: null, configured: true, running: true, connected: true, lastError: null }] }, channelDefaultAccountId: { qqbot: "default" }, statusIssues: [] },
-  "/api/plugins": { plugins: [ { id: "qqbot", name: "QQ 机器人", description: "QQ 官方机器人渠道", version: "1.4.2", enabled: true, runtime: "running" }, { id: "mem0", name: "长期记忆", description: "基于 Qdrant 的记忆层", version: "0.9.0", enabled: true }, { id: "voice", name: "语音", description: "TTS 合成", version: "0.3.1", enabled: false } ] },
+  "/api/plugins": { plugins: [ { id: "qqbot", name: "QQ 机器人", description: "QQ 官方机器人渠道", version: "1.4.2", enabled: true, runtime: "running" }, { id: "mem0", name: "长期记忆", description: "基于 Qdrant 的记忆层", version: "0.9.0", enabled: true }, { id: "voice", name: "语音", description: "TTS 合成", version: "0.3.1", enabled: false }, { id: "openclaw-mem0", name: "记忆层（mem0）", description: "长期记忆，受保护", version: "1.2.0", enabled: true, protected: true }, { id: "weather", name: "天气", description: "天气查询", version: "0.2.0", enabled: true, state: "error", lastError: "缺少 OLD_WEATHER_TOKEN", missingSecret: "OLD_WEATHER_TOKEN" } ] },
   "/api/skills": { skills: [ { name: "weather", emoji: "🌤", description: "查询天气", eligible: true }, { name: "github", emoji: "🐙", description: "仓库与 issue", eligible: false } ] },
   "/api/cron": { total: 3, hasMore: false, jobs: [ { id: "hb", declarationKey: "heartbeat:main", displayName: "Heartbeat (main)", name: "heartbeat-main", enabled: true, schedule: { kind: "every", everyMs: 1500000 }, payload: { kind: "heartbeat" }, state: { nextRunAtMs: now + 14 * 60e3, lastRunAtMs: now - 11 * 60e3, lastRunStatus: "ok", lastStatus: "ok" } }, { id: "a", name: "每日晨报", enabled: true, schedule: { kind: "cron", expr: "0 8 * * *", tz: "Asia/Shanghai" }, state: { nextRunAtMs: now + 5 * 3600e3, lastRunAtMs: now - 19 * 3600e3, lastStatus: "ok" } }, { id: "b", name: "整理群待办", enabled: true, schedule: { kind: "every", everyMs: 3 * 3600e3 }, state: { nextRunAtMs: now + 40 * 60e3, lastStatus: "error" } } ] },
   "/api/logs": { file: "/tmp/openclaw/openclaw-2026-10-20.log", lines: Array.from({ length: 100 }, (_, i) => ({ t: new Date(now - (40 - i) * 30e3).toISOString(), lv: ["INFO", "INFO", "DEBUG", "WARN", "INFO", "ERROR"][i % 6], sub: ["gateway", "qqbot", "agent", "cron"][i % 4], msg: ["收到消息 group:123", "回复已送达", "tool call weather", "重连 QQ websocket（第 2 次）", "心跳完成", "模型请求超时，已重试"][i % 6] })) },
@@ -467,8 +467,8 @@ http.createServer(async (req, res) => {
     const rdBody = async () => { let b = ""; for await (const c of req) b += c; try { return JSON.parse(b || "{}"); } catch { return {}; } };
     const JX = (code, o) => { res.writeHead(code, { "content-type": "application/json" }); res.end(JSON.stringify(o)); };
     if (u.pathname === "/api/chat/recallable") { const id = u.searchParams.get("id") || ""; console.log("MOCK recallable", id);
-      if (id === "m0") return JX(200, { ok: true, self: { available: false, secondsLeft: 0, reason: "window_expired" }, admin: { available: false, secondsLeft: 0, reason: "window_expired" } });
-      const n = +id.slice(1), rr = id.startsWith("x") ? ({ x1: "user", x2: "assistant", x3: "assistant", x4: "assistant" })[id] : R["/api/history"].messages.filter(m => m.role !== "toolResult")[n]?.role; return JX(200, rr === "assistant" ? { ok: true, self: { available: true, parts: 2, secondsLeft: 87, reason: null }, admin: { available: false, secondsLeft: 0, reason: "wrong_role" } } : { ok: true, self: { available: false, secondsLeft: 0, reason: "wrong_role" }, admin: { available: true, secondsLeft: 50, reason: null } }); }
+      if (id === "m0") return JX(200, { ok: true, self: { available: false, secondsLeft: 0, reason: "window_expired" }, admin: { available: true, parts: 1, secondsLeft: null, reason: null } }); // m0：超过 2 分钟——自己撤回过期，管理员撤回不限时
+      const n = +id.slice(1), rr = id.startsWith("x") ? ({ x1: "user", x2: "assistant", x3: "assistant", x4: "assistant" })[id] : R["/api/history"].messages.filter(m => m.role !== "toolResult")[n]?.role; return JX(200, rr === "assistant" ? { ok: true, self: { available: true, parts: 2, secondsLeft: 87, reason: null }, admin: { available: false, secondsLeft: 0, reason: "wrong_role" } } : { ok: true, self: { available: false, secondsLeft: 0, reason: "wrong_role" }, admin: { available: true, parts: 1, secondsLeft: null, reason: null } }); }
     if (u.pathname === "/api/chat/recall" && req.method === "POST") { const j = await rdBody(); console.log("MOCK recall", JSON.stringify(j)); if (j.confirm !== true) return JX(400, { error: "需要确认", code: "confirm_required" }); return JX(200, { ok: true, mode: j.mode, recalled: j.mode === "self" ? 2 : 1, failed: 0, parts: [{ ok: true }] }); }
     if (u.pathname === "/api/chat/regenerate" && req.method === "POST") { const j = await rdBody(); console.log("MOCK regenerate", JSON.stringify(j)); if (j.confirm !== true) return JX(400, { error: "需要确认", code: "confirm_required" }); return JX(200, { ok: true, runId: "run-mock", deliver: !!j.deliver, rewoundTo: "m0" }); }
     // model ping mock：grok-4 快速通；grok-4-fast 上游名不同；claude-sonnet 报错；gpt-5（codex）慢 50 秒（MOCK_PING_SLOW_MS 可改）
@@ -493,12 +493,12 @@ http.createServer(async (req, res) => {
       if (u.pathname === "/api/models/manage/backups") return JX(200, { backups: [{ id: "bk_7", at: new Date(now - 3600e3).toISOString(), ops: ["setFallbacks"], paths: ["agents.defaults.model.fallbacks"] }] });
       const j = await rdBody(); console.log("MOCK manage", u.pathname, JSON.stringify({ ...j, apiKey: j.apiKey ? "***" : undefined }));
       if (u.pathname === "/api/models/manage/plan") {
-        if (j.baseHash && j.baseHash !== "h" + MM.hash) return JX(409, { error: "配置已变化", code: "stale" });
+        if (j.baseHash && j.baseHash !== "h" + MM.hash) return JX(409, { error: "配置已变化", code: "baseHash_mismatch", legacyCode: "stale" });
         const diff = []; let restart = "none";
         for (const op of j.ops || []) {
           if (op.op === "setFallbacks") diff.push({ path: "agents.defaults.model.fallbacks", before: MM.fallbacks, after: op.refs, apply: "immediate" });
           else if (op.op === "setPrimary") { const rs = op.ref.startsWith("anthropic/"); if (rs) restart = "restart"; diff.push({ path: "agents.defaults.model.primary", before: MM.primary, after: op.ref, apply: rs ? "restart" : "reload" }); }
-          else if (op.op === "updateProvider") return JX(409, { error: "不在白名单", code: "not_whitelisted", blockedPaths: ["gateway.port"], reload: { paths: [{ path: "gateway.port", kind: "restart", label: "restart" }] }, diff: [{ path: "gateway.port", before: 18789, after: 18790 }] });
+          else if (op.op === "updateProvider") return JX(403, { error: "不在白名单", code: "not_whitelisted", blockedPaths: ["gateway.port"], reload: { paths: [{ path: "gateway.port", kind: "restart", label: "restart" }] }, diff: [{ path: "gateway.port", before: 18789, after: 18790 }] });
           else if (op.op === "addModel") diff.push({ path: `models.providers.${op.provider}.models`, before: [{ id: "deepseek-chat" }], after: [{ id: "deepseek-chat" }, { id: op.id, name: op.name || null }], apply: "reload" });
           else return JX(400, { error: "不支持", code: "bad_op" }); }
         const lab = a => a === "restart" ? { kind: "restart", label: "restart" } : a === "reload" ? { kind: "hot", label: "reload" } : { kind: "none", label: "immediate" };
@@ -508,7 +508,7 @@ http.createServer(async (req, res) => {
         return JX(200, { ok: true, dryRun: true, planId, baseHash: "h" + MM.hash, expiresInSec: 600, restart: "none", apply: diff.some(d => d.apply === "reload") ? "reload" : "immediate", reload, diff, pingRefs: (j.ops || []).map(o => o.ref || (o.provider ? o.provider + "/" + o.id : null)).filter(Boolean) }); }
       if (u.pathname === "/api/models/manage/apply") { const pl = MM.plans.get(j.planId); if (!pl) return JX(410, { error: "预览过期", code: "plan_expired" }); MM.plans.delete(j.planId);
         if (j.confirm !== true) return JX(400, { error: "需要确认", code: "confirm_required" });
-        if (pl.hash !== MM.hash) return JX(409, { error: "配置已变化", code: "stale" });
+        if (pl.hash !== MM.hash) return JX(409, { error: "配置已变化", code: "baseHash_mismatch", legacyCode: "stale" });
         for (const op of pl.ops) { if (op.op === "setFallbacks") MM.fallbacks = op.refs; if (op.op === "setPrimary") { MM.primary = op.ref; MM.fallbacks = MM.fallbacks.filter(r => r !== op.ref); } if (op.op === "addModel") { if (op.id === "deepseek-reasoner") MM.fixed = true; else MM.extra.push(op.id); } }
         MM.hash++; return JX(200, { ok: true, backupId: "bk_" + MM.hash, diff: [], restart: "none", pingRefs: pl.ops.map(o => o.ref || (o.provider ? o.provider + "/" + o.id : null)).filter(Boolean) }); }
       if (u.pathname === "/api/models/manage/rollback") { const conflicts = [{ path: "agents.defaults.model.fallbacks", current: MM.fallbacks, backup: ["xai/grok-4-fast"] }];
@@ -521,6 +521,37 @@ http.createServer(async (req, res) => {
       // 真实后端没有 /api/models/auth/login、/login/:id、/cancel、/auth/order：落到下面的 404
       return JX(404, { error: "没有", code: "not_found" });
     }
+    // ---- console-panels mock（只在 mock 里有；真实后端以 console-5feat/API-PROPOSAL.md 为准） ----
+    // memory-search/API.md：GET /api/memory/users、POST /api/memory/search
+    if (u.pathname === "/api/memory/users") return J({ users: [{ user_id: "凛", count: 3 }, { user_id: "xiaokui", count: 3 }, { user_id: "group-249b", count: 2 }], count: 3 });
+    if (u.pathname === "/api/memory/search" && req.method === "POST") { const j = await rdBody(); const q = String(j.q ?? j.query ?? "").trim(), all = (j.scope || "all") === "all", ids = j.user_ids;
+      if (!q || q.length > 500) return J({ error: "q 必填", code: "bad_request" }, 400);
+      if (all && ids) return J({ error: "scope=all 不能带 user_ids", code: "bad_request" }, 400);
+      if (!all && (!Array.isArray(ids) || !ids.length || ids.length > 50)) return J({ error: "user_ids 必填", code: "bad_request" }, 400);
+      const lim = j.limit ?? 10; if (!Number.isInteger(lim) || lim < 1 || lim > 50) return J({ error: "limit", code: "bad_request" }, 400);
+      const t = Date.now(); globalThis.__msHits = (globalThis.__msHits || []).filter(x => t - x < 60000); if (globalThis.__msHits.length >= 30) return J({ error: "rate limited", code: "rate_limited", retryAfterSec: 30 }, 429); globalThis.__msHits.push(t);
+      const map = { "凛": "person:4330", xiaokui: "person:a1b2", "group-249b": "group:249b" }; const uidOf = s => ({ "person:4330": "凛", "person:a1b2": "xiaokui", "group:249b": "group-249b" })[s] || "shared";
+      const pool = MEM.filter(m => all || ids.some(i => map[i] === m.subj)); const ch = [...q.replace(/\s/g, "")];
+      const results = /没有|zzz/.test(q) ? [] : pool.map(m => ({ m, s: ch.filter(c => m.data.includes(c)).length / Math.max(4, ch.length) })).filter(x => x.s > 0).map(({ m, s }) => ({ m, s: Math.min(0.99, 0.45 + s / 2) })).filter(x => x.s >= (j.minScore || 0)).sort((a, b) => b.s - a.s).slice(0, lim).map(({ m, s }) => ({ id: m.id, score: s, memory: m.data, user_id: uidOf(m.subj), createdAt: m.createdAt, visibility: m.subj.startsWith("group") ? "group" : "private", channel: "qqbot" }));
+      return setTimeout(() => J({ results, count: results.length, scope: all ? "all" : "users", tookMs: { embed: 120, search: 30 }, cached: false }), 400); }
+    globalThis.__AL ||= { hash: 1, lists: [{ path: "channels.qqbot.allowFrom", label: "私聊允许名单", items: ["<OPENID>-凛", "<OPENID>-小葵"], apply: "reload" }, { path: "channels.qqbot.groupAllowFrom", label: "群允许名单", items: ["<GROUP>-读书会群"], apply: "reload" }, { path: "console.humanlike.enabledGroups", label: "拟人化开启的群", items: ["<GROUP>-读书会群"], apply: "immediate" }, { path: "gateway.trustedProxies", label: "网关信任地址", items: ["127.0.0.1"], apply: "restart" }] };
+    const AL = globalThis.__AL;
+    if (u.pathname === "/api/allowlist") return J({ baseHash: "al" + AL.hash, lists: AL.lists, pendingRestart: process.env.MOCK_PENDING === "1" });
+    if (u.pathname === "/api/allowlist/preview" || u.pathname === "/api/allowlist/apply") { const j = await body(); const ap = u.pathname.endsWith("apply");
+      if (j.baseHash !== "al" + AL.hash) return J({ error: "baseHash mismatch", code: "baseHash_mismatch" }, 409);
+      if (ap && j.confirm !== true) return J({ error: "缺 confirm", code: "confirm_required" }, 400);
+      const diff = []; for (const c of j.changes || []) { const L = AL.lists.find(x => x.path === c.path); if (!L) return J({ error: "not whitelisted", code: "not_whitelisted", blockedPaths: [c.path] }, 403); diff.push({ path: c.path, before: L.items, after: c.items, apply: L.apply }); }
+      const apply = diff.some(d => d.apply === "restart") ? "restart" : diff.some(d => d.apply === "reload") ? "reload" : "immediate";
+      if (!ap) return J({ diff, apply, blockedWindow: false });
+      if (apply === "restart") return J({ error: "restart required", code: "restart_required", diff }, 409);
+      for (const c of j.changes) AL.lists.find(x => x.path === c.path).items = c.items; AL.hash++; console.log("MOCK allowlist.apply", JSON.stringify(j.changes.map(c => c.path)));
+      return J({ ok: true, baseHash: "al" + AL.hash, applied: j.changes.map(c => c.path), pendingRestart: false }); }
+    globalThis.__SEC ||= [{ name: "DEEPSEEK_API_KEY", kind: "api_key", updatedAt: now - 5 * 864e5, usedBy: ["models.providers.deepseek"], set: true, apply: "immediate" }, { name: "FISH_AUDIO_KEY", kind: "api_key", updatedAt: now - 20 * 864e5, usedBy: ["语音合成"], set: true, apply: "immediate" }, { name: "OLD_WEATHER_TOKEN", kind: "token", updatedAt: now - 90 * 864e5, usedBy: [], set: true, apply: "immediate" }];
+    const SEC = globalThis.__SEC;
+    if (u.pathname === "/api/secrets") return J({ secrets: SEC });
+    if (u.pathname === "/api/secrets/set") { const j = await body(); if (j.confirm !== true) return J({ error: "缺 confirm", code: "confirm_required" }, 400); const s = SEC.find(x => x.name === j.name); if (!s || typeof j.value !== "string" || !j.value) return J({ error: "参数不对" }, 400); s.set = true; s.updatedAt = Date.now(); console.log("MOCK secrets.set", j.name, "(value not logged)"); return J({ ok: true, set: true, updatedAt: s.updatedAt, reloaded: true }); }
+    if (u.pathname === "/api/secrets/clear") { const j = await body(); if (j.confirm !== true) return J({ error: "缺 confirm", code: "confirm_required" }, 400); const i = SEC.findIndex(x => x.name === j.name); if (i < 0) return J({ error: "没有" }, 404); if (SEC[i].usedBy.length) return J({ error: "in use", code: "in_use", usedBy: SEC[i].usedBy }, 409); SEC.splice(i, 1); return J({ ok: true }); }
+    if (u.pathname === "/api/__cp_reset") { delete globalThis.__AL; delete globalThis.__SEC; globalThis.__msHits = []; return J({ ok: true }); }
     if (u.pathname === "/api/patch") { let b = ""; for await (const c of req) b += c; const j = JSON.parse(b || "{}"); console.log("MOCK patch", JSON.stringify(j)); const x = sess.find(y => y.key === j.key);
       if (/acp/.test(j.key || "")) { res.writeHead(502, { "content-type": "application/json" }); return res.end('{"error":"ACP session runtime is managed by the ACP backend","code":"INVALID_REQUEST"}'); }
       if (process.env.MOCK_MODEL_LOCK === "1" && "model" in j) { res.writeHead(502, { "content-type": "application/json" }); return res.end('{"error":"model is locked for this session","code":"INVALID_REQUEST"}'); }

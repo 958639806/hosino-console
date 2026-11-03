@@ -1,0 +1,44 @@
+name: Upload verified v2026.11.3 packages
+on:
+  push:
+    branches: [fix/console-edge-cases-round2]
+    paths: [.github/workflows/publish-release.yml]
+permissions:
+  contents: write
+jobs:
+  upload:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    env:
+      GH_TOKEN: ${{ github.token }}
+      RELEASE_TAG: v2026.11.3
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Check immutable source and existing draft
+        shell: bash
+        run: |
+          set -euo pipefail
+          test "$(git rev-parse 'v2026.11.3^{commit}')" = 3616e7388148c0b93cf07e20094a2bf72ba2c9d9
+          test "$(git rev-parse 'v2026.11.2^{commit}')" = 8719e438cf71d4be817bc03407ebf6e4bd6176a0
+          test "$(git rev-parse 'baseline-20261101195157^{commit}')" = 1bcb35f928ad6f0ce46b32d38bccacea255ef170
+          gh api "repos/$GITHUB_REPOSITORY/releases?per_page=100" --jq '.[] | select(.tag_name == "v2026.11.3")' > draft.json
+          jq -e '.id == 431720576 and .draft == true and (.assets | length) == 0' draft.json
+      - name: Reproduce version packages and verify local build checksums
+        shell: bash
+        run: |
+          set -euo pipefail
+          mkdir packages
+          git archive --format=tar.gz --prefix=hosino-console-v2026.11.3/ v2026.11.3 > packages/hosino-console-v2026.11.3.tar.gz
+          git archive --format=tar.gz --prefix=hosino-console-v2026.11.2/ v2026.11.2 > packages/hosino-console-v2026.11.2.tar.gz
+          cd packages
+          printf '%s\n' \
+            '8a6e66df882a7dacd984ff6e990b4668fa2180127ecd7e4c4595b216f6efb02e  hosino-console-v2026.11.2.tar.gz' \
+            '47646e7596a18698159541fa871cb10c0c5a11fbb00d6c8662891fa523df1250  hosino-console-v2026.11.3.tar.gz' > SHA256SUMS
+          sha256sum --check SHA256SUMS
+      - name: Upload without replacing any existing asset
+        shell: bash
+        run: |
+          set -euo pipefail
+          gh release upload "$RELEASE_TAG" packages/hosino-console-v2026.11.2.tar.gz packages/hosino-console-v2026.11.3.tar.gz packages/SHA256SUMS --repo "$GITHUB_REPOSITORY"

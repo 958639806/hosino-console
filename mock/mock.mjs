@@ -1,5 +1,6 @@
 // 本地预览用的假后端（按 API.md 的结构返回示例数据）
 import http from "node:http"; import fs from "node:fs"; import path from "node:path";
+import { makeControlPanels } from "./control-panels.mjs";
 const PUB = path.resolve("../public"); const now = Date.now(); const GB = 1024 ** 3;
 const AUTH = process.env.AUTH !== "0";
 const sess = [
@@ -220,13 +221,20 @@ function hlApply(p) {
   HL_ST = st; return null;
 }
 const hlOut = () => ({ params: hlMerge(), stored: HL_ST, defaults: HL_DEF, suggestions: { quirkPhrases: HL_SUG }, consumers: false, requires: HL_REQ, note: "消费这些参数的技能和 gate 补丁还没做，现在只保存设置，不会改变星野的行为。" });
+const controlPanels = makeControlPanels({ memories: () => MEM, initialConfig: R["/api/config"].config, initialModels: R["/api/models"].models, initialAuth: R["/api/models/auth"] });
+R["/api/config"].config = controlPanels.config;
 http.createServer(async (req, res) => {
+  const J = (o, st = 200) => { res.writeHead(st, { "content-type": "application/json; charset=utf-8" }); return res.end(JSON.stringify(o)); };
+  try {
   const u = new URL(req.url, "http://x");
   if (u.pathname.startsWith("/api/")) {
-    if (req.method === "POST" && req.headers["x-hs"] !== "1") { res.writeHead(403); return res.end('{"error":"拒绝跨站请求"}'); }
+    if (req.method === "POST" && req.headers["x-hs"] !== "1") return J({ error: "拒绝跨站请求", code: "missing_xhs" }, 403);
     if (u.pathname === "/api/media") { const pth = u.searchParams.get("path") || ""; const f = /\.(png|jpe?g)$/.test(pth) ? path.join(PUB, "icon-512.png") : null; if (!f) { res.writeHead(404); return res.end(); } res.writeHead(200, { "content-type": "image/png" }); return fs.createReadStream(f).pipe(res); }
-    const J = (o, st = 200) => { res.writeHead(st, { "content-type": "application/json; charset=utf-8" }); return res.end(JSON.stringify(o)); };
     const body = async () => { let b = ""; for await (const c of req) b += c; return JSON.parse(b || "{}"); };
+    if (controlPanels.handles(req.method, u.pathname)) {
+      if (!AUTH) return J({ error: "MOCK：请先登录", code: "unauthorized", mock: true }, 401);
+      return J(await controlPanels.handle(req.method, u.pathname, req.method === "POST" ? await body() : undefined));
+    }
     if (u.pathname === "/api/profiles") return J({ profiles: Object.entries(PROFILES).map(([id, p]) => ({ id, ...p, alias: ALIASES[id] || null, lastSeenName: SEEN[id] || null })).sort((a, b) => b.updatedAt - a.updatedAt) });
     if (u.pathname.startsWith("/api/profiles/") && req.method === "GET") { const id = decodeURIComponent(u.pathname.slice(14)); if (!/^[0-9a-f]{32}$/.test(id)) return J({ error: "id 不对" }, 400); return J({ id, profile: PROFILES[id] || null, alias: ALIASES[id] || null, lastSeenName: SEEN[id] || null }); }
     if (u.pathname === "/api/profiles/set") { const j = await body(); if (!/^[0-9a-f]{32}$/.test(j.id || "")) return J({ error: "id 必须是 32 位十六进制" }, 400); if (!j.name && !j.note) { const had = !!PROFILES[j.id]; delete PROFILES[j.id]; return J({ ok: true, id: j.id, deleted: had }); } PROFILES[j.id] = { name: j.name || null, note: j.note || "", updatedAt: Date.now() }; console.log("profile.set", j.id); return J({ ok: true, id: j.id, profile: PROFILES[j.id] }); }
@@ -239,7 +247,7 @@ http.createServer(async (req, res) => {
       for (const o of GROUPS) if (o !== g) o.sessionKeys = o.sessionKeys.filter(k => !(j.sessionKeys || []).includes(k));
       if (!g) { g = { id: "g_" + Math.random().toString(16).slice(2, 10), order: j.order ?? GROUPS.length, createdAt: Date.now() }; GROUPS.push(g); } Object.assign(g, { name: j.name, sessionKeys: j.sessionKeys || [], updatedAt: Date.now() }, j.order != null ? { order: j.order } : {}); console.log("groups.set", g.id); return J({ ok: true, group: g }); }
     if (u.pathname === "/api/groups/delete") { const j = await body(); if (j.confirm !== true) return J({ error: "缺 confirm" }, 400); const i = GROUPS.findIndex(x => x.id === j.id); if (i < 0) return J({ error: "不存在" }, 404); GROUPS.splice(i, 1); return J({ ok: true, id: j.id }); }
-    if (u.pathname === "/api/login" || u.pathname === "/api/logout") return J({ ok: true });
+    if (u.pathname === "/api/login" || u.pathname === "/api/logout") { if (u.pathname === "/api/logout") controlPanels.logout(); return J({ ok: true }); }
     // ---- v2.6 ----
     const CF = b => b.confirm === true;
     if (u.pathname === "/api/digest/settings") return J(DG);
@@ -466,4 +474,10 @@ http.createServer(async (req, res) => {
   }
   let p = u.pathname === "/" || !path.extname(u.pathname) ? "/index.html" : u.pathname;
   fs.readFile(path.join(PUB, p), (e, d) => { if (e) { res.writeHead(404); return res.end(); } res.writeHead(200, { "cache-control": p === "/index.html" ? "no-cache" : "max-age=3600", "content-type": MIME[path.extname(p)] || "application/octet-stream", "content-security-policy": "default-src 'self'; img-src 'self' data:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'" }); res.end(d); });
+  } catch (e) {
+    if (res.headersSent) return res.end();
+    const badJson = e instanceof SyntaxError;
+    const status = badJson ? 400 : e.http || 500;
+    return J({ error: badJson ? "MOCK：请求 JSON 格式不对" : e.http ? e.message : "MOCK 服务内部错误", code: badJson ? "bad_request" : e.code || "internal_error", ...(e.body || {}), mock: true }, status);
+  }
 }).listen(+process.env.PORT || 18990);

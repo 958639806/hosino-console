@@ -1,0 +1,11 @@
+node_modules/
+coverage/
+playwright-report/
+test-results/
+data/
+logs/
+backups/
+gateway-cert.pem
+.env
+.env.*
+!.env.example

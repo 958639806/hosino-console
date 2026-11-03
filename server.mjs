@@ -5,6 +5,7 @@ import crypto from "node:crypto";
 import path from "node:path";
 import { execFile } from "node:child_process";
 import { createRequire } from "node:module";
+import { MobileRuntime } from "./mobile-runtime.mjs";
 const require = createRequire(import.meta.url);
 const bcrypt = require("bcryptjs");
 
@@ -27,7 +28,7 @@ const fails = new Map();    // ip -> {n, first, lockUntil}
 const TTL = 7 * 864e5, WIN = 15 * 60e3, MAXF = 5;
 const ipOf = r => (r.headers["x-real-ip"] || r.socket.remoteAddress || "").toString();
 const cookieSid = r => (/(?:^|;\s*)hs_sid=([a-f0-9]{64})/.exec(r.headers.cookie || "") || [])[1];
-const authed = r => { const s = cookieSid(r); const e = s && sessions.get(s); if (e && e > Date.now()) return s; if (s) sessions.delete(s); return null; };
+const authed = r => { if (r.mobileDevice) return `device:${r.mobileDevice.id}`; const s = cookieSid(r); const e = s && sessions.get(s); if (e && e > Date.now()) return s; if (s) sessions.delete(s); return null; };
 setInterval(() => { const n = Date.now(); for (const [k, v] of sessions) if (v < n) sessions.delete(k); for (const [k, v] of fails) if (v.first + WIN < n && v.lockUntil < n) fails.delete(k); }, 60e3).unref();
 
 // ---------- 网关客户端（单连接，自动重连） ----------
@@ -249,6 +250,7 @@ const mimoUsage = () => cached("mimo", 10 * 60e3, async () => {
 
 // ---------- v2：写操作审计 / 确认 ----------
 const ROOT = path.dirname(new URL(import.meta.url).pathname);
+const mobile = new MobileRuntime({ directory: process.env.HS_MOBILE_DATA || path.join(ROOT, "data", "mobile"), cliEnabled: /^(1|true)$/i.test(process.env.HS_MOBILE_CLI_ENABLED || ""), origins: (process.env.HS_MOBILE_ORIGINS || "https://localhost").split(",").map(x => x.trim()).filter(Boolean) });
 const OPSLOG = path.join(ROOT, "logs", "ops.log"), BACKUPS = path.join(ROOT, "backups");
 const httpErr = (code, msg) => Object.assign(new Error(msg), { http: code });
 const need = (b, ...ks) => { for (const k of ks) if (b?.[k] == null || b[k] === "") throw httpErr(400, "缺少参数：" + k); };
@@ -494,7 +496,7 @@ const R = {
     const ups = upResolve(b.attachments, "chat"); if (!b.key || (!b.message?.trim() && !ups.length)) throw httpErr(400, "缺少会话或内容");
     if (ups.some(m => m.session !== b.key)) throw httpErr(403, "附件是为别的会话上传的");
     const atts = ups.length ? chatAttachments(ups) : undefined; cache.clear();
-    const idem = crypto.randomUUID();
+    const idem = req.mobileRequest?.gatewayKey || crypto.randomUUID();
     const r = await call("chat.send", { sessionKey: b.key, message: b.message || "", deliver: !!b.deliver, idempotencyKey: idem, ...(atts ? { attachments: atts } : {}) }, ups.length ? 120000 : 30000);
     if (ups.length) { opLog(req, "chat.send.attachments", `${b.key} ${ups.map(m => m.id).join(",")}`, true); upMarkAttached(ups); chatAttIdx.add({ key: b.key, ts: Date.now(), idem, runId: r?.runId || null, text: String(b.message || ""), ids: ups.map(m => m.id) }); }
     return ups.length ? { ...r, attachments: ups.map(upPub) } : r;
@@ -1058,7 +1060,7 @@ Object.assign(R, {
 // 子进程通过 `sudo -n systemd-run` 启动为独立的瞬态单元（hs-cli-<runId>），跳出控制台自身的 systemd 沙箱，
 // 因此权限与 ubuntu 终端一致（可写家目录、可 sudo），控制台本身的 ProtectSystem 加固保持不变。
 // CLI_LAUNCH=direct 时直接 spawn（需要 staging/30-native-cli.conf 放开写权限）。
-const CLI_HOME = "/home/ubuntu";
+const CLI_HOME = process.env.CLI_HOME || "/home/ubuntu";
 const CLI_ROOT = process.env.CLI_ROOT || path.join(CLI_HOME, "cli-sandbox");
 const CLI_DATA = path.join(ROOT, "data", "cli");
 const CLI_AUDIT = path.join(ROOT, "logs", "cli-audit.log");
@@ -1092,7 +1094,7 @@ const cliLoad = id => { try { return JSON.parse(fs.readFileSync(cliMetaFile(id),
 const cliDeleted = new Set(); // 已删除会话：运行中的进程收尾时不再写回
 const cliSave = m => cliDeleted.has(m.id) ? null : atomicWrite(cliMetaFile(m.id), JSON.stringify(m));
 const cliPush = (id, msg) => { if (cliDeleted.has(id)) return; fs.mkdirSync(CLI_DATA, { recursive: true, mode: 0o700 }); fs.appendFileSync(cliMsgFile(id), JSON.stringify(msg) + "\n", { mode: 0o600 }); };
-const cliPub = m => ({ id: m.id, tool: m.tool, title: m.title, model: m.model || null, createdAt: m.createdAt, updatedAt: m.updatedAt, running: cliRuns.has(m.id) });
+const cliPub = m => ({ id: m.id, tool: m.tool, title: m.title, model: m.model || null, createdAt: m.createdAt, updatedAt: m.updatedAt, running: cliRuns.has(m.id), ...mobile.runsForSession(m.id) });
 // 干净的环境：不继承控制台的 LOGIN_HASH / MiMo 密钥 / OPENCLAW_* 等
 const cliEnv = () => ({ HOME: CLI_HOME, USER: "ubuntu", LOGNAME: "ubuntu", SHELL: "/bin/bash", PATH: CLI_PATH, LANG: "C.UTF-8", TERM: "dumb", NO_COLOR: "1", GEMINI_CLI_TRUST_WORKSPACE: "true" });
 const run1 = (cmd, args, ms = 8000) => new Promise(r => execFile(cmd, args, { timeout: ms, env: cliEnv(), cwd: "/tmp" }, (e, so, se) => r({ ok: !e, out: String(so || "") + String(se || "") })));
@@ -1163,6 +1165,7 @@ function cliParse(tool, o, st) {
 async function cliRun(req, res, id) {
   const m = cliLoad(id); if (!m) return send(res, 404, { error: "会话不存在" });
   const b = await body(req); const hasAtt = Array.isArray(b.attachments) && b.attachments.length > 0;
+  if (req.mobileDevice && !mobileBegin(req, res, { requestId: b.requestId, operation: "cli.run", session: id, payload: { prompt: b.prompt || "", attachments: b.attachments || [] } })) return;
   if (Array.isArray(b.attachments) && b.attachments.length > UP_MAX_PER_MSG) return send(res, 400, { error: `每条最多 ${UP_MAX_PER_MSG} 个附件`, code: "too_many_attachments" });
   let prompt = typeof b.prompt === "string" ? b.prompt : ""; if (!prompt.trim() && hasAtt) prompt = "请看看我上传的附件。";
   if (!prompt.trim()) return send(res, 400, { error: "缺少参数：prompt" });
@@ -1171,6 +1174,9 @@ async function cliRun(req, res, id) {
   if (cliRuns.size >= CLI_MAX_RUNS) return send(res, 429, { error: `同时只能运行 ${CLI_MAX_RUNS} 个` });
   let ups; try { ups = upResolve(b.attachments, "cli", id); } catch (e) { return send(res, e.http || 400, { error: e.message }); }
   const t = (await cliTools()).find(x => x.id === m.tool); if (!t?.available) return send(res, 409, { error: t?.reason || `${m.tool} 未安装`, code: "not_installed" }); if (!t.authed) return send(res, 409, { error: t.reason || `${m.tool} 未登录`, code: "not_authed" });
+  // Tool discovery yields; recheck limits before the synchronous launch section.
+  if (cliRuns.has(id)) return send(res, 409, { error: "这个会话正在运行" });
+  if (cliRuns.size >= CLI_MAX_RUNS) return send(res, 429, { error: `同时只能运行 ${CLI_MAX_RUNS} 个` });
   const dir = path.join(CLI_ROOT, id); const runId = crypto.randomBytes(6).toString("hex"); const unit = `hs-cli-${runId}`;
   upMarkAttached(ups); const files = ups.map(x => ({ up: x, src: upFile(x), rel: `uploads/${x.id.slice(0, 6)}-${x.name}` }));
   const imgs = files.filter(f => f.up.kind === "image");
@@ -1183,17 +1189,26 @@ async function cliRun(req, res, id) {
   }
   if (m.tool === "codex" && imgs.length) args.splice(args.length - 1, 0, ...imgs.map(f => `--image=${f.rel}`));
   let child;
+  // Persist run identity before spawning; after a crash it is explicitly interrupted,
+  // never interpreted as a safely retryable launch.
   const stdio = [stdinData ? "pipe" : "ignore", "pipe", "pipe"];
-  if (CLI_LAUNCH === "direct") { fs.mkdirSync(path.join(dir, "uploads"), { recursive: true, mode: 0o700 }); for (const f of files) fs.copyFileSync(f.src, path.join(dir, f.rel)); child = spawn(bin, args, { cwd: dir, env: cliEnv(), detached: true, stdio }); }
-  else child = spawn("sudo", ["-n", "/usr/bin/systemd-run", "--quiet", "--collect", "--wait", "--pipe", "--uid=ubuntu", "--gid=ubuntu", `--unit=${unit}`, `-p`, `RuntimeMaxSec=${Math.ceil(cliTimeout(m.tool) / 1000) + 30}`, ...Object.entries(cliEnv()).map(([k, v]) => `--setenv=${k}=${v}`), "/bin/bash", "-c", 'd=$0; n=$1; shift; mkdir -p -m 700 "$d/uploads" && cd "$d" || exit 97; while [ "$n" -gt 0 ]; do cp -f -- "$1" "$2" || exit 98; shift 2; n=$((n-1)); done; exec "$@"', dir, String(files.length), ...files.flatMap(f => [f.src, f.rel]), bin, ...args], { env: { PATH: CLI_PATH }, detached: true, stdio });
+  try {
+    mobile.recordRun({ sessionId: id, runId, requestId: req.mobileRequest?.requestId, state: "running", startedAt: started });
+    if (req.mobileRequest) mobile.completeRequest(req.mobileRequest.requestId, { sessionId: id, runId, state: "running" });
+    // Finish synchronous filesystem work before launch so an IO failure cannot
+    // leave a live process without its close/error observers.
+    m.updatedAt = Date.now(); if (m.title === "新会话") m.title = prompt.replace(/\s+/g, " ").slice(0, 40); cliSave(m);
+    cliPush(id, { role: "user", text: prompt, ts: started, ...(files.length ? { attachments: files.map(f => ({ ...upPub(f.up), path: f.rel })) } : {}) });
+    cliAudit(req, { ev: "start", session: id, tool: m.tool, model: m.model || null, runId, prompt: prompt.slice(0, 4000), promptLen: strLen(prompt), ...(files.length ? { attachments: files.map(f => `${f.up.id} ${f.up.name} ${f.up.size}B ${f.up.mime}`) } : {}) });
+    if (CLI_LAUNCH === "direct") { fs.mkdirSync(path.join(dir, "uploads"), { recursive: true, mode: 0o700 }); for (const f of files) fs.copyFileSync(f.src, path.join(dir, f.rel)); child = spawn(bin, args, { cwd: dir, env: cliEnv(), detached: true, stdio }); }
+    else child = spawn("sudo", ["-n", "/usr/bin/systemd-run", "--quiet", "--collect", "--wait", "--pipe", "--uid=ubuntu", "--gid=ubuntu", `--unit=${unit}`, `-p`, `RuntimeMaxSec=${Math.ceil(cliTimeout(m.tool) / 1000) + 30}`, ...Object.entries(cliEnv()).map(([k, v]) => `--setenv=${k}=${v}`), "/bin/bash", "-c", 'd=$0; n=$1; shift; mkdir -p -m 700 "$d/uploads" && cd "$d" || exit 97; while [ "$n" -gt 0 ]; do cp -f -- "$1" "$2" || exit 98; shift 2; n=$((n-1)); done; exec "$@"', dir, String(files.length), ...files.flatMap(f => [f.src, f.rel]), bin, ...args], { env: { PATH: CLI_PATH }, detached: true, stdio });
+  } catch (error) { mobile.recordRun({ sessionId: id, runId, state: "failed", startedAt: started, finishedAt: Date.now(), reason: "launch_failed" }); throw error; }
   if (stdinData) { child.stdin.on("error", () => {}); child.stdin.end(stdinData); }
   const run = { child, unit, runId, started, reason: null }; cliRuns.set(id, run);
+  if (req.mobileRequest) { req.mobileRequest = null; delete res.mobileReceipt; }
   const kill = why => { if (run.reason) return; run.reason = why; if (CLI_LAUNCH !== "direct") execFile("sudo", ["-n", "/usr/bin/systemctl", "kill", "--signal=SIGKILL", unit], () => {}); try { process.kill(-child.pid, "SIGTERM"); } catch {} setTimeout(() => { try { process.kill(-child.pid, "SIGKILL"); } catch {} }, 3000).unref(); };
   run.cancel = () => kill("cancelled");
   const TMO = cliTimeout(m.tool); const timer = setTimeout(() => kill("timeout"), TMO);
-  m.updatedAt = Date.now(); if (m.title === "新会话") m.title = prompt.replace(/\s+/g, " ").slice(0, 40); cliSave(m);
-  cliPush(id, { role: "user", text: prompt, ts: started, ...(files.length ? { attachments: files.map(f => ({ ...upPub(f.up), path: f.rel })) } : {}) });
-  cliAudit(req, { ev: "start", session: id, tool: m.tool, model: m.model || null, runId, prompt: prompt.slice(0, 4000), promptLen: strLen(prompt), ...(files.length ? { attachments: files.map(f => `${f.up.id} ${f.up.name} ${f.up.size}B ${f.up.mime}`) } : {}) });
   res.writeHead(200, { "content-type": "text/event-stream; charset=utf-8", "cache-control": "no-store", "x-accel-buffering": "no", connection: "keep-alive" });
   let open = true; res.on("close", () => { open = false; }); // 断开不杀进程：结果照样写进会话记录
   const sse = (event, data) => { if (open) res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); };
@@ -1218,9 +1233,10 @@ async function cliRun(req, res, id) {
     if (!run.reason && exitCode !== 0) { const msg = run.reason === "timeout" ? `超时（${TMO >= 60e3 ? Math.round(TMO / 60e3) + " 分钟" : Math.round(TMO / 1000) + " 秒"}）已终止` : run.reason === "cancelled" ? "已取消" : `退出码 ${exitCode}${sig ? " " + sig : ""}${errTail.trim() ? "：" + errTail.trim().slice(-1500) : ""}`; cliPush(id, { role: "error", text: msg, ts: Date.now() }); sse("error", { message: msg }); }
     m.updatedAt = Date.now(); cliSave(m);
     cliAudit(req, { ev: "end", session: id, tool: m.tool, runId, exitCode, signal: sig, reason: run.reason, durationMs });
+    mobile.recordRun({ sessionId: id, runId, state: run.reason === "cancelled" ? "cancelled" : run.reason || exitCode !== 0 ? "failed" : "completed", startedAt: started, finishedAt: Date.now(), exitCode, reason: run.reason || (sig ? String(sig) : null), durationMs });
     sse("done", { exitCode, durationMs, ...(run.reason ? { reason: run.reason } : {}) }); if (open) res.end();
   });
-  child.on("error", e => { cliPush(id, { role: "error", text: "启动失败：" + e.message, ts: Date.now() }); sse("error", { message: "启动失败：" + e.message }); });
+  child.on("error", e => { run.reason = "launch_failed"; mobile.recordRun({ sessionId: id, runId, state: "failed", startedAt: started, finishedAt: Date.now(), reason: "launch_failed" }); cliPush(id, { role: "error", text: "启动失败：" + e.message, ts: Date.now() }); sse("error", { message: "启动失败：" + e.message }); });
 }
 async function cliRoute(req, res, u) {
   const p = u.pathname, M = req.method; let mt;
@@ -1268,6 +1284,7 @@ const upFile = m => path.join(UP_DIR, m.id, "f");
 const upPub = m => ({ id: m.id, name: m.name, mime: m.mime, kind: m.kind, size: m.size, url: `/api/uploads/${m.id}`, createdAt: m.createdAt, attachedAt: m.attachedAt || null, expiresAt: (m.attachedAt || m.createdAt) + (m.attachedAt ? UP_TTL : UP_TTL_UNATTACHED) });
 async function upReceive(req, u) {
   const scope = u.searchParams.get("scope"), session = u.searchParams.get("session") || null;
+  if (scope === "cli" && req.mobileDevice && !req.mobileDevice.permissions.cli) throw Object.assign(httpErr(403, "设备未获准使用远程 CLI"), { code: "FORBIDDEN" });
   if (scope !== "chat" && scope !== "cli") throw httpErr(400, "scope 只能是 chat / cli");
   if (scope === "cli" && (!isCliId(session) || !cliLoad(session))) throw httpErr(404, "CLI 会话不存在");
   if (scope === "chat" && (!session || session.length > 300)) throw httpErr(400, "缺少参数：session（会话 key）");
@@ -1752,7 +1769,7 @@ async function vvPreview(q, req) {
   const f = path.join(dir, crypto.createHash("sha256").update(`${model}\0${id}\0${text}`).digest("hex").slice(0, 40) + ".mp3");
   try { const buf = fs.readFileSync(f); const now = new Date(); fs.utimesSync(f, now, now); return { __raw: { type: "audio/mpeg", buf, headers: { "x-voice-cache": "hit" } } }; } catch {}
   vvKey(); // 没有密钥时直接 503，不占试听额度
-  const undo = vvRateCheck(cookieSid(req) || "?");
+  const undo = vvRateCheck(authed(req) || "?");
   let buf;
   try {
     const r = await vvFish("/v1/tts", { method: "POST", headers: { "Content-Type": "application/json", model }, body: JSON.stringify({ text, reference_id: id, format: "mp3", temperature: 0.5, top_p: 0.6 }) });
@@ -1821,7 +1838,23 @@ Object.assign(R, {
   })),
 });
 
-function send(res, code, obj, h = {}) { const b = JSON.stringify(obj); res.writeHead(code, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...h }); res.end(b); }
+function mobileBegin(req, res, input) {
+  const { created, record } = mobile.beginRequest(input);
+  if (!created) {
+    if (record.state === "completed") { send(res, record.status || 200, record.result); return false; }
+    if (record.state === "failed") { send(res, record.status || 400, { error: record.error, code: record.code }); return false; }
+    send(res, 409, { error: record.state === "pending" ? "请求正在提交，请查询状态" : "请求结果未知，请核对状态，勿重新执行", code: `request_${record.state}`, requestId: record.requestId }); return false;
+  }
+  req.mobileRequest = record; res.mobileReceipt = record.requestId; return true;
+}
+function send(res, code, obj, h = {}) {
+  if (res.mobileReceipt) {
+    const requestId = res.mobileReceipt; delete res.mobileReceipt;
+    if (code >= 200 && code < 300) mobile.completeRequest(requestId, obj, code);
+    else mobile.failRequest(requestId, { status: code, error: obj?.error, code: obj?.code, unknown: code >= 500 });
+  }
+  const b = JSON.stringify(obj); res.writeHead(code, { "content-type": "application/json; charset=utf-8", "cache-control": "no-store", ...h }); res.end(b);
+}
 const MIME = { ".html": "text/html; charset=utf-8", ".js": "text/javascript; charset=utf-8", ".css": "text/css; charset=utf-8", ".svg": "image/svg+xml", ".png": "image/png", ".webmanifest": "application/manifest+json" };
 const SEC = { "x-content-type-options": "nosniff", "x-frame-options": "DENY", "referrer-policy": "no-referrer", "strict-transport-security": "max-age=31536000", "content-security-policy": "default-src 'self'; img-src 'self' data: blob:; media-src 'self' blob:; style-src 'self' 'unsafe-inline'; script-src 'self'; connect-src 'self'; frame-ancestors 'none'" };
 const body = req => new Promise((r, j) => { let d = ""; req.on("data", c => { d += c; if (d.length > 2e5) { j(new Error("请求过大")); req.destroy(); } }); req.on("end", () => { try { r(d ? JSON.parse(d) : {}); } catch { j(new Error("JSON 无效")); } }); });
@@ -1829,12 +1862,36 @@ const body = req => new Promise((r, j) => { let d = ""; req.on("data", c => { d 
 http.createServer(async (req, res) => {
   const u = new URL(req.url, "http://x");
   try {
+    if (u.pathname.startsWith("/api/")) {
+      const origin = req.headers.origin;
+      const sameOrigin = origin === `https://${req.headers.host}` || origin === `http://${req.headers.host}`;
+      if (origin && !sameOrigin) {
+        const headers = mobile.corsHeaders(origin, req.method === "OPTIONS" ? req.headers["access-control-request-method"] || "" : req.method, req.method === "OPTIONS" ? req.headers["access-control-request-headers"] || "" : "");
+        for (const [key, value] of Object.entries(headers)) res.setHeader(key, value);
+      }
+      if (req.method === "OPTIONS") { if (!origin || sameOrigin) return send(res, 400, { error: "缺少跨源预检来源" }); res.writeHead(204); return res.end(); }
+      if (req.headers.authorization && !["/api/mobile/login", "/api/mobile/refresh"].includes(u.pathname)) {
+        const match = /^Bearer (\S+)$/.exec(req.headers.authorization);
+        if (!match) return send(res, 401, { error: "设备凭据格式无效", code: "AUTH_REVOKED" });
+        req.mobileDevice = mobile.authenticate(match[1]);
+      }
+      if (["POST", "DELETE"].includes(req.method) && req.headers["x-hs"] !== "1") return send(res, 403, { error: "拒绝跨站请求", code: "FORBIDDEN" });
+    }
+    if (u.pathname === "/api/mobile/capabilities" && req.method === "GET") return send(res, 200, { apiVersion: 1, build: "mobile-v1", auth: ["device-bearer"], modules: { overview: true, sessions: true, chat: true, uploads: true, cli: true, management: false }, permissions: { cli: req.mobileDevice?.permissions.cli === true }, limits: { uploadMaxBytes: UP_MAX, maxPerMessage: UP_MAX_PER_MSG } });
+    if (u.pathname === "/api/mobile/refresh" && req.method === "POST") { const b = await body(req); return send(res, 200, mobile.refresh(b.refreshToken)); }
+    if (u.pathname === "/api/mobile/logout" && req.method === "POST") { if (!req.mobileDevice) return send(res, 401, { error: "需要设备凭据", code: "AUTH_REVOKED" }); mobile.revoke(req.mobileDevice.id); return send(res, 200, { ok: true }); }
+    if (u.pathname === "/api/mobile/devices" && req.method === "GET") { if (!authed(req)) return send(res, 401, { error: "请先登录" }); return send(res, 200, { devices: mobile.devices() }); }
+    const deviceDelete = /^\/api\/mobile\/devices\/([a-f0-9]{24})$/.exec(u.pathname);
+    if (deviceDelete && req.method === "DELETE") { if (!authed(req)) return send(res, 401, { error: "请先登录" }); mobile.revoke(deviceDelete[1]); return send(res, 200, { ok: true }); }
+    const requestQuery = /^\/api\/mobile\/requests\/([^/]+)$/.exec(u.pathname);
+    if (requestQuery && req.method === "GET") { if (!req.mobileDevice) return send(res, 401, { error: "需要设备凭据", code: "AUTH_REVOKED" }); const record = mobile.getRequest(decodeURIComponent(requestQuery[1])); return record ? send(res, 200, record) : send(res, 404, { error: "请求记录不存在；不能据此推断历史执行情况", code: "request_missing" }); }
     if (u.pathname.startsWith("/api/") && req.method === "POST" && req.headers["x-hs"] !== "1") return send(res, 403, { error: "拒绝跨站请求" });
-    if (u.pathname === "/api/login" && req.method === "POST") {
+    if (["/api/login", "/api/mobile/login"].includes(u.pathname) && req.method === "POST") {
       const ip = ipOf(req), f = fails.get(ip) || { n: 0, first: Date.now(), lockUntil: 0 };
       if (f.lockUntil > Date.now()) return send(res, 429, { error: `尝试次数过多，请 ${Math.ceil((f.lockUntil - Date.now()) / 60e3)} 分钟后再试` });
       const b = await body(req);
       if (typeof b.password === "string" && b.password.length < 200 && HASH && await bcrypt.compare(b.password, HASH)) {
+        if (u.pathname === "/api/mobile/login") { fails.delete(ip); return send(res, 200, mobile.issueDevice(b.deviceName)); }
         fails.delete(ip); const sid = crypto.randomBytes(32).toString("hex"); sessions.set(sid, Date.now() + TTL);
         return send(res, 200, { ok: true }, { "set-cookie": `hs_sid=${sid}; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=${TTL / 1000}` });
       }
@@ -1846,6 +1903,7 @@ http.createServer(async (req, res) => {
     if (u.pathname === "/api/logout") { const s = cookieSid(req); if (s) sessions.delete(s); return send(res, 200, { ok: true }, { "set-cookie": "hs_sid=; Path=/; HttpOnly; Secure; SameSite=Strict; Max-Age=0" }); }
     if (u.pathname === "/api/me") { const a = !!authed(req); return send(res, 200, { authed: a, isOwner: a }); } // 单密码登录：登录即主人
     if (u.pathname.startsWith("/api/cli/") && !authed(req)) return send(res, 403, { error: "仅主人可用", code: "forbidden" });
+    if (u.pathname.startsWith("/api/cli/") && req.mobileDevice && !req.mobileDevice.permissions.cli) return send(res, 403, { error: "设备未获准使用远程 CLI", code: "FORBIDDEN" });
     if (u.pathname.startsWith("/api/")) {
       if (!authed(req)) return send(res, 401, { error: "请先登录" });
       if (u.pathname === "/api/media" && req.method === "GET") return await serveMedia(req, res, u);
@@ -1857,6 +1915,7 @@ http.createServer(async (req, res) => {
       if (u.pathname.startsWith("/api/cli/")) { if (req.method === "DELETE" && req.headers["x-hs"] !== "1") return send(res, 403, { error: "拒绝跨站请求" }); return await cliRoute(req, res, u); }
       const pm = req.method === "GET" && /^\/api\/profiles\/([^/]+)$/.exec(u.pathname); const h = pm ? (u2 => R["GET /api/profiles/:id"](u2, decodeURIComponent(pm[1]))) : R[req.method + " " + u.pathname]; if (!h) return send(res, 404, { error: "接口不存在" });
       const b = req.method === "POST" ? await body(req) : null;
+      if (u.pathname === "/api/send" && req.mobileDevice && !mobileBegin(req, res, { requestId: b.requestId, operation: "chat.send", session: b.key, payload: { message: b.message || "", deliver: !!b.deliver, attachments: b.attachments || [] } })) return;
       const out = await h(u, b, req); if (out?.__raw) { res.writeHead(200, { "content-type": out.__raw.type, "content-length": out.__raw.buf.length, "cache-control": "no-store", "x-content-type-options": "nosniff", ...out.__raw.headers }); return res.end(out.__raw.buf); } /* HOSINO-VOICES v1 raw audio/image */
       return send(res, 200, out);
     }

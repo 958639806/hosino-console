@@ -1,10 +1,10 @@
-import { api, setUnauthedHandler, notReady, mediaOf, rawReq } from "./api.js?v=2026.11.4";
-import { makeCred } from "./cred-adapter.js?v=2026.11.4";
+import { api, setUnauthedHandler, notReady, mediaOf, rawReq } from "./api.js?v=2026.11.4.1";
+import { makeCred } from "./cred-adapter.js?v=2026.11.4.1";
 const cred = makeCred(rawReq);
-import { makeMemSearch, ALL as MS_ALL } from "./memsearch-adapter.js?v=2026.11.4";
+import { makeMemSearch, ALL as MS_ALL } from "./memsearch-adapter.js?v=2026.11.4.1";
 const memSearch = makeMemSearch(rawReq);
-import { md } from "./md.js?v=2026.11.4";
-import { pluginCenter } from "./plugin-center.js?v=2026.11.4";
+import { md } from "./md.js?v=2026.11.4.1";
+import { pluginCenter } from "./plugin-center.js?v=2026.11.4.1";
 
 // ---------- 小工具 ----------
 const $ = (s, el = document) => el.querySelector(s);
@@ -2960,7 +2960,7 @@ document.addEventListener("keydown", e => {
 
 // ---- 6 PWA ----
 if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) {
-  addEventListener("load", () => navigator.serviceWorker.register("/sw.js?v=2026.11.4").catch(() => {}));
+  addEventListener("load", () => navigator.serviceWorker.register("/sw.js?v=2026.11.4.1").catch(() => {}));
 }
 
 
@@ -3379,3 +3379,12 @@ async function boot() {
 }
 window.addEventListener("hashchange", () => $(".shell") ? route() : null);
 boot();
+
+// 2026.11.4.1：被省略号截断的单行文字自动补上 title，手机上点一下可展开全文
+{
+  const TRUNC = ".row .t,.row .d,.uc-head b,.cx-mg>summary b,.speaker,.top .sub,.top h1,.chip,.pill,.v4badge";
+  const fill = () => { for (const el of document.querySelectorAll(TRUNC)) { const tr = el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 2; if (tr && !el.title) { el.title = el.textContent.trim(); el.dataset.autotitle = "1"; } else if (!tr && el.dataset.autotitle && !el.classList.contains("unclip")) { el.removeAttribute("title"); delete el.dataset.autotitle; } } };
+  let q = 0; const sched = () => { if (!q) q = requestAnimationFrame(() => { q = 0; fill(); }); };
+  new MutationObserver(sched).observe(document.body, { childList: true, subtree: true }); addEventListener("resize", sched); sched();
+  document.addEventListener("click", e => { const el = e.target.closest?.("[data-autotitle]"); if (!el || el.closest("a,button,summary,label,[data-r]")) return; el.classList.toggle("unclip"); });
+}

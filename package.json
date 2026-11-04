@@ -1,6 +1,6 @@
 {
   "name": "hosino-console",
-  "version": "2026.11.4",
+  "version": "2026.11.4.1",
   "private": true,
   "description": "Hosino OpenClaw QQ bot web console",
   "engines": {
@@ -11,7 +11,7 @@
     "dev": "cd mock && node mock.mjs",
     "test": "node --test tests/*.test.cjs tests/*.test.mjs tests/chat-actions/*.test.mjs tests/model-ping/*.test.mjs tests/legacy/*.test.cjs",
     "test:backend": "node --test tests/gateway.test.cjs tests/login.test.cjs tests/cli.test.cjs tests/digest.test.cjs tests/uploads.test.cjs tests/server.test.cjs tests/http-round2.test.cjs tests/*.test.mjs tests/chat-actions/*.test.mjs tests/model-ping/*.test.mjs tests/legacy/*.test.cjs tests/security-redaction.test.cjs tests/plugin-center-security.test.cjs",
-    "test:frontend": "node --test tests/frontend*.test.cjs tests/panels-browser.test.cjs tests/plugin-center-browser.test.cjs"
+    "test:frontend": "node --test tests/frontend*.test.cjs tests/panels-browser.test.cjs tests/plugin-center-browser.test.cjs tests/mobile-layout-browser.test.cjs"
   },
   "dependencies": {
     "bcryptjs": "3.0.3",

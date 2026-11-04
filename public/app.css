@@ -1142,3 +1142,36 @@ textarea.input{font-size:16px}
 .pc-diff-item{border-bottom:1px solid var(--line2);padding:12px 0}.pc-diff-item>b{display:block;font-size:12px;overflow-wrap:anywhere}
 .pc-diff-item>div>.faint{font-size:12px}.pc-buttons{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap}.pc-buttons .btn{flex:1;min-width:120px}
 @media(max-width:480px){.pc-toolbar .pc-search{flex-basis:100%}.pc-toolbar>.field:not(.pc-search){flex:1}.pc-toolbar>.btn{min-width:72px}.pc-plugin{padding:14px;align-items:flex-start;gap:9px}.pc-plugin-status{max-width:40%}.pc-plugin-main>.mono{overflow-wrap:anywhere}.pc-dialog .kv{grid-template-columns:minmax(70px,30%) minmax(0,1fr)}}
+/* ===== 2026.11.4.1 手机布局修复（聊天页 / 模型页） ===== */
+/* 1. 输入框：中止按钮的 grid-area:run 被 #abort 的高优先级规则覆盖，跑到隐式行/列，挤窄了输入框 */
+.composer #abort.cx-abort{grid-area:ab;width:44px;height:44px;margin:0;padding:0;border-radius:50%;font-size:15px}
+.composer textarea::placeholder{white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+/* 2. 发送状态说明：在只有圆点宽的 details 里被逐字换行 */
+.dvd[open]{max-width:100%}
+.dvn{width:max-content;max-width:min(260px,calc(100vw - 96px));word-break:normal;overflow-wrap:anywhere}
+.msg:has(.dvd[open]){min-width:min(260px,calc(100vw - 96px))}
+/* 3. 发言人名字：单字名字触控宽度不足 44px */
+.speaker{min-width:44px}
+/* 4. 模型页：长服务商名/模型名 */
+.cx-mg>summary b{min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.cx-mg>summary .faint{flex:none;white-space:nowrap}
+.cx-mmrow .t,.cx-mrow .t{white-space:normal;overflow-wrap:anywhere}
+.cx-mmrow .d.mono,.cx-fbi .mono,.cx-mrow .d.mono{overflow-wrap:anywhere;word-break:normal}
+.cx-mmrow .d.mono{display:block;-webkit-line-clamp:unset}
+@media (max-width:479px){
+  /* 备用顺序：模型名独占一行，按钮另起一行靠右，不再挤成逐字换行 */
+
+  .cx-fbi{display:grid;grid-template-columns:auto minmax(0,1fr) auto auto auto;column-gap:6px}
+  .cx-fbi>.grow{grid-column:2 / -1}
+  .cx-fbi>.grow+.btn{grid-column:3}
+
+  .cx-row2{flex-wrap:wrap}
+  .cx-row2>.select{flex:1 1 100%;min-width:0}
+  .cx-row2>.btn{flex:1 1 auto}
+  /* 行内文字区太窄时，右侧按钮换到下一行 */
+  .list>.row{flex-wrap:wrap;row-gap:8px}
+  .list>.row>.grow{flex:1 1 150px;min-width:0}
+  .list>.row>.grow~.btn{margin-left:auto}
+  .cx-miss{width:100%}
+}
+.unclip{white-space:normal!important;overflow:visible!important;text-overflow:clip!important;-webkit-line-clamp:unset!important;display:block!important;overflow-wrap:anywhere}

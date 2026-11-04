@@ -9,3 +9,4 @@ gateway-cert.pem
 .env
 .env.*
 !.env.example
+node_modules

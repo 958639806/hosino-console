@@ -168,13 +168,15 @@ export const api = {
   regenerate: (key, id, deliver) => post("/api/chat/regenerate", { key, id, deliver: deliver === true, confirm: true }),
   // 模型 ping（model-ping/FRONTEND-SPEC.md）：CLI 运行时最长 60 秒，前端 75 秒超时，可用 signal 取消
   modelPing: async (modelRef, signal) => {
+    const epoch = authEpoch;
     const ac = new AbortController(), t = setTimeout(() => ac.abort("timeout"), 75000);
     const stop = () => ac.abort("cancel"); signal?.addEventListener("abort", stop);
+    if (signal?.aborted) stop();
     try {
       const r = await fetch("/api/models/ping", { method: "POST", credentials: "include", cache: "no-store", headers: { ...CSRF, "Content-Type": "application/json" }, body: JSON.stringify({ modelRef }), signal: ac.signal });
       let d = null; try { d = await r.json(); } catch {}
-      if (r.status === 401) notifyUnauthed(authEpoch);
-      if (!r.ok) throw new ApiError(d?.error || `请求失败（${r.status}）`, r.status, d?.code);
+      if (r.status === 401) notifyUnauthed(epoch);
+      if (!r.ok) throw new ApiError(d?.error || `请求失败（${r.status}）`, r.status, d?.code, d?.detail, d);
       return d;
     } catch (e) { if (e instanceof ApiError) throw e; if (ac.signal.aborted) throw new ApiError(ac.signal.reason === "cancel" ? "已取消" : "等了 75 秒还没回来，算超时", 0, ac.signal.reason === "cancel" ? "cancelled" : "client_timeout"); throw new ApiError("网络好像断开了，稍后再试试", 0); }
     finally { clearTimeout(t); signal?.removeEventListener("abort", stop); }

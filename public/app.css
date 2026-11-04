@@ -1113,3 +1113,32 @@ textarea.input{font-size:16px}
 .cp-plrow{flex-wrap:wrap}.cp-pr{display:flex;gap:6px;flex-wrap:wrap;justify-content:flex-end}
 .cp-perr{flex-basis:100%;display:flex;gap:8px;align-items:center;flex-wrap:wrap;font-size:13px}
 .cp-secf .input{font-size:16px}
+
+/* 原生插件中心：仅作用于本模块。 */
+.pc-center,.pc-dialog{min-width:0;overflow-wrap:anywhere}
+.pc-intro{font-size:13px;line-height:1.6;margin:0 0 14px}
+.pc-toolbar{display:flex;align-items:flex-end;gap:10px;flex-wrap:wrap;margin-bottom:12px}
+.pc-toolbar .field{margin:0;min-width:120px}.pc-toolbar .pc-search{flex:1;min-width:170px}
+.pc-center .btn,.pc-dialog .btn,.pc-tabs button{min-height:44px}
+.pc-count{font-size:12.5px;margin:14px 0 8px}
+.pc-list{border:1px solid var(--line2);border-radius:var(--r);overflow:hidden;background:var(--card)}
+.pc-plugin{width:100%;display:flex;align-items:center;justify-content:space-between;gap:14px;text-align:left;padding:16px;border-bottom:1px solid var(--line2);background:transparent;color:inherit}
+.pc-plugin:last-child{border-bottom:0}.pc-plugin:hover{background:var(--accent-soft)}
+.pc-plugin-main{display:flex;flex-direction:column;gap:5px;min-width:0;flex:1}
+.pc-plugin-main>b{font-size:15px}.pc-plugin-main>.mono{font-size:12px}
+.pc-plugin-status{display:flex;flex-wrap:wrap;justify-content:flex-end;align-items:center;gap:6px;max-width:42%}
+.pc-plugin-status>.faint{flex-basis:100%;text-align:right;font-size:12px}
+.pc-description{font-size:13.5px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere}
+.pc-note{border:1px solid var(--line2);background:var(--bg2);border-radius:12px;padding:11px 13px;font-size:13px;line-height:1.6;margin:12px 0}
+.pc-error{color:var(--bad);font-size:13px;line-height:1.6;white-space:pre-wrap;overflow-wrap:anywhere}
+.pc-detail-meta{display:flex;align-items:center;flex-wrap:wrap;gap:7px;margin:10px 0 14px;font-size:12.5px}
+.pc-tabs{display:flex;max-width:100%;margin-bottom:18px}.pc-tabs button{flex:1;min-width:0}
+.pc-dialog h3{font-size:14px;margin:18px 0 8px}.pc-dialog .kv dd{overflow-wrap:anywhere;min-width:0}
+.pc-field{margin:16px 0}.pc-field small{display:block;line-height:1.6;margin-top:5px}
+.pc-field .input,.pc-field .select{font-size:16px;min-width:0;max-width:100%}
+.pc-field [aria-invalid=true]{border-color:var(--bad)}
+.pc-value,.pc-diff pre{white-space:pre-wrap;overflow-wrap:anywhere;font-size:12px;max-width:100%;max-height:240px;overflow:auto;margin:6px 0;padding:10px;background:var(--bg2);border-radius:10px}
+.pc-wide{width:100%;margin-top:12px}.pc-diff{max-height:45vh;overflow:auto}
+.pc-diff-item{border-bottom:1px solid var(--line2);padding:12px 0}.pc-diff-item>b{display:block;font-size:12px;overflow-wrap:anywhere}
+.pc-diff-item>div>.faint{font-size:12px}.pc-buttons{display:flex;gap:10px;margin-top:12px;flex-wrap:wrap}.pc-buttons .btn{flex:1;min-width:120px}
+@media(max-width:480px){.pc-toolbar .pc-search{flex-basis:100%}.pc-toolbar>.field:not(.pc-search){flex:1}.pc-toolbar>.btn{min-width:72px}.pc-plugin{padding:14px;align-items:flex-start;gap:9px}.pc-plugin-status{max-width:40%}.pc-plugin-main>.mono{overflow-wrap:anywhere}.pc-dialog .kv{grid-template-columns:minmax(70px,30%) minmax(0,1fr)}}

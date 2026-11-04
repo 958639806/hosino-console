@@ -8,27 +8,28 @@ const crypto = require('node:crypto');
 const {spawn} = require('node:child_process');
 const {once} = require('node:events');
 const bcrypt = require('bcryptjs');
+const runtime = require('./helpers/runtime.cjs');
 
-test('actual HTTP server protects login, authenticates, uploads and removes a file, then logs out', async t => {
-  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hosino-http-test-'));
+test('actual HTTP server in a directory with spaces protects login, uploads and removes a file, then logs out', async t => {
+  const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hosino http test-'));
   const checkout = path.resolve(__dirname, '..');
-  t.after(() => fs.rmSync(root, {recursive:true, force:true}));
-  fs.copyFileSync(path.join(checkout, 'server.mjs'), path.join(root, 'server.mjs'));
+  let child;
+  t.after(async () => { await runtime.stopChild(child); fs.rmSync(root, {recursive:true, force:true}); });
+  runtime.copyRuntime(checkout, root);
   fs.symlinkSync(path.join(checkout, 'public'), path.join(root, 'public'), 'dir');
   const listener = net.createServer(); listener.listen(0, '127.0.0.1');
   await once(listener, 'listening'); const port = listener.address().port;
   await new Promise(resolve => listener.close(resolve));
   const password = crypto.randomBytes(24).toString('hex');
-  const child = spawn(process.execPath, ['server.mjs'], {
+  child = spawn(process.execPath, ['server.mjs'], {
     cwd:root,
     env:{...process.env, PORT:String(port), LOGIN_HASH:bcrypt.hashSync(password, 4),
-      NODE_PATH:path.join(checkout, 'node_modules'), QQ_SEND_ENABLED:'0',
+      NODE_PATH:path.join(checkout, 'node_modules'), QQ_SEND_ENABLED:'0', HOSINO_QUIET_WINDOW:'off',
       OPENCLAW_CONFIG:path.join(root, 'unconfigured.json'),
       OPENCLAW_WORKSPACE:path.join(root, 'workspace'), CLI_ROOT:path.join(root, 'cli')},
     stdio:['ignore','pipe','pipe'],
   });
   let output = ''; child.stdout.on('data', d => {output += d;}); child.stderr.on('data', d => {output += d;});
-  t.after(async () => {if(child.exitCode === null) {child.kill('SIGTERM'); await once(child, 'exit');}});
   for(let i=0; !output.includes('hosino-console on') && i<100; i++) {
     assert.equal(child.exitCode, null, output);
     await new Promise(resolve => setTimeout(resolve, 20));

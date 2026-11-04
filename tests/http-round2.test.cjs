@@ -10,6 +10,7 @@ const {PassThrough} = require('node:stream');
 const {spawn} = require('node:child_process');
 const {once} = require('node:events');
 const bcrypt = require('bcryptjs');
+const runtime = require('./helpers/runtime.cjs');
 const checkout = path.resolve(__dirname, '..');
 const source = fs.readFileSync(path.join(checkout, 'server.mjs'), 'utf8');
 
@@ -44,10 +45,10 @@ async function serverFixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'hosino-http-round2-'));
   let child;
   t.after(async () => {
-    if(child && child.exitCode === null) {child.kill('SIGTERM'); await once(child, 'exit');}
+    await runtime.stopChild(child);
     fs.rmSync(root, {recursive:true, force:true});
   });
-  fs.copyFileSync(path.join(checkout, 'server.mjs'), path.join(root, 'server.mjs'));
+  runtime.copyRuntime(checkout, root);
   fs.symlinkSync(path.join(checkout, 'public'), path.join(root, 'public'));
   const listener = net.createServer(); listener.listen(0, '127.0.0.1');
   await once(listener, 'listening'); const port = listener.address().port;
@@ -56,7 +57,7 @@ async function serverFixture(t) {
   child = spawn(process.execPath, ['server.mjs'], {
     cwd:root, env:{...process.env, PORT:String(port), LOGIN_HASH:bcrypt.hashSync(password, 4),
       NODE_PATH:path.join(checkout, 'node_modules'), OPENCLAW_WORKSPACE:path.join(root, 'workspace'),
-      OPENCLAW_CONFIG:path.join(root, 'unconfigured.json'), QQ_SEND_ENABLED:'0'},
+      OPENCLAW_CONFIG:path.join(root, 'unconfigured.json'), QQ_SEND_ENABLED:'0', HOSINO_QUIET_WINDOW:'off'},
     stdio:['ignore','pipe','pipe'],
   });
   let logs = ''; child.stdout.on('data', d => {logs += d;}); child.stderr.on('data', d => {logs += d;});

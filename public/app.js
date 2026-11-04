@@ -1,9 +1,10 @@
-import { api, setUnauthedHandler, notReady, mediaOf, rawReq } from "./api.js?v=2026.11.3.7";
-import { makeCred } from "./cred-adapter.js?v=2026.11.3.7";
+import { api, setUnauthedHandler, notReady, mediaOf, rawReq } from "./api.js?v=2026.11.4";
+import { makeCred } from "./cred-adapter.js?v=2026.11.4";
 const cred = makeCred(rawReq);
-import { makeMemSearch, ALL as MS_ALL } from "./memsearch-adapter.js?v=2026.11.3.7";
+import { makeMemSearch, ALL as MS_ALL } from "./memsearch-adapter.js?v=2026.11.4";
 const memSearch = makeMemSearch(rawReq);
-import { md } from "./md.js?v=2026.11.3.7";
+import { md } from "./md.js?v=2026.11.4";
+import { pluginCenter } from "./plugin-center.js?v=2026.11.4";
 
 // ---------- 小工具 ----------
 const $ = (s, el = document) => el.querySelector(s);
@@ -797,8 +798,8 @@ const cxRtName = r => r === "codex" ? "Codex" : r === "claude-cli" ? "Claude CLI
 // /api/patch 没有稳定错误码，原样透传网关文字：只按文字里的 acp / lock 给中文提示，其他一律「保存没成功：原文」。不提供解锁入口。
 // 网关拒绝：code 固定 INVALID_REQUEST、HTTP 502，只能看文字里有没有 ACP / locked（不区分大小写）
 const cxPatchErr = x => { const t = String(x?.message || ""); return /acp/i.test(t) ? "这是 ACP 会话，它的模型和引擎由 ACP 那边管理，这里改不了" : /locked/i.test(t) ? "这个会话的模型被锁定了，不能在这里换" : "保存没成功：" + (x?.message || "未知错误"); };
-// 这一版后端没有 /api/models/auth/login 和 /auth/order：登录按钮和账号顺序先不显示，cred-adapter 里的代码保留不用
-const CX_ORDER_UI = false;
+// 只有网关明确声明支持，才显示 OAuth 登录和同供应商账号排序。
+const cxAuthCap = (p, capability) => p.capabilities?.[capability] === true;
 const CX_LOCKED = new Set(); // 本页内收到过「锁定」拒绝的会话，之后同样按锁定处理
 const cxIsAcp = k => /(^|:)acp(:|$)/i.test(String(k || ""));
 // /api/sessions 返回 runtimeSelectionLocked（模型锁定或 ACP 会话）和 modelSelectionLocked（仅模型锁定）；key 正则只作兜底
@@ -1064,6 +1065,8 @@ function cxPingHtml(r) {
   return `<div class="cx-pst ${st}"><i class="cx-dot"></i><b>${ok ? `通 · ${sec}` : st === "timeout" ? `超时${sec ? " · " + sec : ""}${r.error ? " · " + esc(r.error) : ""}` : `不通 · ${esc(r.error || "未知错误")}`}</b></div>
   ${r.upstreamModel || r.modelMismatch ? `<div class="cx-pkv ${r.modelMismatch ? "cx-mm" : ""}"><span>上游实际模型</span><b class="mono">${esc(r.upstreamModel || "拿不到")}</b>${r.modelMismatch ? `<span class="cx-mmtag">⚠ 与配置名不同（配置 ${esc(r.requestedModel || r.modelRef || "")}）</span>` : ""}</div>` : `<div class="cx-pkv"><span>上游实际模型</span><span class="faint">拿不到</span></div>`}
   ${r.fallbackUsed ? `<div class="cx-pfb">目标模型没直接响应，网关改用了 <b class="mono">${esc(r.effectiveModel || "")}</b></div>` : ""}
+  ${r.warnMessage ? `<div class="cx-pfb">${esc(scrub(r.warnMessage))}</div>` : ""}
+  ${r.note ? `<div class="faint cx-note">${esc(scrub(r.note))}</div>` : ""}
   ${r.replyPreview != null && r.replyPreview !== "" ? `<div class="cx-pkv"><span>回复</span><code class="cx-prep">${esc(String(r.replyPreview).slice(0, 200))}</code></div>` : ""}
   <div class="cx-pmeta">${[r.mode === "runtime" ? "runtime（走运行时）" : r.mode === "raw" ? "raw（裸调模型）" : r.mode, r.runtime, r.modelLatencyMs != null ? "模型 " + (r.modelLatencyMs / 1000).toFixed(1) + " 秒" : "", r.usage ? `用量 ${r.usage.input ?? "?"}/${r.usage.output ?? "?"}` : "", r.stage ? "失败阶段 " + r.stage : "", r.at ? cxSgt(r.at) : ""].filter(Boolean).map(esc).join(" · ")}</div>`;
 }
@@ -1119,7 +1122,7 @@ function cxDiffHtml(diff, reloadPaths, blocked) {
     return `<div class="cx-dg${blk ? " cx-blk" : ""}"><div class="cx-dp mono">${esc(d.path || (d.keys || []).join("."))} ${tag}</div>${body}</div>`;
   }).join("")}</div>`;
 }
-const CX_MERR = { plan_expired: "预览过期了（10 分钟），请重新预览", protected: "这是受保护的设置，不能改", oauth_managed: "这个模型用 OAuth 登录，不能改 key", inline_key: "key 直接写在配置里，控制台不改", quiet_window: "21:55–22:10 不允许改配置，稍后再试", not_whitelisted: "这一项不在可改范围内", in_use: "还有地方在用，不能删" };
+const CX_MERR = { plan_expired: "预览过期了（10 分钟），请重新预览", protected: "这是受保护的设置，不能改", oauth_managed: "这个模型用 OAuth 登录，不能改 key", inline_key: "key 直接写在配置里，控制台不改", quiet_window: "当前处于静默时段，暂不能修改，稍后再试。", not_whitelisted: "这一项不在可改范围内", in_use: "还有地方在用，不能删", order_locked: "这个供应商的账号顺序已锁定，不能调整。", not_ready: "当前网关不支持这个操作。", auth_unsupported: "当前网关不支持这个供应商的网页登录。", invalid_profile_order: "账号列表刚有变化，请刷新后重试。" };
 const CX_BLOCK = { restart_required: ["这个改动会让网关重启", "这个改动会让网关重启，需要<b>凛</b>批准，控制台不做。<b>这次什么都没有保存。</b>"], not_whitelisted: ["这个改动不在控制台能改的范围", "改动落在控制台白名单外（比如 gateway.*、plugins.*），控制台不做，需要的话请找<b>凛</b>。<b>这次什么都没有保存。</b>"] };
 // 409 restart_required / not_whitelisted：没有 planId，只展示 diff（被拦截的路径标红），没有保存按钮
 function cxBlocked(code, data) {
@@ -1171,7 +1174,8 @@ function cxManage(host, models) {
         return `<div class="card cx-prov" data-prov="${esc(p.provider)}"><div class="cx-mmh"><b>${esc(p.provider)}</b><span class="faint mono">${esc(p.api || "")}</span></div>
         <div class="cx-cred">${oauth ? `<span>登录方式：OAuth · ${c.present ? pill("已登录", "ok") : pill("未登录", "warn")}</span>${c.note ? `<div class="faint">${esc(c.note)}</div>` : ""}`
           : `<span>API Key：${c.present ? pill("已设置" + (p.keyHint || c.keyHint ? " " + esc(p.keyHint || c.keyHint) : ""), "ok") : pill("未设置", "warn")}</span>${c.target ? `<div class="faint mono">${esc(c.target)}</div>` : ""}<button type="button" class="btn" data-setkey="${esc(p.provider)}">更换 API Key</button>`}</div>
-        ${CX_ORDER_UI && (p.profiles || []).length > 1 ? `<div class="cx-mmh"><b>账号顺序</b><span class="faint">同一供应商内</span></div><ol class="cx-fb">${p.profiles.map((id, i) => `<li class="cx-fbi"><span class="grow mono">${esc(id)}</span><button type="button" class="btn sm cx-ud" data-pup="${esc(p.provider)}" data-i="${i}" ${i ? "" : "disabled"} aria-label="上移">↑</button></li>`).join("")}</ol>` : ""}
+        ${cxAuthCap(p, "login") ? `<button type="button" class="btn" data-login="${esc(p.provider)}">${c.present ? "重新登录" : "登录"}</button>` : ""}
+        ${cxAuthCap(p, "order") && (p.profiles || []).length > 1 ? `<div class="cx-mmh"><b>账号顺序</b><span class="faint">${p.orderLocked ? "顺序已锁定，不能调整" : "同一供应商内"}</span></div><ol class="cx-fb">${p.profiles.map((id, i) => `<li class="cx-fbi"><span class="grow mono">${esc(id)}</span><button type="button" class="btn sm cx-ud" data-pup="${esc(p.provider)}" data-i="${i}" ${i && !p.orderLocked ? "" : "disabled"} aria-label="上移">↑</button></li>`).join("")}</ol>` : ""}
         <div class="list">${(p.models || []).map(m => `<div class="row cx-mmrow"><div class="grow"><div class="t">${esc(m.alias || m.name || m.id)} ${m.isPrimary ? pill("默认", "ac") : m.fallbackIndex >= 0 ? pill("备用 " + (m.fallbackIndex + 1)) : ""}</div><div class="d mono">${esc(m.ref)}</div>
           ${m.problem === "missing_in_gateway" ? `<div class="cx-miss">⚠ 网关里没有这个模型 <button type="button" class="btn sm" data-fix="${esc(m.ref)}">一键修复</button></div>` : ""}</div>
           <div class="r">${m.isPrimary ? "" : `<button type="button" class="btn sm cx-ud" data-primary="${esc(m.ref)}">设为默认</button>`}</div></div>`).join("")}</div></div>`; }).join("")}
@@ -1217,12 +1221,13 @@ function cxManage(host, models) {
     if ("saveorder" in d) return cxPlanApply([{ op: "setFallbacks", refs: [...order] }], ctx, "保存备用顺序");
     if (d.primary) return cxPlanApply([{ op: "setPrimary", ref: d.primary }], ctx, "设为默认模型");
     if (d.fix) { const m = (ov.providers || []).flatMap(p => p.models || []).find(x => x.ref === d.fix); return m?.fix && cxPlanApply([m.fix], ctx, "一键修复：把模型加进网关"); }
-    if (d.pup) { const p = ov.providers.find(x => x.provider === d.pup), ids = [...p.profiles], i = +d.i; [ids[i - 1], ids[i]] = [ids[i], ids[i - 1]];
+    if (d.pup) { const p = ov.providers.find(x => x.provider === d.pup); if (!cxAuthCap(p, "order") || p.orderLocked) return; const ids = [...p.profiles], i = +d.i; if (i < 1 || i >= ids.length) return; [ids[i - 1], ids[i]] = [ids[i], ids[i - 1]];
       if (!await confirmDialog({ title: "调整账号顺序？", body: `${esc(p.profiles.join(" › "))}<br>→ <b>${esc(ids.join(" › "))}</b>`, ok: "保存" })) return;
-      try { await cred.setOrder(p.provider, ids); toast("顺序已保存 ✓"); await load(); } catch (x) { cxMErr(x, load); } return; }
+      b.disabled = true;
+      try { await cred.setOrder(p.provider, ids); toast("顺序已保存 ✓"); await load(); } catch (x) { b.disabled = false; cxMErr(x, load); } return; }
     if (d.rb) return rollback(d.rb);
     if (d.setkey) return cxKeySheet(d.setkey, ctx);
-    if (d.login) return cxLoginSheet(d.login, ctx);
+    if (d.login) { const p = ov.providers.find(x => x.provider === d.login); if (!cxAuthCap(p, "login")) return; b.disabled = true; try { await cxLoginChoose(p, ctx); } finally { if (b.isConnected) b.disabled = false; } }
   });
   load(); void models;
 }
@@ -1242,16 +1247,73 @@ async function cxKeySheet(provider, ctx) {
   }, "cxkey");
 }
 // OAuth 登录向导：给链接或代码 → 轮询结果，可取消
-async function cxLoginSheet(provider, ctx) {
-  let w; try { w = await cred.loginStart(provider); } catch (x) { return cxMErr(x, ctx.reload); }
-  sheet(`<h2>登录 ${esc(provider)}</h2>${w.url ? `<p>在浏览器里打开下面的链接完成授权：</p><a class="btn" href="${esc(w.url)}" target="_blank" rel="noopener noreferrer" style="min-height:44px;word-break:break-all">${esc(w.url)}</a>` : ""}${w.userCode ? `<p>输入这个代码：</p><div class="cx-code mono">${esc(w.userCode)}</div>` : ""}<div class="cx-pst wait" id="cxlst"><span class="cx-spin"></span><b>等待授权完成…</b></div><button type="button" class="btn" data-cancel style="width:100%;margin-top:14px;min-height:44px">取消登录</button>`, (el, close) => {
-    let alive = true; const host = el.closest("[data-v3sheet]"); const prev = host._onclose; host._onclose = () => { if (alive) { alive = false; cred.loginCancel(w.pollId).catch(() => {}); } prev?.(); };
-    el.querySelector("[data-cancel]").onclick = () => close(true);
-    const poll = async () => { if (!alive) return; try { const r = await cred.loginPoll(w.pollId); if (!alive) return;
-      if (r.state === "done" || r.state === "ok") { alive = false; await close(true); toast(`${provider} 已登录 ✓`); return ctx.reload(); }
-      if (r.state === "error" || r.state === "cancelled") { alive = false; el.querySelector("#cxlst").outerHTML = `<div class="cx-pst error"><i class="cx-dot"></i><b>登录没成功：${esc(r.error || r.state)}</b></div>`; return; } } catch (x) { el.querySelector("#cxlst b").textContent = "查询失败，重试中：" + x.message; }
-      setTimeout(poll, 2000); };
-    setTimeout(poll, 1500);
+async function cxLoginChoose(p, ctx) {
+  const methods = (p.loginMethods || []).map(m => typeof m === "string" ? { id: m, label: m } : m).filter(m => m?.id);
+  if (methods.length < 2) return cxLoginSheet(p.provider, ctx, methods[0]?.id);
+  sheet(`<h2>登录 ${esc(p.provider)}</h2><form data-login-method><label class="field"><span>登录方式</span><select class="select" name="method">${methods.map(m => `<option value="${esc(m.id)}">${esc(m.label || m.id)}</option>`).join("")}</select></label><div class="cp-btns"><button type="button" class="btn" data-no>取消</button><button class="btn primary">继续</button></div></form>`, (el, close) => {
+    el.querySelector("[data-no]").onclick = () => close(true);
+    el.querySelector("form").onsubmit = async e => { e.preventDefault(); const method = e.target.elements.namedItem("method").value; await close(true); await cxLoginSheet(p.provider, ctx, method); };
+  }, "cxloginmethod");
+}
+async function cxLoginSheet(provider, ctx, method) {
+  let w; try { w = await cred.loginStart(provider, method); } catch (x) { return cxMErr(x, ctx.reload); }
+  const safeUrl = value => { try { const u = new URL(value); return !u.username && !u.password && (u.protocol === "https:" || u.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(u.hostname)) ? u.href : ""; } catch { return ""; } };
+  if (w.url && !safeUrl(w.url)) { await cred.loginCancel(w.pollId).catch(() => {}); return toast("登录服务返回的授权链接无效，请稍后重试。"); }
+  sheet(`<h2>登录 ${esc(provider)}</h2><div data-auth-instructions></div><div data-auth-step></div><div class="cx-pst wait" id="cxlst" role="status"><span class="cx-spin"></span><b>等待授权完成…</b></div><button type="button" class="btn" data-cancel style="width:100%;margin-top:14px;min-height:44px">取消登录</button>`, (el, close) => {
+    let alive = true, timer, busy = false, cancelling = false, stepKey = null, current = w, flowEpoch = 0;
+    const host = el.closest("[data-v3sheet]"), prev = host._onclose, cancelButton = el.querySelector("[data-cancel]"), status = el.querySelector("#cxlst"), stepHost = el.querySelector("[data-auth-step]");
+    const statusText = (text, error = false) => { status.className = "cx-pst " + (error ? "error" : "wait"); status.innerHTML = `<i class="cx-dot"></i><b>${esc(scrub(text))}</b>`; };
+    const failed = message => { alive = false; clearTimeout(timer); statusText("登录没成功：" + message, true); cancelButton.textContent = "关闭"; stepHost.querySelectorAll("input,select,button").forEach(x => x.disabled = true); };
+    const schedule = (delay = 2000) => { clearTimeout(timer); if (alive) timer = setTimeout(poll, delay); };
+    const render = async r => {
+      if (!alive) return;
+      current = { ...current, ...r };
+      if (["done", "ok", "success"].includes(r.state)) { alive = false; clearTimeout(timer); await close(true); toast(`${provider} 已登录 ✓`); return ctx.reload(); }
+      if (["error", "cancelled", "expired", "failed"].includes(r.state)) return failed(r.error || (r.state === "cancelled" ? "已取消" : r.state === "expired" ? "授权已过期，请重新登录" : "授权失败，请重试"));
+      const step = current.step, urlValue = current.url || step?.externalUrl || "", url = urlValue ? safeUrl(urlValue) : "", code = current.userCode || step?.deviceCode?.code;
+      if (urlValue && !url) { failed("授权链接无效，请重新登录"); await cred.loginCancel(w.pollId).catch(() => {}); return; }
+      el.querySelector("[data-auth-instructions]").innerHTML = `${url ? `<p>在浏览器里打开下面的链接完成授权：</p><a class="btn" href="${esc(url)}" target="_blank" rel="noopener noreferrer" style="min-height:44px;word-break:break-all">${esc(url)}</a>` : ""}${code ? `<p>输入这个代码：</p><div class="cx-code mono">${esc(code)}</div>` : ""}`;
+      const nextKey = step ? JSON.stringify([step.id, step.type]) : "none";
+      if (nextKey === stepKey) return;
+      stepKey = nextKey;
+      if (!step) { stepHost.innerHTML = ""; return; }
+      const options = step.options || [], answerable = step.requiresAnswer !== false && step.type !== "progress", known = ["note", "text", "select", "confirm", "multiselect", "progress", "action"].includes(step.type);
+      const optionText = o => esc(o.label ?? o.value ?? "") + (o.hint ? " · " + esc(o.hint) : "");
+      stepHost.innerHTML = `${step.title ? `<h3>${esc(step.title)}</h3>` : ""}${step.message ? `<p style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(step.message)}</p>` : ""}${!known ? `<p class="faint">这个授权步骤暂不受支持，请取消后使用终端登录。</p>` : answerable ? `<form data-auth-answer autocomplete="off">
+        ${step.type === "text" ? `<label class="field"><span>${esc(step.title || "授权信息")}</span><input class="input" name="answer" type="${step.sensitive ? "password" : "text"}" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="${esc(step.placeholder || "")}" ${step.required === false ? "" : "required"}></label>` : ""}
+        ${step.type === "select" ? `<label class="field"><span>请选择</span><select class="select" name="answer" required><option value="" selected disabled>请选择…</option>${options.map((o, i) => `<option value="${i}">${optionText(o)}</option>`).join("")}</select></label>` : ""}
+        ${step.type === "multiselect" ? `<div role="group" aria-label="${esc(step.title || "可选项目")}">${options.map((o, i) => `<label class="field"><span><input type="checkbox" name="answer" value="${i}"> ${optionText(o)}</span></label>`).join("")}</div>` : ""}
+        <div class="cp-btns">${step.type === "confirm" ? `<button class="btn" type="submit" value="false">不确认</button><button class="btn primary" type="submit" value="true">确认</button>` : `<button class="btn primary" type="submit">${["note", "action"].includes(step.type) ? "继续" : "提交"}</button>`}</div></form>` : `<p class="faint">正在等待授权服务…</p>`}`;
+      const form = stepHost.querySelector("form");
+      if (form) form.onsubmit = async e => {
+        e.preventDefault(); if (busy || !alive || cancelling) return;
+        let value;
+        if (step.type === "text") { const input = form.elements.namedItem("answer"); value = input.value; input.value = ""; }
+        if (step.type === "select") { const selected = form.elements.namedItem("answer").value; if (selected === "") return; value = options[+selected]?.value; }
+        if (step.type === "multiselect") value = [...form.querySelectorAll("input:checked")].map(x => options[+x.value]?.value);
+        if (step.type === "confirm") value = e.submitter?.value === "true";
+        busy = true; const epoch = ++flowEpoch; clearTimeout(timer); form.querySelectorAll("button").forEach(x => x.disabled = true); statusText("正在提交授权步骤…");
+        try { const next = await cred.loginAnswer(w.pollId, step.id, value); if (alive && epoch === flowEpoch) { statusText("等待授权完成…"); await render(next); } }
+        catch (x) { if (alive && epoch === flowEpoch) { if (x.status === 401) failed("控制台登录已过期，请关闭后重试"); else statusText(x.code === "quiet_window" ? CP_MSG.quiet_window : "提交没成功，请重试：" + x.message, true); } }
+        finally { busy = false; if (alive) { form.querySelectorAll("button").forEach(x => x.disabled = false); schedule(); } }
+      };
+    };
+    const cancel = async force => {
+      if (!alive) return close(force);
+      if (cancelling) return false;
+      if (force !== true && host._v3dirty() && !await confirmDialog({ title: "取消登录？", body: "还没提交的授权信息会丢失。已保存的账号不会因此撤销。", ok: "取消登录", danger: true })) return false;
+      cancelling = true; ++flowEpoch; clearTimeout(timer); cancelButton.disabled = true;
+      try { const r = await cred.loginCancel(w.pollId); if (r.state === "pending") { statusText(r.message || "登录仍在运行，暂时不能取消，请等待完成。", true); schedule(); return false; } alive = false; return close(true); }
+      catch (x) { statusText("取消没成功：" + (x.code === "quiet_window" ? CP_MSG.quiet_window : x.message), true); schedule(); return false; }
+      finally { cancelling = false; cancelButton.disabled = false; }
+    };
+    host._v3close = cancel; host.querySelector(".scrim").onclick = () => cancel(); cancelButton.onclick = () => cancel(true);
+    host._onclose = () => { clearTimeout(timer); if (alive) { alive = false; cred.loginCancel(w.pollId).then(r => { if (r.state === "pending") toast(r.message || "登录仍在运行，已保存的账号不会因关闭面板而撤销。"); }).catch(() => {}); } prev?.(); };
+    const poll = async () => { if (!alive || busy || cancelling) return; let delay = 2000; const epoch = flowEpoch;
+      try { const r = await cred.loginPoll(w.pollId); if (alive && epoch === flowEpoch) { statusText("等待授权完成…"); await render(r); } }
+      catch (x) { if (!alive || epoch !== flowEpoch) return; if (x.status === 401) return failed("控制台登录已过期，请关闭后重试"); if (x.status >= 400 && x.status < 500 && ![423, 429].includes(x.status)) return failed(x.message || "登录流程已结束，请重试"); statusText(x.code === "quiet_window" ? CP_MSG.quiet_window : "查询失败，重试中：" + x.message); delay = Math.max(2000, Math.min(60000, x.data?.retryAfterMs || 2000)); }
+      schedule(delay); };
+    render(w).catch(x => failed(x.message)); schedule(1500);
   }, "cxlogin");
 }
 VIEWS.models = async v => {
@@ -1281,11 +1343,11 @@ VIEWS.plugins = async v => {
   const [p, s] = await Promise.all([api.plugins(), api.skills().catch(() => null)]);
   const skills = asArr(s?.skills ?? s);
   let tab = "plugins", q = "";
-  const root = paint(v, top("插件与技能") + `<div class="toolbar"><div class="seg"><button data-tab="plugins" aria-pressed="true">插件 ${p.plugins.length}</button><button data-tab="skills" aria-pressed="false">技能 ${skills.length}</button></div><div class="search" style="flex:1;min-width:180px">${ic("search")}<input class="input" placeholder="搜一搜" aria-label="搜索"></div></div><p class="faint cp-note" data-cp="plugins">这一轮只看状态：不能在这里开关或安装。</p><div id="pl"></div>`);
+  const root = paint(v, top("插件与技能") + `<div class="toolbar"><div class="seg"><button data-tab="plugins" aria-pressed="true">插件 ${p.plugins.length}</button><button data-tab="skills" aria-pressed="false">技能 ${skills.length}</button></div><div class="search" style="flex:1;min-width:180px">${ic("search")}<input class="input" placeholder="搜一搜" aria-label="搜索"></div></div><p class="faint cp-note" data-cp="plugins">这一轮只看状态：不能在这里开关或安装。 <a href="#/abilities#plugin-center">打开插件中心 ›</a></p><div id="pl"></div>`);
   const draw = () => {
     const f = x => !q || JSON.stringify([x.name, x.id, x.description]).toLowerCase().includes(q);
     $("#pl", root).innerHTML = tab === "plugins"
-      ? `<div class="list">${p.plugins.filter(f).map(x => `<div class="row cp-plrow"><div class="grow"><div class="t">${esc(x.name || x.id)} <span class="faint mono">${esc(x.version || "")}</span></div><div class="d">${esc(x.description || x.origin || "")}</div></div><div class="r cp-pr">${x.enabled ? pill(cpPlErr(x) ? "出错" : "已启用", cpPlErr(x) ? "bad" : "ok") : pill("已停用")}${x.protected ? pill("受保护", "ac") : ""}</div>${(cpPlErr(x)) && (x.missingSecret || x.lastError) ? `<div class="cp-perr">${x.lastError || typeof x.error === "string" ? `<span class="faint">${esc(scrub(x.lastError || x.error))}</span>` : ""}${x.missingSecret ? `<a class="btn" href="#/system#secrets" data-cpjump>缺密钥 · 去密钥页</a>` : ""}</div>` : ""}</div>`).join("") || `<div class="empty">没有找到</div>`}</div>`
+      ? `<div class="list">${p.plugins.filter(f).map(x => `<div class="row cp-plrow"><div class="grow"><div class="t">${esc(x.name || x.id)} <span class="faint mono">${esc(x.version || "")}</span></div><div class="d">${esc(x.description || x.origin || "")}</div></div><div class="r cp-pr">${x.enabled ? pill(cpPlErr(x) ? "出错" : "已启用", cpPlErr(x) ? "bad" : "ok") : pill("已停用")}${x.protected ? pill("受保护", "ac") : ""}</div>${cpPlErr(x) ? `<div class="cp-perr"><span class="faint">${esc(scrub(cpPlErrorText(x)))}</span>${x.missingSecret ? `<a class="btn" href="#/system#secrets" data-cpjump>缺密钥 · 去密钥页</a>` : ""}</div>` : ""}</div>`).join("") || `<div class="empty">没有找到</div>`}</div>`
       : `<div class="list">${skills.filter(f).map(x => { const on = x.eligible !== false && !x.disabled; return `<button class="row" data-skill="${esc(x.name || x.id)}"><div class="grow"><div class="t">${x.pinned ? "📌 " : ""}${x.emoji ? esc(x.emoji) + " " : ""}${esc(x.name || x.id)}</div><div class="d">${esc(x.description || x.source || "")}</div></div><div class="r">${pill(x.disabled ? "已停用" : on ? "可用" : "缺依赖", x.disabled ? "" : on ? "ok" : "warn")}</div></button>`; }).join("") || `<div class="empty">没有找到</div>`}</div>`;
   };
   root.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { tab = b.dataset.tab; root.querySelectorAll("[data-tab]").forEach(x => x.setAttribute("aria-pressed", x === b)); draw(); });
@@ -1848,7 +1910,7 @@ const VV_LANGS = [["", "全部语言"], ["zh", "中文"], ["ja", "日语"], ["en
 const VV_LN = Object.fromEntries(VV_LANGS.filter(x => x[0]));
 const vvT = t => scrub(t).replace(/好感度/g, "··").replace(/延迟/g, "耗时");
 const vvE = t => esc(vvT(t));
-const vvErr = x => x?.status === 423 ? "默认音色（星野）已锁定，不能删除" : notReady(x) ? "音色接口后台还没上线，再等等哦" : vvT(x?.message || "出错了");
+const vvErr = x => x?.code === "quiet_window" ? CP_MSG.quiet_window : x?.status === 423 && x?.code === "locked" ? "默认音色（星野）已锁定，不能删除" : notReady(x) ? "音色接口后台还没上线，再等等哦" : vvT(x?.message || "出错了");
 const vvLangs = a => [].concat(a || []).map(x => VV_LN[x] || String(x)).join(" / ") || "未知";
 const vvNum = n => n == null ? "—" : Number(n) >= 10000 ? (Number(n) / 10000).toFixed(1) + " 万" : String(n);
 const VV_ID_RE = /^[0-9a-f]{32}$/, VV_ALIAS_RE = /^[a-z][a-z0-9_]{1,23}$/;
@@ -2898,17 +2960,18 @@ document.addEventListener("keydown", e => {
 
 // ---- 6 PWA ----
 if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) {
-  addEventListener("load", () => navigator.serviceWorker.register("/sw.js?v=2026.11.3.7").catch(() => {}));
+  addEventListener("load", () => navigator.serviceWorker.register("/sw.js?v=2026.11.4").catch(() => {}));
 }
 
 
 // ================= console-panels（2026.11.3.7）：语义搜索 · 白名单 · 密钥 · 插件状态 =================
 const CP_AP = { immediate: ["立即", "cp-im"], reload: ["重载", "cp-re"], restart: ["重启", "cp-rs"], none: ["立即", "cp-im"], hot: ["重载", "cp-re"] };
 const cpAp = a => CP_AP[a] ? `<span class="pill cp-ap ${CP_AP[a][1]}">${CP_AP[a][0]}</span>` : "";
-const cpPlErr = x => !!(x.error || x.status === "error" || x.state === "error" || x.runtime === "error"); // M10：字段有才显示
+const cpPlErr = x => !!(x.error || x.lastError || [x.status, x.state, x.runtime?.state || x.runtime].some(s => ["error", "failed", "service-failed"].includes(s)));
+const cpPlErrorText = x => x.lastError || (typeof x.error === "string" ? x.error : x.error?.message) || "插件运行失败，暂未返回详细原因。";
 const CP_MSG = {
   restart_required: "这项改动要重启网关才能生效，控制台不会保存。重启只有凛能批准。",
-  quiet_window: "21:55–22:10 群报时段，先不改，过后再试。",
+  quiet_window: "当前处于静默时段，暂不能修改，稍后再试。",
   stale: "别处刚改过，重新载入后再改。",
   not_whitelisted: "这一项不在控制台能改的范围，没有保存。",
   in_use: "还有地方在用，先改那边。",
@@ -2926,6 +2989,10 @@ const CP_MSG = {
   too_long: "内容太长了。",
   invalid_name: "名字不合规。",
   invalid_value: "值不合规。",
+  unsupported_kind: "这个密钥使用特殊存储格式，请在原来的管理入口修改。",
+  config_invalid: "当前配置无法读取，暂时不能确认密钥是否在用。",
+  not_ready: "当前网关不支持这个操作。",
+  secret_upstream: "密钥写入或运行时刷新尚未确认，请先检查当前状态。",
   rate_limited: "操作太快了，等一会儿再试。",
   internal_error: "服务器出错了，稍后再试。",
 };
@@ -2941,26 +3008,26 @@ async function cpMemSearch(body) {
   let scopes = [], scopeErr = null;
   try { scopes = await memSearch.scopes(); } catch (e) { scopeErr = e; }
   body.innerHTML = `<div class="cpx" data-cp="memsearch"><form class="cp-ms" role="search" novalidate>
-    <label class="field"><span>想找什么</span><input class="input" id="cp-q" type="search" enterkeyhint="search" autocomplete="off" placeholder="比如：芙芙喜欢吃什么" maxlength="200"></label>
+    <label class="field"><span>想找什么</span><input class="input" id="cp-q" type="search" enterkeyhint="search" autocomplete="off" placeholder="比如：芙芙喜欢吃什么" maxlength="500"></label>
     <div class="cp-row"><label class="field cp-grow"><span>查谁的记忆</span><select class="select" id="cp-scope"><option value="${MS_ALL}">全部</option>${scopes.map(s => `<option value="${esc(s.id)}">${esc(s.label)}${s.count != null ? `（${s.count}）` : ""}</option>`).join("")}</select></label>
     <label class="field"><span>相关度</span><select class="select" id="cp-min"><option value="0.3">宽一点</option><option value="0.5" selected>一般</option><option value="0.7">严一点</option></select></label></div>
     <button type="submit" class="btn primary cp-go" id="cp-go">搜索</button>
-    <div class="faint cp-note">每次查一次向量 · 1 分钟最多 10 次。打字时不会自动查。只想翻看就用「按人看」，不花钱。${scopeErr ? `<br>范围列表没取到（${cpRaw(scopeErr)}），先只能查「全部」。` : ""}</div></form>
+    <div class="faint cp-note">只在点搜索或回车时查询，每分钟最多 30 次。30 秒内相同查询复用结果，查询向量缓存 5 分钟。只想翻看就用「按人看」，不花钱。${scopeErr ? `<br>范围列表没取到（${cpRaw(scopeErr)}），先只能查「全部」。` : ""}</div></form>
     <div id="cp-res" aria-live="polite"></div></div>`;
   const f = body.querySelector("form"), q = f.querySelector("#cp-q"), sc = f.querySelector("#cp-scope"), mn = f.querySelector("#cp-min"), go = f.querySelector("#cp-go"), out = body.querySelector("#cp-res");
   let items = [];
-  const draw = (r, scope) => { items = r.items;
-    out.innerHTML = !items.length ? `<div class="card empty cp-empty"><b>🔍</b>没找到相关的记忆。换个说法，或者把相关度调宽一点；也可以去「按人看」慢慢翻。</div>`
-      : `<div class="faint cp-cnt">找到 ${items.length} 条${scope === MS_ALL ? " · 全部人" : ""}</div><div class="list">${items.map((x, i) => `<button type="button" class="row cp-hit" data-hit="${i}"><div class="grow"><div class="mem-t">${esc(x.text)}</div><div class="d">${x.score != null ? `<span class="pill ac">相关度 ${Math.round(x.score * 100)}%</span> ` : ""}${x.category ? `<span class="pill">${esc(x.category)}</span> ` : ""}${x.createdAt ? esc(fmtTime(x.createdAt)) : ""}${scope === MS_ALL && x.scope ? " · " + esc(aliasFor(x.scope) || shortId(x.scope)) : ""}</div></div><span class="faint">›</span></button>`).join("")}</div>`; };
+  const draw = (r, scope, cached = false) => { items = r.items;
+    out.innerHTML = (cached ? `<div class="faint cp-cache" role="note">复用 30 秒内的相同查询结果</div>` : "") + (!items.length ? `<div class="card empty cp-empty"><b>🔍</b>没找到相关的记忆。换个说法，或者把相关度调宽一点；也可以去「按人看」慢慢翻。</div>`
+      : `<div class="faint cp-cnt">找到 ${items.length} 条${scope === MS_ALL ? " · 全部人" : ""}</div><div class="list">${items.map((x, i) => `<button type="button" class="row cp-hit" data-hit="${i}"><div class="grow"><div class="mem-t">${esc(x.text)}</div><div class="d">${x.score != null ? `<span class="pill ac">相关度 ${Math.round(x.score * 100)}%</span> ` : ""}${x.category ? `<span class="pill">${esc(x.category)}</span> ` : ""}${x.createdAt ? esc(fmtTime(x.createdAt)) : ""}${scope === MS_ALL && x.scope ? " · " + esc(aliasFor(x.scope) || shortId(x.scope)) : ""}</div></div><span class="faint">›</span></button>`).join("")}</div>`); };
   const run = async () => {
     const text = q.value.trim(); if (!text) { q.focus(); out.innerHTML = `<div class="faint cp-hint">先输入一句话再搜。</div>`; return; }
     if (go.disabled) return;
     const scope = sc.value, key = JSON.stringify([text, scope, mn.value]), hit = CP_MSCACHE.get(key);
-    if (hit && Date.now() - hit.at < 30000) return draw(hit.r, scope);
+    if (hit && Date.now() - hit.at < 30000) return draw(hit.r, scope, true);
     go.disabled = true; go.textContent = "搜索中…"; out.innerHTML = `<div class="skel" style="height:72px"></div><div class="skel" style="height:72px;margin-top:8px"></div>`;
     try { const r = await memSearch.search({ q: text, scope, minScore: +mn.value, limit: 20 }); CP_MSCACHE.set(key, { at: Date.now(), r }); draw(r, scope); }
     catch (e) {
-      if (e.status === 401) throw e;
+      if (e.status === 401) return;
       if (e.code === "user_required") { sc.focus(); out.innerHTML = `<div class="card cp-err" data-err="user_required">先选一下查谁的记忆。</div>`; return; }
       const m = e.status === 429 ? CP_MSG.rate : CP_MSG[e.code] || (notReady(e) ? "语义搜索接口还没开放，可以先按条浏览。" : "");
       out.innerHTML = `<div class="card cp-err" data-err="${esc(e.status === 429 ? "429" : e.code || e.status)}">${m ? `<b>${esc(m)}</b><br>` : "<b>没搜成</b><br>"}<span class="faint">${cpRaw(e)}</span>${e.status === 429 ? "" : `<br><button type="button" class="btn cp-retry" data-x="retry">重试</button>`}${m && e.status !== 429 ? ` <a class="btn" href="#/memory#people">按人看</a>` : ""}</div>`;
@@ -2980,6 +3047,7 @@ async function cpAllowlist(body, keep) {
   let d; try { d = await rawReq("GET", "/api/allowlist"); } catch (e) { if (e.status === 401) throw e; body.innerHTML = `<div class="card cp-err">${notReady(e) ? "白名单接口还没开放。" : "没加载出来："}<span class="faint">${cpRaw(e)}</span><br><button type="button" class="btn" data-x="reload">重试</button></div>`; body.querySelector("[data-x=reload]").onclick = () => cpAllowlist(body); return; }
   const lists = (d.lists || []).map(L => ({ ...L, orig: [...(L.items || [])], cur: keep?.[L.path] ? [...keep[L.path]] : [...(L.items || [])] }));
   const rev = d.baseHash ?? d.revision;
+  let previewing = false;
   const paint1 = () => {
     body.innerHTML = `<div class="cpx" data-cp="allowlist">${cpPending(d)}<p class="faint cp-note">改完先看改动对比，确认后才保存。每一项都标了生效方式：<span class="pill cp-ap cp-im">立即</span> <span class="pill cp-ap cp-re">重载</span> <span class="pill cp-ap cp-rs">重启</span>。要重启的改动控制台不保存。</p>${keep ? `<div class="cp-note cp-kept">已重新载入。下面保留了你刚才的改动，对照后再保存。</div>` : ""}
       ${lists.map((L, i) => { const add = L.cur.filter(x => !L.orig.includes(x)).length, del = L.orig.filter(x => !L.cur.includes(x)).length, n = add + del;
@@ -2987,7 +3055,7 @@ async function cpAllowlist(body, keep) {
         <ul class="cp-items">${L.cur.map((x, j) => `<li class="${L.orig.includes(x) ? "" : "cp-new"}"><span class="mono">${esc(x)}</span><button type="button" class="iconbtn cp-x" data-del="${j}" aria-label="移除 ${esc(x)}">×</button></li>`).join("") || `<li class="faint">空的</li>`}
         ${L.orig.filter(x => !L.cur.includes(x)).map(x => `<li class="cp-gone"><s class="mono">${esc(x)}</s><button type="button" class="btn cp-undo1" data-back="${esc(x)}">放回</button></li>`).join("")}</ul>
         <form class="cp-add"><input class="input" placeholder="添加一项" aria-label="添加到 ${esc(L.label || L.path)}" autocomplete="off"><button class="btn">添加</button></form>
-        <div class="savebar cp-sb" ${n ? "" : "hidden"}><span class="faint">改了 ${n} 处</span><button type="button" class="btn" data-reset>撤销</button><button type="button" class="btn primary" data-save>保存</button></div></div>`; }).join("") || `<div class="card empty">没有可以改的白名单。</div>`}</div>`;
+        <div class="savebar cp-sb" ${n ? "" : "hidden"}><span class="faint">改了 ${n} 处</span><button type="button" class="btn" data-reset>撤销</button><button type="button" class="btn primary" data-save ${previewing ? "disabled" : ""}>保存</button></div></div>`; }).join("") || `<div class="card empty">没有可以改的白名单。</div>`}</div>`;
   };
   paint1();
   body.onclick = async e => {
@@ -2995,7 +3063,7 @@ async function cpAllowlist(body, keep) {
     if (e.target.closest("[data-del]")) { L.cur.splice(+e.target.closest("[data-del]").dataset.del, 1); return paint1(); }
     if (e.target.closest("[data-back]")) { L.cur.push(e.target.closest("[data-back]").dataset.back); return paint1(); }
     if (e.target.closest("[data-reset]")) { L.cur = [...L.orig]; return paint1(); }
-    if (e.target.closest("[data-save]")) return cpAlPreview(body, d, rev, L, lists);
+    const save = e.target.closest("[data-save]"); if (save && !previewing) { previewing = true; save.disabled = true; try { await cpAlPreview(body, d, rev, L, lists); } finally { previewing = false; body.querySelectorAll("[data-save]").forEach(b => b.disabled = false); } }
   };
   body.onsubmit = e => { const blk = e.target.closest("[data-li]"); if (!blk) return; e.preventDefault(); const L = lists[+blk.dataset.li], inp = e.target.querySelector("input"), v = inp.value.trim(); if (!v) return; if (!L.cur.includes(v)) L.cur.push(v); paint1(); };
 }
@@ -3006,7 +3074,7 @@ async function cpAlPreview(body, d, rev, L, lists) {
   let pv;
   try { pv = await rawReq("POST", "/api/allowlist/preview", { baseHash: rev, changes }); }
   catch (e) { return cpAlErr(e, body, keepAll()); }
-  const diff = pv.diff?.length ? pv.diff : [{ path: L.path, before: L.orig, after: L.cur, apply: pv.apply || L.apply }];
+  const diff = pv.diff?.length ? pv.diff : [{ path: L.path, before: L.orig, after: changes[0].items, apply: pv.apply || L.apply }];
   const restart = pv.apply === "restart" || diff.some(x => x.apply === "restart");
   sheet(`<h2>确认改动</h2><div class="faint">${esc(L.label || L.path)} · 改前 → 改后</div>
     <div class="cp-diff">${diff.map(x => { const b = x.before || [], a = x.after || [], add = a.filter(v => !b.includes(v)), del = b.filter(v => !a.includes(v)); return `<div class="cx-dg${x.apply === "restart" ? " cx-blk" : ""}"><div class="cx-dp mono">${esc(x.path)} ${cpAp(x.apply || pv.apply)}</div>${add.map(v => `<div class="cx-dl add mono">＋ ${esc(v)}</div>`).join("")}${del.map(v => `<div class="cx-dl del mono">－ ${esc(v)}</div>`).join("")}${!add.length && !del.length ? `<div class="faint">没有变化</div>` : ""}</div>`; }).join("")}</div>
@@ -3016,13 +3084,13 @@ async function cpAlPreview(body, d, rev, L, lists) {
     el.querySelector("[data-no]").onclick = () => close(true);
     el.querySelector("[data-copy]")?.addEventListener("click", () => copyText(diff.map(x => `${x.path}\n- ${(x.before || []).join(", ")}\n+ ${(x.after || []).join(", ")}`).join("\n")));
     el.querySelector("[data-yes]").onclick = async ev => { const b = ev.currentTarget; b.disabled = true;
-      try { const r = await rawReq("POST", "/api/allowlist/apply", { baseHash: rev, changes, confirm: true }); close(true); toast("已保存"); await cpAllowlist(body, Object.fromEntries(lists.filter(x => x !== L && !cpEq(x.cur, x.orig)).map(x => [x.path, x.cur]))); body.querySelector(`[data-li="${lists.indexOf(L)}"] .cp-bh`)?.insertAdjacentHTML("beforeend", `<span class="cp-ok" role="status">已保存</span>`); if (r?.pendingRestart) cpWarnPend(); }
+      try { const r = await rawReq("POST", "/api/allowlist/apply", { baseHash: rev, changes, confirm: true }); close(true); const later = !cpEq(L.cur, changes[0].items); toast(later ? "已保存提交的改动，后续修改仍未保存" : "已保存"); await cpAllowlist(body, Object.fromEntries(lists.filter(x => x === L ? later : !cpEq(x.cur, x.orig)).map(x => [x.path, [...x.cur]]))); body.querySelector(`[data-li="${lists.indexOf(L)}"] .cp-bh`)?.insertAdjacentHTML("beforeend", `<span class="cp-ok" role="status">已保存</span>`); if (r?.pendingRestart) cpWarnPend(); }
       catch (e) { close(true); cpAlErr(e, body, keepAll()); } };
   }, "cpaldiff");
 }
 const cpWarnPend = () => toast("有改动等重启后生效（需凛批准）");
 async function cpAlErr(e, body, keep) {
-  if (e.status === 401) throw e;
+  if (e.status === 401) return;
   if (e.status === 409 && e.code === "restart_required") return confirmDialog({ title: "没有保存", body: `<div class="cx-rr" data-blocked="restart_required">${esc(CP_MSG.restart_required)}</div>`, ok: "知道了" });
   // not_whitelisted：新后端 403、旧后端 409，同一个 blockedPaths/diff 界面
   if ((e.status === 403 || e.status === 409) && e.code === "not_whitelisted") return cxBlocked("not_whitelisted", e.data || e);
@@ -3033,28 +3101,31 @@ async function cpAlErr(e, body, keep) {
 }
 
 // ---- 3 系统与权限 › 密钥 ----
+const cpSecretWarning = r => r?.warning && confirmDialog({ title: "密钥库已更新", body: esc(scrub(typeof r.warning === "string" ? r.warning : r.warning.message || "运行时刷新尚未确认，请检查当前状态。")), ok: "知道了" });
 async function cpSecrets(body) {
   let d; try { d = await rawReq("GET", "/api/secrets"); } catch (e) { if (e.status === 401) throw e; body.innerHTML = `<div class="card cp-err">${notReady(e) ? "密钥接口还没开放。" : "没加载出来："}<span class="faint">${cpRaw(e)}</span><br><button type="button" class="btn" data-x="reload">重试</button></div>`; body.querySelector("[data-x=reload]").onclick = () => cpSecrets(body); return; }
   const list = d.secrets || [];
-  body.innerHTML = `<div class="cpx" data-cp="secrets">${cpPending(d)}<p class="faint cp-note">这里永远不显示密钥内容。改完<span class="pill cp-ap cp-im">立即</span>生效，旧值不留底。</p>
+  body.innerHTML = `<div class="cpx" data-cp="secrets">${cpPending(d)}<p class="faint cp-note">这里永远不显示密钥内容。改完立即保存，是否需重载取决于使用它的组件。旧值不留底。</p>
+    <button type="button" class="btn" data-new-secret>新增密钥</button>
     ${list.length ? `<div class="list">${list.map((s, i) => `<div class="row cp-sec" data-si="${i}"><div class="grow"><div class="t mono">${esc(s.name)}</div><div class="d">${s.set !== false ? `<span class="pill ok">已设置</span>` : `<span class="pill warn">未设置</span>`}${s.updatedAt ? " · 更新于 " + esc(fmtTime(s.updatedAt)) : ""}${s.usedBy?.length ? " · 在用：" + esc(s.usedBy.join("、")) : ""}</div></div>
       <div class="cp-acts"><button type="button" class="btn" data-set>${s.set !== false ? "替换" : "设置"}</button>${s.set !== false && !s.usedBy?.length ? `<button type="button" class="btn danger" data-clear>清除</button>` : ""}</div></div>`).join("")}</div>` : `<div class="card empty">还没有密钥。</div>`}</div>`;
   body.onclick = async e => {
-    const row = e.target.closest("[data-si]"); if (!row) return; const s = list[+row.dataset.si];
-    if (e.target.closest("[data-set]")) return sheet(`<h2>${s.set !== false ? "替换" : "设置"}密钥</h2><div class="mono faint">${esc(s.name)}</div><form class="cp-secf" autocomplete="off">
-      <label class="field"><span>新的值（只写不读）</span><input class="input" type="password" name="v" autocomplete="new-password" autocapitalize="off" spellcheck="false" data-lpignore="true"></label>
-      <p class="faint cp-note">保存后<span class="pill cp-ap cp-im">立即</span>生效。旧值不留底，没法撤回到旧值。</p>
+    const isNew = !!e.target.closest("[data-new-secret]"), row = e.target.closest("[data-si]"); if (!isNew && !row) return; const s = isNew ? { set: false } : list[+row.dataset.si];
+    if (isNew || e.target.closest("[data-set]")) return sheet(`<h2>${isNew ? "新增" : s.set !== false ? "替换" : "设置"}密钥</h2>${isNew ? "" : `<div class="mono faint">${esc(s.name)}</div>`}<form class="cp-secf" autocomplete="off">
+      ${isNew ? `<label class="field"><span>名称</span><input class="input mono" name="n" maxlength="64" pattern="[A-Z][A-Z0-9_]{1,63}" placeholder="例如 SERVICE_API_KEY" autocomplete="off" autocapitalize="characters" spellcheck="false" required></label><p class="faint cp-note">2–64 位，以大写字母开头，只能含大写字母、数字和下划线。</p>` : ""}
+      <label class="field"><span>新的值（只写不读）</span><input class="input" type="password" name="v" maxlength="8192" autocomplete="new-password" autocapitalize="off" spellcheck="false" data-lpignore="true" required></label>
+      <p class="faint cp-note">保存后写入密钥库，是否需重载取决于使用它的组件。旧值不留底，没法撤回到旧值。</p>
       <div class="cp-btns"><button type="button" class="btn" data-no>取消</button><button class="btn primary" data-go>保存</button></div></form>`, (el, close) => {
       const f = el.querySelector("form"), inp = f.v;
       el.querySelector("[data-no]").onclick = () => { inp.value = ""; close(true); };
-      f.onsubmit = async ev => { ev.preventDefault(); const value = inp.value; if (!value.trim()) return inp.focus(); inp.value = ""; const b = f.querySelector("[data-go]"); b.disabled = true;
-        try { await rawReq("POST", "/api/secrets/set", { name: s.name, value, confirm: true }); close(true); toast("已保存"); await cpSecrets(body); }
-        catch (x) { b.disabled = false; if (x.status === 401) throw x; toast(cpMsg(x)); } };
+      f.onsubmit = async ev => { ev.preventDefault(); const b = f.querySelector("[data-go]"); if (b.disabled) return; const name = isNew ? f.elements.namedItem("n").value.trim() : s.name, value = inp.value; if (isNew && !/^[A-Z][A-Z0-9_]{1,63}$/.test(name)) { toast("名称要用 2–64 位大写字母、数字或下划线，并以字母开头。"); return f.elements.namedItem("n").focus(); } if (isNew && list.some(x => x.name === name)) { toast("这个名称已存在，请在列表里替换。"); return f.elements.namedItem("n").focus(); } if (!value.trim()) return inp.focus(); inp.value = ""; b.disabled = true;
+        try { const r = await rawReq("POST", "/api/secrets/set", { name, value, confirm: true }); close(true); toast("已保存"); await cpSecrets(body); await cpSecretWarning(r); }
+        catch (x) { b.disabled = false; if (x.status === 401) return; toast(cpMsg(x)); } };
     }, "cpsecset");
     if (e.target.closest("[data-clear]")) {
       if (!await confirmDialog({ title: `清除 ${s.name}？`, body: "清除后用到它的地方会拿不到值。旧值不留底，清掉就找不回来了。", ok: "清除", danger: true })) return;
-      try { await rawReq("POST", "/api/secrets/clear", { name: s.name, confirm: true }); toast("已清除"); await cpSecrets(body); }
-      catch (x) { if (x.status === 401) throw x; if (x.code === "in_use") { const ub = x.data?.usedBy || []; return confirmDialog({ title: "还在用", body: esc(CP_MSG.in_use) + (ub.length ? "<br>在用：" + esc(ub.join("、")) : ""), ok: "知道了" }); } toast(x.code === "quiet_window" ? CP_MSG.quiet_window : "没清除成功：" + scrub(x.message || "")); }
+      try { const r = await rawReq("POST", "/api/secrets/clear", { name: s.name, confirm: true }); toast("已清除"); await cpSecrets(body); await cpSecretWarning(r); }
+      catch (x) { if (x.status === 401) return; if (x.code === "in_use") { const ub = x.data?.usedBy || []; return confirmDialog({ title: "还在用", body: esc(CP_MSG.in_use) + (ub.length ? "<br>在用：" + esc(ub.join("、")) : ""), ok: "知道了" }); } toast(x.code === "quiet_window" ? CP_MSG.quiet_window : "没清除成功：" + scrub(x.message || "")); }
     }
   };
 }
@@ -3074,8 +3145,8 @@ const V3T = [
     ["people", "按人看", { v: "memory", s: "" }, ""], ["search", "语义搜索", { fn: b => cpMemSearch(b) }, "用一句话找记忆 · 点了才查"], ["flags", "记错的", { v: "memory", s: "flags" }, ""], ["files", "记忆文件", { v: "memory", s: "files" }, "只能看"], ["backups", "删除备份", { v: "memory", s: "backups" }, ""]]],
   ["groups", "群", "people", "群报 · 互动统计 · 各群一览", [
     ["digest", "群报", { v: "digest", s: "" }, "每天到点自动生成"], ["stats", "互动统计", { v: "interactions", s: "" }, ""], ["overview", "各群一览", { fn: v4Overview }, "这个群开了什么（只看，点了去改）"]]],
-  ["abilities", "能力与任务", "plug", "插件与技能 · 工具 · 定时任务", [
-    ["plugins", "插件与技能", { v: "plugins", s: "" }, ""], ["tools", "工具与扩展", { v: "tools", s: "" }, ""], ["cron", "定时任务", { v: "cron", s: "" }, ""]]],
+  ["abilities", "能力与任务", "plug", "插件与技能 · 插件中心 · 工具 · 定时任务", [
+    ["plugins", "插件与技能", { v: "plugins", s: "" }, ""], ["plugin-center", "插件中心", { fn: body => pluginCenter(body, { rawReq, sheet, confirmDialog, toast, md }) }, "原生插件 · 配置与变更预览"], ["tools", "工具与扩展", { v: "tools", s: "" }, ""], ["cron", "定时任务", { v: "cron", s: "" }, ""]]],
   ["system", "系统与权限", "gear", "技术模式 · 渠道 · 审批与配对 · 诊断 · 白名单 · 密钥 · 配置", [
     ["tech", "技术模式", { fn: v3Tech }, "回复模式开关和关键词"], ["channels", "渠道", { v: "channels", s: "" }, "连接状态"], ["approvals", "审批与配对", { v: "approvals", s: "" }, "需要你点头的事"], ["audit", "审计与诊断", { v: "audit", s: "" }, ""], ["allowlist", "白名单", { fn: b => cpAllowlist(b) }, "先看改动再确认 · 标立即/重载/重启"], ["secrets", "密钥", { fn: b => cpSecrets(b) }, "只显示「已设置」 · 只写不读"], ["config", "配置", { v: "config", s: "" }, "网关配置"]]],
 ];

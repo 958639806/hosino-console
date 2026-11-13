@@ -3,7 +3,7 @@
 # 用法: ./rollback.sh --dry-run | --apply   （--apply 需要凛批准）。fun/ 数据目录保留不删。
 set -euo pipefail
 MODE="${1:---dry-run}"
-SSH=(ssh -p 4335 -i /home/box/.ssh/id_ed25519 -o BatchMode=yes root@38.49.36.155)
+SSH=(ssh -p 4335 -i /home/box/.ssh/id_ed25519 -o BatchMode=yes root@${HOSINO_HOST_IP:?请先设置 HOSINO_HOST_IP})
 BK=/root/hosino-backup-20261020-fun; ST=/root/hosino-stage-fun-20261020
 if [[ "$MODE" != "--apply" ]]; then
   "${SSH[@]}" "ls -la $BK; ls /opt/hosino-console/server.mjs.bak-v2.11.1-pre-v2.12 /opt/hosino-console/public.bak-v21" && echo "dry-run：备份齐全。--apply 会：gate --revert + --unregister-manifest；还原 server.mjs 和 public；删除 40-fun-rw.conf + daemon-reload；把技能和脚本移到 $BK/removed/；重启网关和控制台各一次"

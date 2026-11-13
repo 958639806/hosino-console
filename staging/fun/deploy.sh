@@ -6,7 +6,7 @@
 set -euo pipefail
 MODE="${1:---dry-run}"; [[ "$MODE" == "--dry-run" || "$MODE" == "--apply" ]] || { echo "用法: $0 --dry-run|--apply"; exit 2; }
 HERE="$(cd "$(dirname "$0")" && pwd)"; PUB="/workspace/hosino/public"; PUBVER="20261020215546"
-SSH=(ssh -p 4335 -i /home/box/.ssh/id_ed25519 -o BatchMode=yes root@38.49.36.155)
+SSH=(ssh -p 4335 -i /home/box/.ssh/id_ed25519 -o BatchMode=yes root@${HOSINO_HOST_IP:?请先设置 HOSINO_HOST_IP})
 SCP=(scp -P 4335 -i /home/box/.ssh/id_ed25519 -o BatchMode=yes)
 BK=/root/hosino-backup-20261020-fun; ST=/root/hosino-stage-fun-20261020
 GATE_OLD=c19a5d661d08a5381e45d672fd3ad150173a8fa6f3ba820c34e45b7712e0f4a5
@@ -51,11 +51,11 @@ fi
 
 say "3/9 上传"
 "${SSH[@]}" "mkdir -p $ST/gate $ST/skills $ST/scripts $ST/public && chmod 700 $ST"
-"${SCP[@]}" "$HERE/patched/server.mjs" "$HERE/40-fun-rw.conf" root@38.49.36.155:$ST/
-"${SCP[@]}" "$HERE/gate/hosino_fun_patch.py" "$HERE/gate/fun-context.mjs" root@38.49.36.155:$ST/gate/
-"${SCP[@]}" -r "$HERE/skills/hosino-fun" "$HERE/skills/hosino-humanlike" root@38.49.36.155:$ST/skills/
-"${SCP[@]}" "$HERE"/scripts/fun_*.py root@38.49.36.155:$ST/scripts/
-"${SCP[@]}" -r "$PUB"/. root@38.49.36.155:$ST/public/
+"${SCP[@]}" "$HERE/patched/server.mjs" "$HERE/40-fun-rw.conf" root@${HOSINO_HOST_IP:?请先设置 HOSINO_HOST_IP}:$ST/
+"${SCP[@]}" "$HERE/gate/hosino_fun_patch.py" "$HERE/gate/fun-context.mjs" root@${HOSINO_HOST_IP:?请先设置 HOSINO_HOST_IP}:$ST/gate/
+"${SCP[@]}" -r "$HERE/skills/hosino-fun" "$HERE/skills/hosino-humanlike" root@${HOSINO_HOST_IP:?请先设置 HOSINO_HOST_IP}:$ST/skills/
+"${SCP[@]}" "$HERE"/scripts/fun_*.py root@${HOSINO_HOST_IP:?请先设置 HOSINO_HOST_IP}:$ST/scripts/
+"${SCP[@]}" -r "$PUB"/. root@${HOSINO_HOST_IP:?请先设置 HOSINO_HOST_IP}:$ST/public/
 
 say "4-9/9 主机执行"
 "${SSH[@]}" bash -s <<R

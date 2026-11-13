@@ -2,7 +2,7 @@
 # 回到 v2.12（HOSINO-FUN-CONTEXT v1）。用法: ./rollback-v2.sh --apply
 set -euo pipefail; [[ "${1:-}" == "--apply" ]] || { echo "用法: $0 --apply"; exit 2; }
 BK=/root/hosino-backup-20261020-fun-v2; ST=/root/hosino-stage-fun-v2-20261020
-ssh -p 4335 -i /home/box/.ssh/id_ed25519 -o BatchMode=yes root@38.49.36.155 bash -s <<R
+ssh -p 4335 -i /home/box/.ssh/id_ed25519 -o BatchMode=yes root@${HOSINO_HOST_IP:?请先设置 HOSINO_HOST_IP} bash -s <<R
 set -euo pipefail
 cd $ST/gate && HS_BK=$BK python3 hosino_fun_patch_v2.py --revert && HS_BK=$BK python3 hosino_fun_patch_v2.py --unregister-manifest
 cd /home/ubuntu/.openclaw/patches && sudo -u ubuntu python3 release_manager.py installed-check --manifest canonical-manifest.json && sudo -u ubuntu bash reapply_all.sh --check

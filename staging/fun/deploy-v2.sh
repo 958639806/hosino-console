@@ -3,7 +3,7 @@
 # 用法: ./deploy-v2.sh --dry-run | --apply ；回滚: ./rollback-v2.sh --apply
 set -euo pipefail
 MODE="${1:---dry-run}"; HERE="$(cd "$(dirname "$0")" && pwd)"
-SSH=(ssh -p 4335 -i /home/box/.ssh/id_ed25519 -o BatchMode=yes root@38.49.36.155); SCP=(scp -P 4335 -i /home/box/.ssh/id_ed25519 -o BatchMode=yes)
+SSH=(ssh -p 4335 -i /home/box/.ssh/id_ed25519 -o BatchMode=yes root@${HOSINO_HOST_IP:?请先设置 HOSINO_HOST_IP}); SCP=(scp -P 4335 -i /home/box/.ssh/id_ed25519 -o BatchMode=yes)
 BK=/root/hosino-backup-20261020-fun-v2; ST=/root/hosino-stage-fun-v2-20261020
 IDX_OLD=140c6b5d8274494ec754a947d2343f850dc74a3fff0d18384bead0cb82e863c7; FC_OLD=d9a5bf7731d75de15851214f4d0048af36d7698119c70562bed02ffdc89574d1
 CON_OLD=1d00dc1530380b02; say(){ echo "[$(date +%H:%M:%S) SGT] $*"; }
@@ -18,9 +18,9 @@ cd /home/ubuntu/.openclaw/patches && sudo -u ubuntu python3 release_manager.py i
 R
 [[ "$MODE" == "--apply" ]] || { say "dry-run 通过（未写入）"; exit 0; }
 "${SSH[@]}" "mkdir -p $ST/gate $ST/skills && chmod 700 $ST"
-"${SCP[@]}" "$HERE/patched/server.mjs" root@38.49.36.155:$ST/
-"${SCP[@]}" "$HERE/gate/hosino_fun_patch_v2.py" "$HERE/gate/fun-context.mjs" root@38.49.36.155:$ST/gate/
-"${SCP[@]}" -r "$HERE/skills/hosino-fun" "$HERE/skills/hosino-humanlike" root@38.49.36.155:$ST/skills/
+"${SCP[@]}" "$HERE/patched/server.mjs" root@${HOSINO_HOST_IP:?请先设置 HOSINO_HOST_IP}:$ST/
+"${SCP[@]}" "$HERE/gate/hosino_fun_patch_v2.py" "$HERE/gate/fun-context.mjs" root@${HOSINO_HOST_IP:?请先设置 HOSINO_HOST_IP}:$ST/gate/
+"${SCP[@]}" -r "$HERE/skills/hosino-fun" "$HERE/skills/hosino-humanlike" root@${HOSINO_HOST_IP:?请先设置 HOSINO_HOST_IP}:$ST/skills/
 "${SSH[@]}" bash -s <<R
 set -euo pipefail; ts(){ date +%H:%M:%S; }
 mkdir -p $BK/skills && chmod 700 $BK

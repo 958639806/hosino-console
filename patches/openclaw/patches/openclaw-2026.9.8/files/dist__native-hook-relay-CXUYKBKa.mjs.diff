@@ -1,0 +1,118 @@
+diff -ruN a/dist/native-hook-relay-CXUYKBKa.mjs b/dist/native-hook-relay-CXUYKBKa.mjs
+--- a/dist/native-hook-relay-CXUYKBKa.mjs	2026-11-13 19:09:04.129024134 +0800
++++ b/dist/native-hook-relay-CXUYKBKa.mjs	2026-11-13 19:09:04.129024134 +0800
+@@ -1028,6 +1028,28 @@
+ 	if (params.invocation.event === "before_agent_finalize") return runNativeHookRelayBeforeAgentFinalize(params);
+ 	return runNativeHookRelayPermissionRequest(params);
+ }
++// Passive operator metadata: the original authority, abort and policy paths stay intact.
++function createNativeHookRelayHostTiming(registration, invocation) {
++	try {
++		if (invocation.event !== "pre_tool_use") return;
++		const hash = (value, prefix = "") => typeof value === "string" && value.length > 0 && value.length <= 1024 ? createHash("sha256").update(prefix + value).digest("hex") : null;
++		return { started: performance.now(), stage: "binding_begin", marks: { binding_begin: 0 }, runHash: hash(registration.runId, "qq-claude-native-run-v1\0")?.slice(0, 24) ?? null, toolCallHash: hash(invocation.toolUseId), terminal: "rejected", policyOutcome: "unknown" };
++	} catch {}
++}
++function markNativeHookRelayHostTiming(timing, stage) {
++	try {
++		if (!timing) return;
++		timing.stage = stage;
++		if (Object.keys(timing.marks).length < 16 && timing.marks[stage] === void 0) timing.marks[stage] = Math.max(0, Math.round(performance.now() - timing.started));
++	} catch {}
++}
++function finishNativeHookRelayHostTiming(timing) {
++	try {
++		if (!timing) return;
++		const row = { schema: "native-hook-relay-host-timing-v1", runHash: timing.runHash, toolCallHash: timing.toolCallHash, stage: timing.stage, terminal: timing.terminal, policyOutcome: timing.policyOutcome, elapsedMs: Math.max(0, Math.round(performance.now() - timing.started)), marks: timing.marks };
++		log.info(`[native-hook-relay-host-timing] ${JSON.stringify(row)}`);
++	} catch {}
++}
+ async function runNativeHookRelayPreToolUse(params) {
+ 	const toolName = normalizeNativeHookToolName(params.invocation.toolName);
+ 	const toolInput = params.adapter.readToolInput(params.invocation.rawPayload);
+@@ -1039,6 +1061,7 @@
+ 		...params.invocation.toolUseId ? { toolCallId: params.invocation.toolUseId } : {},
+ 		signal: params.registration.signal
+ 	};
++	markNativeHookRelayHostTiming(params.timing, "before_tool_call_begin");
+ 	const outcome = params.registration.runBeforeToolCall ? await params.registration.runBeforeToolCall({
+ 		...policyRequest,
+ 		...approvalMode === "report" ? { approvalMode: "defer" } : {},
+@@ -1061,6 +1084,8 @@
+ 			} : {}
+ 		}
+ 	});
++	markNativeHookRelayHostTiming(params.timing, "before_tool_call_ready");
++	try { if (params.timing) params.timing.policyOutcome = outcome.blocked ? "blocked" : outcome.deferredApproval ? "deferred" : "not_blocked"; } catch {}
+ 	try {
+ 		params.registration.signal?.throwIfAborted();
+ 		params.registration.assertActive?.();
+@@ -1072,6 +1097,7 @@
+ 	if (!outcome.deferredApproval && nativeHookRelayParamsWereRewritten(originalToolInputFingerprint, outcome.params)) return params.adapter.renderPreToolUseBlockResponse("OpenClaw tool policy rewrote Codex app-server approval params; refusing original request.");
+ 	try {
+ 		if (params.executionAdmission?.toolNames.includes(toolName)) {
++			markNativeHookRelayHostTiming(params.timing, "execution_admission_begin");
+ 			await params.executionAdmission.admit(params.invocation, params.assertExecutionAdmissionCurrent, {
+ 				signal: params.registration.signal,
+ 				assertCurrent: () => {
+@@ -1081,6 +1107,7 @@
+ 			});
+ 			params.registration.signal?.throwIfAborted();
+ 			params.registration.assertActive?.();
++			markNativeHookRelayHostTiming(params.timing, "execution_admission_ready");
+ 		}
+ 	} catch (error) {
+ 		if (outcome.deferredApproval) cancelDeferredPluginToolApproval(outcome.deferredApproval);
+@@ -1643,25 +1670,33 @@
+ 		event,
+ 		rawPayload: params.rawPayload
+ 	});
+-	const { registration: effectiveRegistration, assertExecutionAdmissionCurrent } = await resolveNativeHookRelayInvocationBinding(registration, readRelayLifetime(registration), event, params.rawPayload, signal);
+-	if (event === "pre_tool_use" || event === "permission_request") effectiveRegistration.assertActive?.();
+-	recordNativeHookRelayInvocation(normalized);
+-	const startedAt = Date.now();
+-	const response = await racePromiseWithAbortSignal(processNativeHookRelayInvocation({
+-		registration: effectiveRegistration,
+-		invocation: normalized,
+-		adapter: codexNativeHookRelayProviderAdapter,
+-		executionAdmission: readRelayLifetime(registration)?.executionAdmission,
+-		assertExecutionAdmissionCurrent
+-	}), signal);
+-	if (event === "pre_tool_use" || event === "permission_request") effectiveRegistration.assertActive?.();
+-	if (normalized.toolUseId && response.failureDisposition && readNativeHookRelayApprovalMode(normalized.rawPayload) !== "report") projectNativeHookRelayPreToolUseFailure(registration, {
+-		toolName: normalizeNativeHookToolName(normalized.toolName),
+-		toolCallId: normalized.toolUseId,
+-		disposition: response.failureDisposition,
+-		durationMs: Date.now() - startedAt
+-	});
+-	return response;
++	const timing = createNativeHookRelayHostTiming(registration, normalized);
++	try {
++		const { registration: effectiveRegistration, assertExecutionAdmissionCurrent } = await resolveNativeHookRelayInvocationBinding(registration, readRelayLifetime(registration), event, params.rawPayload, signal);
++		if (event === "pre_tool_use" || event === "permission_request") effectiveRegistration.assertActive?.();
++		markNativeHookRelayHostTiming(timing, "binding_ready");
++		recordNativeHookRelayInvocation(normalized);
++		const startedAt = Date.now();
++		const response = await racePromiseWithAbortSignal(processNativeHookRelayInvocation({
++			registration: effectiveRegistration,
++			invocation: normalized,
++			adapter: codexNativeHookRelayProviderAdapter,
++			executionAdmission: readRelayLifetime(registration)?.executionAdmission,
++			assertExecutionAdmissionCurrent,
++			timing
++		}), signal);
++		if (event === "pre_tool_use" || event === "permission_request") effectiveRegistration.assertActive?.();
++		if (normalized.toolUseId && response.failureDisposition && readNativeHookRelayApprovalMode(normalized.rawPayload) !== "report") projectNativeHookRelayPreToolUseFailure(registration, {
++			toolName: normalizeNativeHookToolName(normalized.toolName),
++			toolCallId: normalized.toolUseId,
++			disposition: response.failureDisposition,
++			durationMs: Date.now() - startedAt
++		});
++		if (timing) timing.terminal = "fulfilled";
++		return response;
++	} finally {
++		finishNativeHookRelayHostTiming(timing);
++	}
+ }
+ function projectNativeHookRelayPreToolUseFailure(registration, failure) {
+ 	const callback = registration.onPreToolUseFailure;

@@ -1,0 +1,65 @@
+diff -ruN a/dist/infra/sqlite-store.worker.js b/dist/infra/sqlite-store.worker.js
+--- a/dist/infra/sqlite-store.worker.js	2026-11-13 19:09:04.105022923 +0800
++++ b/dist/infra/sqlite-store.worker.js	2026-11-13 19:09:04.105022923 +0800
+@@ -4,7 +4,7 @@
+ import { t as assertExistingDatabaseIdentity } from "../sqlite-worker-identity-Dggu-rKK.mjs";
+ import { i as routeLogsToStderr } from "../console-DI4wXm8e.mjs";
+ import { n as createSqliteWorkerTransferOwner, r as createSqliteWorkerTransferReceiver } from "../sqlite-worker-transfer-DkuzGXT2.mjs";
+-import { c as withSqliteWorkerOperationAdmission, f as SQLITE_WORKER_OPERATION_CLEANUP, i as requestSqliteWorkerOperationAdmission, l as SQLITE_WORKER_CLOSE_RECEIPT, m as SQLITE_WORKER_PREPARE_COMMAND, o as settleSqliteWorkerOperationContext, p as SQLITE_WORKER_PREPARE_ADMITTED, t as SqliteWorkerOpenRefusedError } from "../sqlite-worker-operation-admission-BB758RIN.mjs";
++import { bindSqliteWorkerRuntimeObservation, markSqliteWorkerRuntimeObservation, finishSqliteWorkerRuntimeObservation, c as withSqliteWorkerOperationAdmission, f as SQLITE_WORKER_OPERATION_CLEANUP, i as requestSqliteWorkerOperationAdmission, l as SQLITE_WORKER_CLOSE_RECEIPT, m as SQLITE_WORKER_PREPARE_COMMAND, o as settleSqliteWorkerOperationContext, p as SQLITE_WORKER_PREPARE_ADMITTED, t as SqliteWorkerOpenRefusedError } from "../sqlite-worker-operation-admission-BB758RIN.mjs";
+ import { t as encodeOpenClawStateWorkerError } from "../openclaw-state-worker-error-CvUWzlTD.mjs";
+ import { i as runWithSqliteWorkerStateContext } from "../sqlite-worker-state-context-KkU943i2.mjs";
+ import { n as scheduleWorkerIdleGc, t as cancelWorkerIdleGc } from "../worker-idle-gc-CYLBZfNA.mjs";
+@@ -33,6 +33,8 @@
+ 	return runWithActorFacts(actor, () => operationAdmission?.actor === actor ? withSqliteWorkerOperationAdmission(operationAdmission.context, operation) : operation());
+ }
+ async function receive(request) {
++	let qqObservedOwner=operationAdmission?.context;
++	let qqReceivedAt;try{qqReceivedAt=Number(process.hrtime.bigint())/1e6;}catch{}
+ 	let reply;
+ 	let executed = pendingResult !== void 0;
+ 	let retire = false;
+@@ -50,6 +52,8 @@
+ 					actor: request.actor,
+ 					context: { port: request.operationAdmission }
+ 				};
++				qqObservedOwner=operationAdmission.context;
++				bindSqliteWorkerRuntimeObservation(qqObservedOwner,request,qqReceivedAt);
+ 			}
+ 			if (request.stateContext) stateContexts.set(request.actor, request.stateContext);
+ 		}
+@@ -91,20 +95,26 @@
+ 					if (operationAdmission) settleSqliteWorkerOperationContext(operationAdmission.context, verified ? "completed" : "unknown");
+ 				}
+ 			};
++			markSqliteWorkerRuntimeObservation(qqObservedOwner,"load_begin",typedCommand);
+ 			const loading = backend[SQLITE_WORKER_PREPARE_COMMAND]?.(typedCommand.type);
+ 			if (loading) await loading;
++			markSqliteWorkerRuntimeObservation(qqObservedOwner,"load_end");
+ 			try {
++				markSqliteWorkerRuntimeObservation(qqObservedOwner,"prepare_begin");
+ 				const preparation = runWithActorFacts(request.actor, () => backend.prepare?.(typedCommand));
+ 				if (preparation !== void 0) await preparation;
+ 				if (backend[SQLITE_WORKER_PREPARE_ADMITTED]) {
+ 					const admitted = runInActorContext(request.actor, () => ({ preparation: backend[SQLITE_WORKER_PREPARE_ADMITTED]?.(typedCommand) })).preparation;
+ 					if (admitted !== void 0) await admitted;
+ 				}
++				markSqliteWorkerRuntimeObservation(qqObservedOwner,"prepare_end");
++				markSqliteWorkerRuntimeObservation(qqObservedOwner,"execute_begin");
+ 				value = runInActorContext(request.actor, () => withSqliteReaderOwner({
+ 					operation: typedCommand.type,
+ 					ownerKind: "worker",
+ 					actorId: request.actor
+ 				}, () => ({ result: backend.execute(typedCommand) }))).result;
++				markSqliteWorkerRuntimeObservation(qqObservedOwner,"execute_end");
+ 			} catch (error) {
+ 				const admissionRefused = operationAdmission?.actor === request.actor && operationAdmission.context.refusal !== void 0 && operationAdmission.context.refusal === error;
+ 				settleCommand({ error });
+@@ -282,6 +292,7 @@
+ 			value: bytes
+ 		}, [bytes.buffer]);
+ 	} else port.postMessage(reply, []);
++	if (complete) finishSqliteWorkerRuntimeObservation(qqObservedOwner,reply.ok===true);
+ 	if (complete) scheduleWorkerIdleGc();
+ }
+ port.on("message", (request) => {

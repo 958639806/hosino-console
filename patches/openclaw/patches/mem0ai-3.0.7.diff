@@ -1,0 +1,839 @@
+diff -ruN a/dist/oss/index.mjs b/dist/oss/index.mjs
+--- a/dist/oss/index.mjs	2026-11-13 19:09:03.977016445 +0800
++++ b/dist/oss/index.mjs	2026-11-13 19:09:03.977016445 +0800
+@@ -1,3 +1,4 @@
++import { writeReceiptMemory } from "./oc-memory-receipt.mjs";
+ var __require = /* @__PURE__ */ ((x) => typeof require !== "undefined" ? require : typeof Proxy !== "undefined" ? new Proxy(x, {
+   get: (a, b) => (typeof require !== "undefined" ? require : a)[b]
+ }) : x)(function(x) {
+@@ -55,6 +56,390 @@
+ 
+ // src/oss/src/embeddings/openai.ts
+ import OpenAI from "openai";
++
++// MEM0-SEARCH-STAGES v1: private numeric observations only; never authorizes work.
++import { AsyncLocalStorage as Mem0SearchStageALS } from "node:async_hooks";
++const __msScopes = new Map([["conversation:47ec04159db1af0a54146ce3080dffcf234830e7a0d5c31f2f8638357eb959b2","new"],["conversation:ba4ec5ef60fc88c7b25063d8c5c66817318f38fae454b1f5ea255e9c7b6efebf","old"]]);
++let __msStorage;
++try { __msStorage = new Mem0SearchStageALS(); } catch {}
++let __msSequence = 0;
++const __msTraces = new WeakSet();
++// MEM0-SCOPED-VIEW-STAGES v1: observations only, never authority or query filters.
++const __msScopedViewBindings = new WeakMap();
++function __msBindScopedView(receiver, view, scope) {
++  try {
++    if (!(receiver instanceof Memory) || !view || typeof view !== "object" || Object.getPrototypeOf(view) !== receiver ||
++        !scope || !Object.isFrozen(scope)) return false;
++    const data = key => { const d = Object.getOwnPropertyDescriptor(scope, key); return d && Object.hasOwn(d, "value") ? d.value : undefined; };
++    if (data("schema") !== 2 || data("group") !== true || data("sourceChannel") !== "qqbot") return false;
++    const groupAlias = __msScopes.get(data("readScope"));
++    if (!groupAlias) return false;
++    __msScopedViewBindings.set(view, Object.freeze({ groupAlias }));
++    return true;
++  } catch { return false; }
++}
++function __msQueryHash(query) {
++  try { return typeof query === "string" && query.length <= 10000 ? createHash("sha256").update("openclaw.mem0.recall-query.v1\0").update(query).digest("hex") : null; } catch { return null; }
++}
++function __msPolicy(trace, key, value) {
++  try {
++    if (__msTraces.has(trace) && key === "queryEntityBatchEnabled" && typeof value === "boolean") trace.runtimePolicy[key] = value;
++  } catch {}
++}
++// END MEM0-SCOPED-VIEW-STAGES v1
++const __msStageNames = new Set(["initialize", "telemetry", "nlp", "embedding-combined", "embedding-query", "semantic-qdrant", "keyword", "entity-store-ready", "embedding-entities", "entity-queries", "rank", "normalize"]);
++function __msNow() { try { const value = performance.now(); return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null; } catch { return null; } }
++function __msSpan(a, b) { return a !== null && b !== null && b >= a ? Math.round((b - a) * 1000) / 1000 : null; }
++function __msBegin(filters, receiver, query) {
++  try {
++    if (!__msStorage || !filters || __msSequence >= Number.MAX_SAFE_INTEGER) return;
++    const scoped = __msScopedViewBindings.get(receiver);
++    let groupAlias = scoped?.groupAlias, observationBinding = scoped ? "scoped-qdrant-view" : "legacy-flat-filters";
++    if (!scoped) {
++      const schema = Object.getOwnPropertyDescriptor(filters, "oc_scope_schema");
++      const source = Object.getOwnPropertyDescriptor(filters, "source");
++      const scope = Object.getOwnPropertyDescriptor(filters, "oc_read_scope");
++      if (!schema || !("value" in schema) || schema.value !== 2 || !source || !("value" in source) || source.value !== "OPENCLAW" || !scope || !("value" in scope)) return;
++      groupAlias = __msScopes.get(scope.value);
++    }
++    if (!groupAlias) return;
++    const runtimePolicy = {
++      telemetryEnabled: typeof MEM0_TELEMETRY === "boolean" ? MEM0_TELEMETRY : null,
++      telemetrySampleRate: typeof MEM0_TELEMETRY_SAMPLE_RATE === "number" && Number.isFinite(MEM0_TELEMETRY_SAMPLE_RATE) && MEM0_TELEMETRY_SAMPLE_RATE >= 0 && MEM0_TELEMETRY_SAMPLE_RATE <= 1 ? MEM0_TELEMETRY_SAMPLE_RATE : null,
++      queryEntityBatchEnabled: null
++    };
++    const trace = Object.freeze({ searchId: ++__msSequence, groupAlias, observationBinding, sourceAssociation: "unknown", queryHashDomain: "openclaw.mem0.recall-query.v1", queryHash: __msQueryHash(query), runtimePolicy, began: __msNow(), stages: [] });
++    __msTraces.add(trace);
++    return trace;
++  } catch { return; }
++}
++function __msMark(trace, name, began, outcome) {
++  try {
++    if (!__msTraces.has(trace) || !__msStageNames.has(name) || trace.stages.length >= 32) return;
++    const ended = __msNow();
++    trace.stages.push({ name, durationMs: __msSpan(began, ended), outcome });
++  } catch {}
++}
++function __msSync(trace, name, callback) {
++  if (!trace) return callback();
++  const began = __msNow();
++  try { const result = callback(); __msMark(trace, name, began, "completed"); return result; }
++  catch (error) { __msMark(trace, name, began, "error"); throw error; }
++}
++function __msStage(trace, name, callback) {
++  if (!trace) return callback();
++  const began = __msNow();
++  let called = false, value, failed = false, originalError;
++  const callOnce = () => {
++    if (!called) {
++      called = true;
++      try { value = callback(); } catch (error) { failed = true; originalError = error; }
++    }
++    return value;
++  };
++  // A diagnostic ALS failure cannot retry a callback or replace its error.
++  try { __msStorage.run(Object.freeze({ trace, stage: name }), callOnce); } catch {}
++  if (!called) callOnce();
++  if (failed) { __msMark(trace, name, began, "error"); throw originalError; }
++  return (async () => {
++    try { const result = await value; __msMark(trace, name, began, "completed"); return result; }
++    catch (error) { __msMark(trace, name, began, "error"); throw error; }
++  })();
++}
++function __msFetchContext() {
++  try {
++    const current = __msStorage?.getStore();
++    if (__msTraces.has(current?.trace) && __msStageNames.has(current.stage)) return Object.freeze({ searchId: current.trace.searchId, groupAlias: current.trace.groupAlias, searchStage: current.stage, observationBinding: current.trace.observationBinding, sourceAssociation: "unknown", queryHashDomain: current.trace.queryHashDomain, queryHash: current.trace.queryHash });
++  } catch {}
++  return undefined;
++}
++function __msEnd(trace, completed) {
++  try {
++    if (!__msTraces.has(trace)) return;
++    console.info("[mem0-search-stages] " + JSON.stringify({ schema: "mem0-search-stages-v1", searchId: trace.searchId, groupAlias: trace.groupAlias, outcome: completed ? "completed" : "error", totalMs: __msSpan(trace.began, __msNow()), stages: trace.stages, observationBinding: trace.observationBinding, sourceAssociation: "unknown", queryHashDomain: trace.queryHashDomain, queryHash: trace.queryHash, runtimePolicy: { ...trace.runtimePolicy } }));
++  } catch {}
++}
++// END MEM0-SEARCH-STAGES v1.
++
++// MEM0-PRIVATE-EMBEDDING-AGENT v1: Qianfan 8B/4096 idle-retention; other clients retain 12s.
++// Only an OpenAIEmbedder client may call this helper. The SDK global is read-only.
++function mem0PrivateEmbeddingIdleMs(baseURL, model, embeddingDims) {
++  try {
++    const endpoint = new URL(baseURL);
++    if (model === "qwen3-embedding-8b" && embeddingDims === 4096 &&
++        endpoint.protocol === "https:" && endpoint.hostname === "qianfan.baidubce.com" &&
++        endpoint.port === "" && !endpoint.username && !endpoint.password && !endpoint.search && !endpoint.hash &&
++        (endpoint.pathname === "/v2" || endpoint.pathname === "/v2/")) return 30000;
++  } catch {}
++  return 12000;
++}
++function tryInstallMem0PrivateEmbeddingAgent(client, baseURL, getDefaultAgent, idleRetentionMs = 12000) {
++  let candidate;
++  try {
++    if (idleRetentionMs !== 12000 && idleRetentionMs !== 30000) return false;
++    const clientAgent = Object.getOwnPropertyDescriptor(client, "httpAgent");
++    const clientBase = Object.getOwnPropertyDescriptor(client, "baseURL");
++    if (!clientAgent || !("value" in clientAgent) || clientAgent.value != null || clientAgent.writable !== true ||
++        !clientBase || !("value" in clientBase) || clientBase.value !== baseURL ||
++        typeof baseURL !== "string" || new URL(baseURL).protocol !== "https:" ||
++        typeof getDefaultAgent !== "function") return false;
++    const source = getDefaultAgent(baseURL);
++    if (!source || source.protocol !== "https:" || source.keepAlive !== true ||
++        typeof source.constructor !== "function" || source.constructor.name !== "HttpsAgent" ||
++        !source.options || source.options.freeSocketTimeout !== 4000 ||
++        typeof source.options.timeout !== "number" || !Number.isFinite(source.options.timeout) || source.options.timeout < 0) return false;
++    candidate = new source.constructor({ ...source.options, freeSocketTimeout: idleRetentionMs });
++    if (Object.getPrototypeOf(candidate) !== Object.getPrototypeOf(source)) throw new Error("agent-shape");
++    const keys = Reflect.ownKeys(source.options);
++    if (Reflect.ownKeys(candidate.options).length !== keys.length ||
++        keys.some(key => !Object.prototype.hasOwnProperty.call(candidate.options, key) ||
++          !Object.is(candidate.options[key], key === "freeSocketTimeout" ? idleRetentionMs : source.options[key]))) throw new Error("agent-options");
++    for (const key of ["keepAlive", "keepAliveMsecs", "maxSockets", "maxFreeSockets", "maxTotalSockets", "scheduling", "maxCachedSessions", "protocol", "defaultPort"]) {
++      if (!Object.is(candidate[key], source[key])) throw new Error("agent-policy");
++    }
++    // No client request, body, retry, timeout, model, vector, or default-agent mutation.
++    Object.defineProperty(client, "httpAgent", { ...clientAgent, value: candidate });
++    candidate = undefined;
++    return true;
++  } catch {
++    // Any unsupported runtime or option drift preserves the original SDK path.
++  }
++  try { candidate?.destroy(); } catch {}
++  return false;
++}
++function scheduleMem0PrivateEmbeddingAgent(client, loadShim = () => import("openai/_shims/index.mjs"), model, embeddingDims) {
++  try {
++    const clientBase = Object.getOwnPropertyDescriptor(client, "baseURL");
++    const baseURL = clientBase && "value" in clientBase ? clientBase.value : undefined;
++    // This is already loaded by OpenAI ESM. Never await it or delay a search.
++    // An import failure must not prevent Mem0 startup or its original first call.
++    return Promise.resolve(loadShim()).then(
++      shim => { try { return tryInstallMem0PrivateEmbeddingAgent(client, baseURL, shim?.getDefaultAgent, mem0PrivateEmbeddingIdleMs(baseURL, model, embeddingDims)); } catch { return false; } },
++      () => false
++    );
++  } catch { return Promise.resolve(false); }
++}
++// END MEM0-PRIVATE-EMBEDDING-AGENT v1.
++
++// MEM0-HTTP-REQUEST-OBSERVATION v1: metadata only; never changes dispatch or policy.
++import { channel as __msHttpChannel } from "node:diagnostics_channel";
++function createMem0HttpObserver(ALS = Mem0SearchStageALS, getChannel = __msHttpChannel) {
++  let storage;
++  try { storage = new ALS(); } catch {}
++  const active = new Set(), requests = new WeakMap(), sockets = new WeakMap();
++  const subscriptions = [];
++  let socketSequence = 0, subscriptionFaulted = false, observationDisabled = false;
++  const now = () => { try { const value = performance.now(); return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null; } catch { return null; } };
++  const span = (a, b) => a !== null && b !== null && b >= a ? Math.round((b - a) * 1000) / 1000 : null;
++  const data = (object, key) => { const descriptor = Object.getOwnPropertyDescriptor(object, key); return descriptor && "value" in descriptor ? descriptor.value : undefined; };
++  const fault = scope => { if (scope) scope.observationFaultCount = Math.min(65535, scope.observationFaultCount + 1); };
++  const safe = (scope, work) => { try { return work(); } catch { fault(scope); } };
++  const detach = row => {
++    if (row.detached) return;
++    row.detached = true;
++    const retained = [];
++    for (const [object, name, handler] of row.listeners) {
++      try { object.removeListener(name, handler); }
++      catch { retained.push([object, name, handler]); observationDisabled = true; fault(row.scope); }
++    }
++    row.listeners.length = 0;
++    row.listeners.push(...retained);
++    if (row.request) requests.delete(row.request);
++    row.request = null;
++    row.socket = null;
++  };
++  const listen = (row, object, name, handler) => {
++    if (observationDisabled) return;
++    const wrapped = (...args) => { if (!row.scope.closed && !row.detached) safe(row.scope, () => handler(...args)); };
++    row.listeners.push([object, name, wrapped]);
++    // Explicit cleanup keeps removeListener faults inside this observer instead
++    // of letting an EventEmitter.once wrapper throw into a business emit.
++    try { object.on(name, wrapped); }
++    catch { observationDisabled = true; fault(row.scope); }
++  };
++  const assigned = (row, socket) => {
++    row.socketEventCount = Math.min(65535, row.socketEventCount + 1);
++    if (!socket || typeof socket !== "object") return;
++    if (row.socketAssignedAt !== null) { row.socketAmbiguous = true; return; }
++    row.socketAssignedAt = now();
++    row.socket = socket;
++    const reused = data(row.request, "reusedSocket");
++    row.reusedSocket = typeof reused === "boolean" ? reused : null;
++    let ordinal = sockets.get(socket);
++    row.socketPreviouslyObserved = ordinal !== undefined;
++    if (ordinal === undefined && socketSequence < Number.MAX_SAFE_INTEGER) { ordinal = ++socketSequence; sockets.set(socket, ordinal); }
++    row.socketOrdinal = ordinal ?? null;
++    listen(row, socket, "lookup", () => { row.lookupEventCount = Math.min(65535, row.lookupEventCount + 1); if (row.lookupAt === null) row.lookupAt = now(); });
++    listen(row, socket, "connectionAttempt", () => { row.connectionAttemptCount = Math.min(65535, row.connectionAttemptCount + 1); if (row.connectionAttemptAt === null) row.connectionAttemptAt = now(); });
++    listen(row, socket, "connect", () => { if (row.tcpConnectedAt === null) row.tcpConnectedAt = now(); });
++    listen(row, socket, "secureConnect", () => { if (row.tlsSecureAt === null) row.tlsSecureAt = now(); });
++  };
++  const created = message => {
++    let scope;
++    try {
++      scope = storage?.getStore();
++      if (observationDisabled || !active.has(scope) || scope.closed) return;
++      const request = message?.request;
++      if (!request || typeof request !== "object" || data(request, "agent") !== scope.agent || data(request, "host") !== "qianfan.baidubce.com" || data(request, "protocol") !== "https:" || data(request, "method") !== "POST" || request.path !== "/v2/embeddings") { scope.unmatchedRequestCount = Math.min(65535, scope.unmatchedRequestCount + 1); return; }
++      if (requests.has(request)) { scope.ambiguousRequestCount = Math.min(65535, scope.ambiguousRequestCount + 1); return; }
++      if (scope.rows.length >= 4) { scope.requestOverflowCount = Math.min(65535, scope.requestOverflowCount + 1); return; }
++      const row = { scope, request, socket: null, listeners: [], detached: false, createdAt: now(), socketAssignedAt: null, lookupAt: null, connectionAttemptAt: null, tcpConnectedAt: null, tlsSecureAt: null, finishedAt: null, headersAt: null, closedAt: null, errorAt: null, socketEventCount: 0, socketAmbiguous: false, lookupEventCount: 0, connectionAttemptCount: 0, reusedSocket: null, socketPreviouslyObserved: null, socketOrdinal: null, status: null };
++      scope.rows.push(row);
++      requests.set(request, row);
++      listen(row, request, "socket", socket => assigned(row, socket));
++      listen(row, request, "finish", () => { if (row.finishedAt === null) row.finishedAt = now(); });
++      listen(row, request, "close", () => { row.closedAt = now(); detach(row); });
++      // Node24 publishes created before its next-tick socket event. If a custom
++      // path already assigned one, bind that object but keep earlier phases unknown.
++      const socket = data(request, "socket");
++      if (socket) assigned(row, socket);
++    } catch { fault(scope); }
++  };
++  const responseHeaders = message => {
++    const row = requests.get(message?.request);
++    if (!row || row.scope.closed || row.detached) return;
++    safe(row.scope, () => { row.headersAt = now(); const status = message?.response?.statusCode; row.status = Number.isInteger(status) && status >= 100 && status <= 599 ? status : null; });
++    detach(row);
++  };
++  const requestError = message => {
++    const row = requests.get(message?.request);
++    if (!row || row.scope.closed || row.detached) return;
++    safe(row.scope, () => { row.errorAt = now(); });
++    detach(row);
++  };
++  const unsubscribe = () => {
++    const retained = [];
++    for (const [channel, handler] of subscriptions) {
++      try { channel.unsubscribe(handler); }
++      catch { retained.push([channel, handler]); subscriptionFaulted = true; }
++    }
++    subscriptions.length = 0;
++    subscriptions.push(...retained);
++  };
++  const subscribe = () => {
++    if (subscriptionFaulted) return false;
++    if (subscriptions.length) return true;
++    try {
++      for (const [name, work] of [["http.client.request.created", created], ["http.client.response.finish", responseHeaders], ["http.client.request.error", requestError]]) {
++        const channel = getChannel(name), handler = message => { try { work(message); } catch {} };
++        // Retain the exact reference even if a custom channel throws after
++        // partial registration. Failed cleanup disables future subscriptions.
++        subscriptions.push([channel, handler]);
++        channel.subscribe(handler);
++      }
++      return true;
++    } catch { subscriptionFaulted = true; unsubscribe(); return false; }
++  };
++  return Object.freeze({
++    open(context, args, sequence, began, agent) {
++      try {
++        if (observationDisabled || !storage || process.versions.node !== "24.21.0" || active.size >= 32 || !context || !Number.isSafeInteger(context.searchId) || context.searchId < 1 || !["new", "old"].includes(context.groupAlias) || !["embedding-combined", "embedding-query", "embedding-entities"].includes(context.searchStage) || typeof args[0] !== "string" || args[0].length > 2048 || !agent || typeof agent !== "object" || String(args[1]?.method).toUpperCase() !== "POST") return;
++        const url = new URL(args[0]);
++        if (url.protocol !== "https:" || url.hostname !== "qianfan.baidubce.com" || url.port || url.username || url.password || url.search || url.hash || url.pathname !== "/v2/embeddings" || !subscribe()) return;
++        const scope = { context, sequence, began: typeof began === "number" && Number.isFinite(began) ? began : null, agent, rows: [], closed: false, observationFaultCount: 0, unmatchedRequestCount: 0, ambiguousRequestCount: 0, requestOverflowCount: 0 };
++        active.add(scope);
++        return scope;
++      } catch { return; }
++    },
++    run(scope, work) {
++      let invoked = false, didReturn = false, result, failure;
++      const invoke = () => {
++        if (invoked) { if (didReturn) return result; throw failure; }
++        invoked = true;
++        try { result = work(); didReturn = true; return result; } catch (error) { failure = error; throw error; }
++      };
++      // Clear unrelated nested scope even when this fetch is not observable.
++      try { storage?.run(scope, invoke); } catch {}
++      return invoke();
++    },
++    finish(scope, phase) {
++      try {
++        if (!active.has(scope) || scope.closed) return;
++        scope.closed = true;
++        active.delete(scope);
++        const terminal = now();
++        for (const row of scope.rows) detach(row);
++        if (active.size === 0) unsubscribe();
++        const rows = scope.rows.map((row, index) => ({ index: index + 1, status: row.status, requestCreatedObserved: row.createdAt !== null, socketAssignedObserved: row.socketAssignedAt !== null, requestFinishObserved: row.finishedAt !== null, responseHeadersObserved: row.headersAt !== null, requestCloseObserved: row.closedAt !== null, errorObserved: row.errorAt !== null, reusedSocket: row.reusedSocket, socketPreviouslyObserved: row.socketPreviouslyObserved, observedSocketOrdinal: row.socketOrdinal, socketEventCount: row.socketEventCount, socketAmbiguous: row.socketAmbiguous, lookupEventCount: row.lookupEventCount, connectionAttemptCount: row.connectionAttemptCount, fetchBeginToRequestCreatedMs: span(scope.began, row.createdAt), requestCreatedToSocketAssignedMs: span(row.createdAt, row.socketAssignedAt), socketAssignedToLookupEnvelopeMs: span(row.socketAssignedAt, row.lookupAt), firstConnectionAttemptToTcpConnectedEnvelopeMs: row.connectionAttemptCount > 0 ? span(row.connectionAttemptAt, row.tcpConnectedAt) : null, singleTcpAttemptToConnectedEnvelopeMs: row.connectionAttemptCount === 1 ? span(row.connectionAttemptAt, row.tcpConnectedAt) : null, tcpConnectedToTlsSecureEnvelopeMs: span(row.tcpConnectedAt, row.tlsSecureAt), requestCreatedToFinishMs: span(row.createdAt, row.finishedAt), requestFinishToResponseHeadersEnvelopeMs: span(row.finishedAt, row.headersAt), requestCreatedToResponseHeadersMs: span(row.createdAt, row.headersAt), dnsMs: null, dnsStartObserved: false }));
++        console.info("[mem0-embed-http] " + JSON.stringify({ schema: "mem0-embed-http-v1", phase: phase === "after" ? "after" : "error", requestSequence: scope.sequence, ...scope.context, sourceAssociation: "unknown", bindingKind: "instance-fetch-private-als-and-actual-clientrequest-agent-route", headersBoundary: "node-final-response-headers-parsed", requestFinishBoundary: "public-clientrequest-finish-not-remote-ack", totalToFetchSettlementMs: span(scope.began, terminal), activeScopeLimit: 32, requestLimit: 4, requestCount: rows.length, requestOverflowCount: scope.requestOverflowCount, ambiguousRequestCount: scope.ambiguousRequestCount, unmatchedRequestCount: scope.unmatchedRequestCount, observationFaultCount: scope.observationFaultCount, missingEventsAreNotZero: true, dnsStartObserved: false, dnsMs: null, serverWaitNotSeparatelyProven: true, durationsIncludeHostEventLoop: true, requests: rows }));
++      } catch { /* This observer never replaces a fetch result or exception. */ }
++    }
++  });
++}
++const __msHttpObserver = createMem0HttpObserver();
++// END MEM0-HTTP-REQUEST-OBSERVATION v1.
++
++// MEM0-EMBED-CONNECTION-OBSERVATION v1: instance-only metadata; no policy change.
++function observeMem0EmbeddingFetch(client) {
++  try {
++    const original = client?.fetch;
++    if (typeof original !== "function") return;
++    let sequence = 0;
++    const finite = (value, maximum = Number.MAX_SAFE_INTEGER) =>
++      typeof value === "number" && Number.isFinite(value) && value >= 0 && value <= maximum ? value : null;
++    const now = () => { try { return finite(performance.now()); } catch { return null; } };
++    const snapshot = agent => {
++      try {
++        const present = agent !== null && (typeof agent === "object" || typeof agent === "function");
++        return {
++          present,
++          keepAlive: typeof agent?.keepAlive === "boolean" ? agent.keepAlive : typeof agent?.options?.keepAlive === "boolean" ? agent.options.keepAlive : null,
++          freeSocketTimeoutMs: finite(agent?.options?.freeSocketTimeout, 2147483647),
++          activeTimeoutMs: finite(agent?.options?.timeout, 2147483647),
++          createSocketCount: finite(agent?.createSocketCount),
++          requestCount: finite(agent?.requestCount)
++        };
++      } catch { return { present: null, keepAlive: null, freeSocketTimeoutMs: null, activeTimeoutMs: null, createSocketCount: null, requestCount: null }; }
++    };
++    const emit = value => { try { console.info("[mem0-embed-connection] " + JSON.stringify(value)); } catch {} };
++    const responseMetadata = response => {
++      const out = { headersAvailable: false, connection: "unavailable", keepAliveTimeoutSeconds: null, httpStatus: null };
++      try { const value = response?.status; if (Number.isInteger(value) && value >= 100 && value <= 599) out.httpStatus = value; } catch {}
++      try {
++        if (typeof response?.headers?.get !== "function") return out;
++        const connection = response.headers.get("connection");
++        out.headersAvailable = true;
++        out.connection = connection == null ? "missing" : typeof connection === "string" && connection.trim().toLowerCase() === "close" ? "close" : typeof connection === "string" && connection.trim().toLowerCase() === "keep-alive" ? "keep-alive" : "other";
++        const keepalive = response.headers.get("keep-alive");
++        if (typeof keepalive === "string" && keepalive.length <= 256) {
++          const matches = [...keepalive.matchAll(/(?:^|[,;])\s*timeout\s*=\s*(\d+(?:\.\d+)?)\s*(?=[,;]|$)/gi)];
++          if (matches.length === 1) out.keepAliveTimeoutSeconds = finite(Number(matches[0][1]), 86400);
++        }
++      } catch { /* The original response is never consumed or replaced. */ }
++      return out;
++    };
++    client.fetch = function (...args) {
++      let before, agent, began, currentSequence, clientConfiguredAgent, httpScope;
++      const searchContext = __msFetchContext();
++      try {
++        agent = args[1]?.agent;
++        before = snapshot(agent);
++        began = now();
++        currentSequence = sequence = sequence < Number.MAX_SAFE_INTEGER ? sequence + 1 : 1;
++        clientConfiguredAgent = client.httpAgent != null;
++        httpScope = __msHttpObserver.open(searchContext, args, currentSequence, began, agent);
++        emit({ schema: "mem0-embed-connection-v1", phase: "before", requestSequence: currentSequence, ...(searchContext ?? {}), clientConfiguredAgent, counterScope: "agent-wide-not-request-exact", agent: before });
++      } catch { /* Observer failures must not affect fetch. */ }
++      const completed = (phase, response) => {
++        try { __msHttpObserver.finish(httpScope, phase); } catch {}
++        try {
++          const ended = now();
++          emit({ schema: "mem0-embed-connection-v1", phase, requestSequence: currentSequence ?? null, ...(searchContext ?? {}), clientConfiguredAgent: typeof clientConfiguredAgent === "boolean" ? clientConfiguredAgent : null, counterScope: "agent-wide-not-request-exact", before: before ?? snapshot(undefined), after: snapshot(agent), durationMs: began !== null && began !== undefined && ended !== null && ended >= began ? Math.round((ended - began) * 1000) / 1000 : null, response: phase === "after" ? responseMetadata(response) : { headersAvailable: false, connection: "unavailable", keepAliveTimeoutSeconds: null } });
++        } catch { /* Observer failures must not affect the original promise. */ }
++      };
++      let result;
++      try { result = __msHttpObserver.run(httpScope, () => Reflect.apply(original, this, args)); }
++      catch (error) { completed("error"); throw error; }
++      try {
++        // Return the same object/promise; attach only a non-throwing observer.
++        if (result != null && typeof result.then === "function") result.then(response => { completed("after", response); }, () => { completed("error"); });
++      } catch { /* Custom thenable diagnostics are optional. */ }
++      return result;
++    };
++  } catch { /* Installation is diagnostic-only, including frozen/custom clients. */ }
++}
++// END MEM0-EMBED-CONNECTION-OBSERVATION v1.
++
+ var OpenAIEmbedder = class {
+   constructor(config) {
+     this.openai = new OpenAI({
+@@ -63,6 +448,8 @@
+     });
+     this.model = config.model || "text-embedding-3-small";
+     this.embeddingDims = config.embeddingDims;
++    scheduleMem0PrivateEmbeddingAgent(this.openai, undefined, this.model, this.embeddingDims);
++    observeMem0EmbeddingFetch(this.openai);
+   }
+   async embed(text) {
+     const response = await this.openai.embeddings.create({
+@@ -94,6 +481,31 @@
+     }
+     return allEmbeddings;
+   }
++  async embedBatchChecked(texts) {
++    const response = await this.openai.embeddings.create({
++      model: this.model,
++      input: texts,
++      encoding_format: "float",
++      ...this.embeddingDims !== void 0 && { dimensions: this.embeddingDims }
++    });
++    const invalid = () => {
++      const error = new Error("Invalid combined embedding response shape or input indices");
++      error.code = "MEM0_BATCH_RESPONSE_INVALID";
++      throw error;
++    };
++    if (!Array.isArray(response?.data) || response.data.length !== texts.length) invalid();
++    const ordered = new Array(texts.length);
++    const seenIndices = new Set();
++    for (const item of response.data) {
++      if (!Number.isInteger(item?.index) || item.index < 0 || item.index >= texts.length || seenIndices.has(item.index)) invalid();
++      seenIndices.add(item.index);
++      ordered[item.index] = item.embedding;
++    }
++    const dimension = Number.isInteger(this.embeddingDims) && this.embeddingDims > 0
++      ? this.embeddingDims : Array.isArray(ordered[0]) ? ordered[0].length : 0;
++    if (dimension <= 0 || Array.from(ordered).some((vector) => !Array.isArray(vector) || vector.length !== dimension || !Array.from(vector).every(Number.isFinite))) invalid();
++    return ordered;
++  }
+ };
+ 
+ // src/oss/src/embeddings/ollama.ts
+@@ -1041,6 +1453,7 @@
+       payload: payloads[idx] || {}
+     }));
+     await this.client.upsert(this.collectionName, {
++      wait: true, /* OPENCLAW-MEMORY-WRITE-RECEIPT v2: applied point before success receipt. */
+       points
+     });
+   }
+@@ -1049,12 +1462,13 @@
+   }
+   async search(query, topK = 5, filters) {
+     const queryFilter = this.createFilter(filters);
+-    const results = await this.client.search(this.collectionName, {
+-      vector: query,
++    const response = await this.client.query(this.collectionName, {
++      query,
+       filter: queryFilter,
+-      limit: topK
++      limit: topK,
++      with_payload: true
+     });
+-    return results.map((hit) => ({
++    return response.points.map((hit) => ({
+       id: String(hit.id),
+       payload: hit.payload || {},
+       score: hit.score
+@@ -1078,11 +1492,13 @@
+       payload
+     };
+     await this.client.upsert(this.collectionName, {
++      wait: true,
+       points: [point]
+     });
+   }
+   async delete(vectorId) {
+     await this.client.delete(this.collectionName, {
++      wait: true,
+       points: [vectorId]
+     });
+   }
+@@ -6203,6 +6619,7 @@
+     if (payload.user_id) filters.user_id = payload.user_id;
+     if (payload.agent_id) filters.agent_id = payload.agent_id;
+     if (payload.run_id) filters.run_id = payload.run_id;
++    for (const key of ["oc_scope_schema", "oc_read_scope", "oc_write_scope", "source"]) if (payload[key] !== undefined) filters[key] = payload[key];
+     return filters;
+   }
+   /**
+@@ -6318,6 +6735,7 @@
+             if (filters.user_id) entityPayload.user_id = filters.user_id;
+             if (filters.agent_id) entityPayload.agent_id = filters.agent_id;
+             if (filters.run_id) entityPayload.run_id = filters.run_id;
++            for (const key of ["oc_scope_schema", "oc_read_scope", "oc_write_scope", "source"]) if (filters[key] !== undefined) entityPayload[key] = filters[key];
+             try {
+               await entityStore.insert(
+                 [entityVec],
+@@ -6338,7 +6756,7 @@
+   }
+   buildSessionScope(filters) {
+     const parts = [];
+-    for (const key of ["agent_id", "run_id", "user_id"].sort()) {
++    for (const key of ["agent_id", "run_id", "user_id", "oc_write_scope"].sort()) {
+       const val = filters[key];
+       if (val) parts.push(`${key}=${val}`);
+     }
+@@ -6417,6 +6835,10 @@
+       );
+     }
+     const parsedMessages = Array.isArray(messages) ? messages : [{ role: "user", content: messages }];
++    if (config.__ocReceipt) {
++      if (infer !== false) throw new Error("MEMORY_RECEIPT_REQUIRES_EXTRACTED_FACTS");
++      return { results: await writeReceiptMemory(this, parsedMessages, metadata, config.__ocReceipt, { lemmatize: lemmatizeForBm25 }) };
++    }
+     const final_parsedMessages = await parse_vision_messages(parsedMessages);
+     const vectorStoreResult = await this.addToVectorStore(
+       final_parsedMessages,
+@@ -6741,6 +7163,7 @@
+               if (filters.user_id) entityPayload.user_id = filters.user_id;
+               if (filters.agent_id) entityPayload.agent_id = filters.agent_id;
+               if (filters.run_id) entityPayload.run_id = filters.run_id;
++              for (const key of ["oc_scope_schema", "oc_read_scope", "oc_write_scope", "source"]) if (filters[key] !== undefined) entityPayload[key] = filters[key];
+               toInsertVectors.push(entityVec);
+               toInsertIds.push(uuidv43());
+               toInsertPayloads.push(entityPayload);
+@@ -6815,6 +7238,9 @@
+     }
+     return { ...memoryItem, ...filters };
+   }
++  [Symbol.for("openclaw.mem0.scoped-search-diagnostic.v1")](view, scope) {
++    return __msBindScopedView(this, view, scope);
++  }
+   async search(query, config) {
+     var _a2, _b, _c, _d, _e;
+     rejectTopLevelEntityParams(config, "search");
+@@ -6830,13 +7256,16 @@
+         run_id: validateAndTrimEntityId(config.filters.run_id, "run_id")
+       }).filter(([, v]) => v !== void 0)
+     ) : {};
+-    await this._ensureInitialized();
++    const __msTrace = __msBegin(normalizedFilters, this, query);
++    let __msCompleted = false;
++    try {
++    await __msStage(__msTrace, "initialize", () => this._ensureInitialized());
+     const { topK = 20, threshold = 0.1, explain = false } = config;
+-    await this._captureEvent("search", {
++    await __msStage(__msTrace, "telemetry", () => this._captureEvent("search", {
+       query_length: query.length,
+       topK,
+       has_filters: !!config.filters
+-    });
++    }));
+     let effectiveFilters = { ...normalizedFilters };
+     if (this._hasAdvancedOperators(effectiveFilters)) {
+       const processedFilters = this._processMetadataFilters(effectiveFilters);
+@@ -6855,23 +7284,60 @@
+         "filters must contain at least one of: user_id, agent_id, run_id. Example: filters: { user_id: 'u1' }"
+       );
+     }
+-    const queryLemmatized = lemmatizeForBm25(query);
+-    const queryEntities = extractEntities(query);
+-    const queryEmbedding = await this.embedder.embed(query);
++    const [queryLemmatized, queryEntities] = __msSync(__msTrace, "nlp", () => [lemmatizeForBm25(query), extractEntities(query)]);
++    // MEM0-QUERY-ENTITY-BATCH-PATCH v1: same query/entity inputs, one OpenAI embedding batch.
++    const __batchEntities = [];
++    const __batchSeen = new Set();
++    for (const entity of queryEntities.slice(0, 8)) {
++      const key = entity.text.trim().toLowerCase();
++      if (key && !__batchSeen.has(key)) {
++        __batchSeen.add(key);
++        __batchEntities.push(entity);
++      }
++    }
++    const __entityTexts = __batchEntities.map((entity) => entity.text);
++    let __entityVectors;
++    let queryEmbedding;
++    const __batchEnabled = !["0", "false", "off", "no"].includes(String(process.env.OPENCLAW_MEM0_QUERY_ENTITY_BATCH ?? "").toLowerCase());
++    __msPolicy(__msTrace, "queryEntityBatchEnabled", __batchEnabled);
++    if (__batchEnabled && this.embedder instanceof OpenAIEmbedder && __entityTexts.length > 0) {
++      const __started = Date.now();
++      let __vectors;
++      let __fallback;
++      try {
++        __vectors = await __msStage(__msTrace, "embedding-combined", () => this.embedder.embedBatchChecked([query, ...__entityTexts]));
++      } catch (__error) {
++        // Unsupported batch/input limits can safely fall back to the existing two requests.
++        // Auth/network/cancellation errors keep their original failure semantics and do not retry here.
++        if (__error?.status !== 400 && __error?.status !== 422 && __error?.code !== "MEM0_BATCH_RESPONSE_INVALID") throw __error;
++        __fallback = __error?.code === "MEM0_BATCH_RESPONSE_INVALID" ? "invalid-response" : "unsupported-batch";
++      }
++      const __dim = Number.isInteger(this.embedder.embeddingDims) && this.embedder.embeddingDims > 0
++        ? this.embedder.embeddingDims : Array.isArray(__vectors?.[0]) ? __vectors[0].length : 0;
++      if (Array.isArray(__vectors) && __vectors.length === 1 + __entityTexts.length && __dim > 0 &&
++          Array.from(__vectors).every((vector) => Array.isArray(vector) && vector.length === __dim && Array.from(vector).every(Number.isFinite))) {
++        queryEmbedding = __vectors[0];
++        __entityVectors = __vectors.slice(1);
++        console.info("[mem0-query-entity-batch] " + JSON.stringify({ action: "combined", inputs: __vectors.length, ms: Date.now() - __started }));
++      } else {
++        console.info("[mem0-query-entity-batch] " + JSON.stringify({ action: "fallback", reason: __fallback ?? "invalid-response", ms: Date.now() - __started }));
++      }
++    }
++    if (queryEmbedding === void 0) queryEmbedding = await __msStage(__msTrace, "embedding-query", () => this.embedder.embed(query));
+     const internalLimit = Math.max(topK * 4, 60);
+-    const semanticResults = await this.vectorStore.search(
++    const semanticResults = await __msStage(__msTrace, "semantic-qdrant", () => this.vectorStore.search(
+       queryEmbedding,
+       internalLimit,
+       effectiveFilters
+-    );
++    ));
+     let keywordResults = null;
+     if (typeof this.vectorStore.keywordSearch === "function") {
+       try {
+-        keywordResults = (_a2 = await this.vectorStore.keywordSearch(
++        keywordResults = (_a2 = await __msStage(__msTrace, "keyword", () => this.vectorStore.keywordSearch(
+           queryLemmatized,
+           internalLimit,
+           effectiveFilters
+-        )) != null ? _a2 : null;
++        ))) != null ? _a2 : null;
+       } catch (e) {
+         keywordResults = null;
+       }
+@@ -6900,24 +7366,25 @@
+           }
+         }
+         if (deduped.length > 0) {
+-          const entityStore = await this.getEntityStore();
++          const entityStore = await __msStage(__msTrace, "entity-store-ready", () => this.getEntityStore());
+           const entitySearchFilters = {};
+-          for (const k of ["user_id", "agent_id", "run_id"]) {
++          for (const k of ["user_id", "agent_id", "run_id", "oc_scope_schema", "oc_read_scope", "oc_write_scope", "source"]) {
+             if (effectiveFilters[k])
+               entitySearchFilters[k] = effectiveFilters[k];
+           }
+           const entityTexts = deduped.map((e) => e.text);
+-          const embeddings = await this.embedder.embedBatch(entityTexts);
++          const embeddings = __entityVectors && entityTexts.length === __entityTexts.length && entityTexts.every((text, index) => text === __entityTexts[index])
++            ? __entityVectors : await __msStage(__msTrace, "embedding-entities", () => this.embedder.embedBatch(entityTexts));
+           if (embeddings.length !== entityTexts.length) {
+             console.warn(
+               `embedBatch returned ${embeddings.length} vectors for ${entityTexts.length} texts \u2014 skipping entity boost`
+             );
+           } else {
+-            const searchResults = await Promise.allSettled(
++            const searchResults = await __msStage(__msTrace, "entity-queries", () => Promise.allSettled(
+               deduped.map(
+                 (_, i) => entityStore.search(embeddings[i], 500, entitySearchFilters)
+               )
+-            );
++            ));
+             for (const result of searchResults) {
+               if (result.status === "rejected") {
+                 console.warn(
+@@ -6960,14 +7427,14 @@
+         payload: mem.payload || {}
+       };
+     });
+-    const scoredResults = scoreAndRank(
++    const scoredResults = __msSync(__msTrace, "rank", () => scoreAndRank(
+       candidates,
+       bm25Scores,
+       entityBoosts,
+       threshold != null ? threshold : 0.1,
+       topK,
+       explain
+-    );
++    ));
+     const excludedKeys = /* @__PURE__ */ new Set([
+       "user_id",
+       "agent_id",
+@@ -6979,7 +7446,7 @@
+       "textLemmatized",
+       "attributedTo"
+     ]);
+-    const results = scoredResults.filter((scored) => {
++    const results = __msSync(__msTrace, "normalize", () => scoredResults.filter((scored) => {
+       var _a3;
+       return (_a3 = scored.payload) == null ? void 0 : _a3.data;
+     }).map((scored) => {
+@@ -6997,22 +7464,26 @@
+         ...payload.run_id && { run_id: payload.run_id },
+         ...scored.scoreDetails && { score_details: scored.scoreDetails }
+       };
+-    });
++    }));
++    __msCompleted = true;
+     return {
+       results
+     };
++    } finally { __msEnd(__msTrace, __msCompleted); }
+   }
+-  async update(memoryId, data) {
++  async update(memoryId, data, config = {}) {
++    config.__ocAssertCurrent?.();
+     await this._ensureInitialized();
+     await this._captureEvent("update", { memory_id: memoryId });
+     const embedding = await this.embedder.embed(data);
+-    await this.updateMemory(memoryId, data, { [data]: embedding });
++    await this.updateMemory(memoryId, data, { [data]: embedding }, {}, config.__ocAssertCurrent);
+     return { message: "Memory updated successfully!" };
+   }
+-  async delete(memoryId) {
++  async delete(memoryId, config = {}) {
++    config.__ocAssertCurrent?.();
+     await this._ensureInitialized();
+     await this._captureEvent("delete", { memory_id: memoryId });
+-    await this.deleteMemory(memoryId);
++    await this.deleteMemory(memoryId, config.__ocAssertCurrent);
+     return { message: "Memory deleted successfully!" };
+   }
+   async deleteAll(config) {
+@@ -7152,7 +7623,7 @@
+     );
+     return memoryId;
+   }
+-  async updateMemory(memoryId, data, existingEmbeddings, metadata = {}) {
++  async updateMemory(memoryId, data, existingEmbeddings, metadata = {}, assertCurrent) {
+     const existingMemory = await this.vectorStore.get(memoryId);
+     if (!existingMemory) {
+       throw new Error(`Memory with ID ${memoryId} not found`);
+@@ -7160,6 +7631,7 @@
+     const prevValue = existingMemory.payload.data;
+     const embedding = existingEmbeddings[data] || await this.embedder.embed(data);
+     const newMetadata = {
++      ...existingMemory.payload,
+       ...metadata,
+       data,
+       hash: createHash("md5").update(data).digest("hex"),
+@@ -7175,6 +7647,7 @@
+         run_id: existingMemory.payload.run_id
+       }
+     };
++    assertCurrent?.();
+     await this.vectorStore.update(memoryId, embedding, newMetadata);
+     await this.db.addHistory(
+       memoryId,
+@@ -7193,7 +7666,7 @@
+     }
+     return memoryId;
+   }
+-  async deleteMemory(memoryId) {
++  async deleteMemory(memoryId, assertCurrent) {
+     const existingMemory = await this.vectorStore.get(memoryId);
+     if (!existingMemory) {
+       throw new Error(`Memory with ID ${memoryId} not found`);
+@@ -7202,6 +7675,7 @@
+     const sessionFilters = this._sessionFiltersFromPayload(
+       existingMemory.payload || {}
+     );
++    assertCurrent?.();
+     await this.vectorStore.delete(memoryId);
+     await this.db.addHistory(
+       memoryId,
+diff -ruN a/dist/oss/oc-memory-receipt.mjs b/dist/oss/oc-memory-receipt.mjs
+--- a/dist/oss/oc-memory-receipt.mjs	1970-01-01 07:30:00.000000000 +0730
++++ b/dist/oss/oc-memory-receipt.mjs	2026-11-13 19:09:03.981016649 +0800
+@@ -0,0 +1,82 @@
++// OPENCLAW-MEMORY-WRITE-RECEIPT v2: stable point IDs, durable exact payloads, no random UUID retry.
++import { createHash } from 'node:crypto';
++
++const digest = (value) => createHash('sha256').update(value).digest('hex');
++export function pointId(receiptKey, scope, text) {
++  const chars = digest(`${receiptKey}\0${scope}\0${text}`).slice(0, 32).split('');
++  chars[12] = '5'; chars[16] = ((parseInt(chars[16], 16) & 3) | 8).toString(16);
++  const s = chars.join(''); return `${s.slice(0, 8)}-${s.slice(8, 12)}-${s.slice(12, 16)}-${s.slice(16, 20)}-${s.slice(20)}`;
++}
++
++export async function bounded(promise, signal) {
++  if (!signal) return promise;
++  if (signal.aborted) throw signal.reason || new Error('MEMORY_CAPTURE_DEADLINE');
++  let handler;
++  try {
++    return await Promise.race([promise, new Promise((_, reject) => { handler = () => reject(signal.reason || new Error('MEMORY_CAPTURE_DEADLINE')); signal.addEventListener('abort', handler, { once: true }); })]);
++  } finally { if (handler) signal.removeEventListener('abort', handler); }
++}
++
++const scopeWriters = new Map();
++export async function writeReceiptMemory(memory, messages, metadata, receipt, { lemmatize = (text) => text } = {}) {
++  const key = metadata.oc_write_scope;
++  const previous = scopeWriters.get(key) || Promise.resolve();
++  const current = previous.catch(() => {}).then(() => { receipt.check(); return writeReceiptMemoryUnlocked(memory, messages, metadata, receipt, lemmatize); });
++  scopeWriters.set(key, current);
++  const cleanup = () => { if (scopeWriters.get(key) === current) scopeWriters.delete(key); };
++  current.then(cleanup, cleanup);
++  return await bounded(current, receipt.signal);
++}
++async function writeReceiptMemoryUnlocked(memory, messages, metadata, receipt, lemmatize) {
++  if (!receipt?.key || typeof receipt.save !== 'function' || typeof receipt.check !== 'function') throw new Error('MEMORY_RECEIPT_INVALID');
++  if (!metadata.oc_write_scope || metadata.oc_scope_schema !== 2) throw new Error('MEMORY_RECEIPT_SCOPE_MISSING');
++  let state = receipt.load() || { schema: 2, key: receipt.key, scope: metadata.oc_write_scope, records: [], done: false };
++  if (state.key !== receipt.key || state.scope !== metadata.oc_write_scope) throw new Error('MEMORY_RECEIPT_SCOPE_MISMATCH');
++  const texts = [...new Set(messages.filter((m) => m.role === 'user').map((m) => m.content))];
++  if (texts.some((t) => typeof t !== 'string' || !t.trim())) throw new Error('MEMORY_RECEIPT_FACT_INVALID');
++  if (state.records.length && (state.records.length !== texts.length || texts.some((t, i) => state.records[i].text !== t))) throw new Error('MEMORY_RECEIPT_INPUT_MISMATCH');
++  if (!state.records.length) {
++    receipt.check();
++    // Current deployed provider is OpenAI-compatible. Abort/timeout/maxRetries are per-request.
++    if (!memory.embedder?.openai?.embeddings?.create) throw new Error('MEMORY_BOUNDED_EMBEDDER_UNSUPPORTED');
++    const result = await memory.embedder.openai.embeddings.create({ model: memory.embedder.model, input: texts, encoding_format: 'float',
++      ...(memory.embedder.embeddingDims !== undefined ? { dimensions: memory.embedder.embeddingDims } : {}) }, { signal: receipt.signal, timeout: 120000, maxRetries: 0 });
++    receipt.check();
++    if (!Array.isArray(result.data) || result.data.length !== texts.length) throw new Error('MEMORY_EMBEDDING_INVALID');
++    const ordered = new Array(texts.length); const seen = new Set();
++    for (const row of result.data) {
++      if (!Number.isInteger(row.index) || row.index < 0 || row.index >= texts.length || seen.has(row.index) || !Array.isArray(row.embedding) || !row.embedding.length || row.embedding.some((v) => !Number.isFinite(v))) throw new Error('MEMORY_EMBEDDING_INVALID');
++      ordered[row.index] = row.embedding; seen.add(row.index);
++    }
++    const dims = memory.embedder.embeddingDims || ordered[0].length;
++    if (ordered.some((v) => v.length !== dims)) throw new Error('MEMORY_EMBEDDING_DIMENSION_INVALID');
++    const createdAt = new Date().toISOString();
++    state.records = texts.map((text, i) => ({ id: pointId('memory-fact-v2', metadata.oc_write_scope, text), text, vector: ordered[i],
++      payload: { ...metadata, data: text, hash: createHash('md5').update(text).digest('hex'), textLemmatized: lemmatize(text), createdAt }, vectorDone: false, historyDone: false }));
++    receipt.save(state); // Persist exact embeddings and timestamps before the first vector write.
++  }
++  if (state.done) return state.records.map((r) => ({ id: r.id, memory: r.text, metadata: { event: 'ADD' } }));
++  for (const record of state.records) {
++    receipt.check();
++    if (!record.vectorDone) {
++      const existing = await bounded(memory.vectorStore.get(record.id), receipt.signal);
++      receipt.check();
++      if (existing && (existing.payload?.oc_write_scope !== state.scope || existing.payload?.data !== record.text)) throw new Error('MEMORY_POINT_ID_COLLISION');
++      if (existing) record.payload = existing.payload;
++      // An uncertain prior upsert uses the same UUID and exact payload; it cannot create a second point.
++      if (!existing) await bounded(memory.vectorStore.insert([record.vector], [record.id], [record.payload]), receipt.signal);
++      receipt.check(); record.vectorDone = true; receipt.save(state);
++    }
++    if (!record.historyDone) {
++      receipt.check();
++      const history = await memory.db.getHistory(record.id);
++      const already = history.some((h) => (h.action || h.event) === 'ADD' && (h.newValue ?? h.new_value) === record.text);
++      if (!already) await memory.db.addHistory(record.id, null, record.text, 'ADD', record.payload.createdAt);
++      receipt.check(); record.historyDone = true; receipt.save(state);
++    }
++  }
++  state.done = true;
++  state.records = state.records.map(({ id, text }) => ({ id, text })); // Replay receipts need IDs/text, not permanent embeddings.
++  receipt.save(state);
++  return state.records.map((r) => ({ id: r.id, memory: r.text, metadata: { event: 'ADD' } }));
++}

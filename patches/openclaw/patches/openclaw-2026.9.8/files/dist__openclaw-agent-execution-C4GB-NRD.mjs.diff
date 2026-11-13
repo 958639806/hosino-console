@@ -1,0 +1,186 @@
+diff -ruN a/dist/openclaw-agent-execution-C4GB-NRD.mjs b/dist/openclaw-agent-execution-C4GB-NRD.mjs
+--- a/dist/openclaw-agent-execution-C4GB-NRD.mjs	2026-11-13 19:09:04.149025144 +0800
++++ b/dist/openclaw-agent-execution-C4GB-NRD.mjs	2026-11-13 19:09:04.149025144 +0800
+@@ -1,3 +1,4 @@
++import { beginQqWorkerPrepareSpan, endQqWorkerPrepareSpan, noteQqWorkerPrepareCount, incrementQqWorkerPrepareCount, bindQqWorkerPrepareObserver, markQqWorkerPrepareJob, observeQqWorkerPrepareCacheEnv } from "./qq-host-latency-trace.mjs";
+ import { i as resolveGlobalSingleton } from "./global-singleton-BfHBYj6Y.mjs";
+ import { c as isRecord } from "./record-coerce-TIsquoVR.mjs";
+ import { t as formatErrorMessage } from "./errors-YPvSaqwO.mjs";
+@@ -200,10 +201,11 @@
+ 			}
+ 		})(operation);
+ 	};
+-	const open = (source, assertCallerCurrent, createIfMissing = false, signal) => {
++	const open = (source, assertCallerCurrent, createIfMissing = false, signal, qqWorkerPrepareObserver) => {
+ 		assertCurrent();
+ 		source.assertCurrent();
+ 		assertCallerCurrent?.();
++		noteQqWorkerPrepareCount(qqWorkerPrepareObserver, "openingPromiseReused", opening ? 1 : 0);
+ 		opening ??= (async () => {
+ 			const registration = createIfMissing ? captureOpenClawAgentDatabaseRegistration({
+ 				agentId,
+@@ -219,12 +221,15 @@
+ 					signal?.throwIfAborted();
+ 				};
+ 				const createAdmission = admission(source, registration, assertCallerCurrent);
+-				return await openAgentDatabaseSqliteWorkerStore({
++				const qqStoreOpenOptions = {
+ 					moduleUrl: resolveRuntimeWorkerUrl(runtimeProcessEntrypoints.agentDatabaseExecution),
+ 					databasePath: pathname,
+ 					input,
+ 					existingOnly: !createIfMissing
+-				}, {
++				};
++				bindQqWorkerPrepareObserver(qqStoreOpenOptions, qqWorkerPrepareObserver);
++				const qqStoreOpenSpan = beginQqWorkerPrepareSpan(qqWorkerPrepareObserver, "prepare_store_open");
++				const qqOpenedStore = await openAgentDatabaseSqliteWorkerStore(qqStoreOpenOptions, {
+ 					stateContext: context,
+ 					stateDatabasePath: context.admission.databasePath,
+ 					assertCurrent: assertOpening,
+@@ -235,8 +240,12 @@
+ 						readCloseReceipt = readReceipt;
+ 					}
+ 				});
++				endQqWorkerPrepareSpan(qqWorkerPrepareObserver, qqStoreOpenSpan);
++				return qqOpenedStore;
+ 			};
++			const qqRegistrationOpenSpan = beginQqWorkerPrepareSpan(qqWorkerPrepareObserver, "prepare_registration_open");
+ 			const store = registration ? await settleAgentRegistration(registration, openStore) : await openStore();
++			endQqWorkerPrepareSpan(qqWorkerPrepareObserver, qqRegistrationOpenSpan);
+ 			if (!store) return;
+ 			openedStore = store;
+ 			try {
+@@ -257,18 +266,22 @@
+ 		const attempt = opening;
+ 		return attempt.then((store) => {
+ 			if (!store && opening === attempt) opening = void 0;
+-			if (!store && createIfMissing) return open(source, assertCallerCurrent, true, signal);
++			if (!store && createIfMissing) return open(source, assertCallerCurrent, true, signal, qqWorkerPrepareObserver);
+ 			return store;
+ 		});
+ 	};
+-	async function run(source, operation, assertCallerCurrent, createIfMissing = false, signal) {
++	async function run(source, operation, assertCallerCurrent, createIfMissing = false, signal, qqWorkerPrepareObserver) {
+ 		const assertOperationCurrent = () => {
+ 			assertCurrent();
+ 			source.assertCurrent();
+ 			assertCallerCurrent?.();
+ 			signal?.throwIfAborted();
+ 		};
+-		const store = openedStore ?? await open(source, assertCallerCurrent, createIfMissing, signal);
++		noteQqWorkerPrepareCount(qqWorkerPrepareObserver, "openedStoreReused", openedStore ? 1 : 0);
++		noteQqWorkerPrepareCount(qqWorkerPrepareObserver, "nativeIdentityReused", nativeIdentity ? 1 : 0);
++		const qqNativeOpenSpan = !openedStore ? beginQqWorkerPrepareSpan(qqWorkerPrepareObserver, "prepare_native_open") : null;
++		const store = openedStore ?? await open(source, assertCallerCurrent, createIfMissing, signal, qqWorkerPrepareObserver);
++		endQqWorkerPrepareSpan(qqWorkerPrepareObserver, qqNativeOpenSpan);
+ 		assertOperationCurrent();
+ 		if (!store) return;
+ 		if (!nativeIdentity) {
+@@ -278,15 +291,19 @@
+ 				admission: context.admission,
+ 				onRegistryChange: source.onRegistryChange
+ 			});
++			const qqWriteRegistrationSpan = beginQqWorkerPrepareSpan(qqWorkerPrepareObserver, "prepare_write_registration");
+ 			await settleAgentRegistration(registration, async () => {
+ 				const createAdmission = admission(source, registration, assertCallerCurrent);
++				const qqWriteExecuteSpan = beginQqWorkerPrepareSpan(qqWorkerPrepareObserver, "prepare_write_execute");
+ 				await runSqliteWorkerStoreOperation(store, (scope) => scope.execute({
+ 					type: "database.prepareWrite",
+ 					input: void 0
+ 				}, { signal }), void 0, assertOperationCurrent, createAdmission);
++				endQqWorkerPrepareSpan(qqWorkerPrepareObserver, qqWriteExecuteSpan);
+ 				assertCurrent();
+ 				source.assertCurrent();
+ 			});
++			endQqWorkerPrepareSpan(qqWorkerPrepareObserver, qqWriteRegistrationSpan);
+ 		}
+ 		if (quickCheckPending) {
+ 			quickCheckPending = false;
+@@ -477,33 +494,48 @@
+ 		}).catch(() => void 0);
+ 		return result;
+ 	};
+-	async function run(source, operation, assertCallerCurrent, expectedIdentity, retireNativeOnFailure = false, createIfMissing = false, creatingTarget, signal) {
++	async function run(source, operation, assertCallerCurrent, expectedIdentity, retireNativeOnFailure = false, createIfMissing = false, creatingTarget, signal, qqWorkerPrepareObserver) {
+ 		const pending = cache.pending.get(pathname);
++		noteQqWorkerPrepareCount(qqWorkerPrepareObserver, "pendingOpenerSeen", pending ? 1 : 0);
++		noteQqWorkerPrepareCount(qqWorkerPrepareObserver, "nativeClosingSeen", nativeClosing ? 1 : 0);
++		noteQqWorkerPrepareCount(qqWorkerPrepareObserver, "cleanupRetrySeen", cleanupFailure ? 1 : 0);
++		noteQqWorkerPrepareCount(qqWorkerPrepareObserver, "idleOwnerCloseCount", 0);
+ 		if (pending) {
+ 			if (creatingTarget && !fileIdentity) throw new Error("Agent creation cannot adopt another pending opener");
+ 			if (pending.agentId !== agentId) throw new Error(`Agent database ${pathname} is opening for ${pending.agentId}`);
++			const qqPendingOpenerSpan = beginQqWorkerPrepareSpan(qqWorkerPrepareObserver, "prepare_pending_opener");
+ 			await pending.promise;
++			endQqWorkerPrepareSpan(qqWorkerPrepareObserver, qqPendingOpenerSpan);
+ 			pending.controller.signal.throwIfAborted();
+ 			assertCallerCurrent();
+ 		}
+ 		if (nativeClosing) {
++			const qqNativeClosingSpan = beginQqWorkerPrepareSpan(qqWorkerPrepareObserver, "prepare_native_closing");
+ 			await nativeClosing;
++			endQqWorkerPrepareSpan(qqWorkerPrepareObserver, qqNativeClosingSpan);
+ 			assertCallerCurrent();
+ 		}
+ 		if (cleanupFailure) {
++			const qqCleanupRetrySpan = beginQqWorkerPrepareSpan(qqWorkerPrepareObserver, "prepare_cleanup_retry");
+ 			await closeNative();
++			endQqWorkerPrepareSpan(qqWorkerPrepareObserver, qqCleanupRetrySpan);
+ 			assertCurrent();
+ 			source.assertCurrent();
+ 			assertCallerCurrent();
+ 		}
++		let qqGenerationCreated = false;
+ 		if (!generation) {
+ 			for (let idle = executionState.idle; idle && idle !== owner; idle = executionState.idle) {
++				incrementQqWorkerPrepareCount(qqWorkerPrepareObserver, "idleOwnerCloseCount");
++				const qqIdleCloseSpan = beginQqWorkerPrepareSpan(qqWorkerPrepareObserver, "prepare_idle_owner_close");
+ 				await idle.closeIdle();
++				endQqWorkerPrepareSpan(qqWorkerPrepareObserver, qqIdleCloseSpan);
+ 				assertCurrent();
+ 				source.assertCurrent();
+ 				assertCallerCurrent();
+ 			}
+ 			if (!generation) {
++				const qqGenerationCreateSpan = beginQqWorkerPrepareSpan(qqWorkerPrepareObserver, "prepare_generation_create");
+ 				const created = createAgentDatabaseNativeGeneration(agentId, identity.canonicalPath, context, assertCurrent, () => {
+ 					if (executions.get(pathname) !== owner || generation !== created || !nativeClosing) throw new Error("Agent cleanup no longer owns its original execution reference");
+ 				}, expectedIdentity ?? fileIdentity, (received) => {
+@@ -511,11 +543,16 @@
+ 					fileIdentity ??= Object.freeze({ ...received });
+ 				}, fileIdentity ? void 0 : creatingTarget);
+ 				generation = created;
++				qqGenerationCreated = true;
++				endQqWorkerPrepareSpan(qqWorkerPrepareObserver, qqGenerationCreateSpan);
+ 			}
+ 		}
++		noteQqWorkerPrepareCount(qqWorkerPrepareObserver, "generationReused", qqGenerationCreated ? 0 : 1);
+ 		const current = generation;
+ 		try {
+-			const result = await current.run(source, operation, assertCallerCurrent, createIfMissing, signal);
++			const qqNativeRunSpan = beginQqWorkerPrepareSpan(qqWorkerPrepareObserver, "prepare_native_run");
++			const result = await current.run(source, operation, assertCallerCurrent, createIfMissing, signal, qqWorkerPrepareObserver);
++			endQqWorkerPrepareSpan(qqWorkerPrepareObserver, qqNativeRunSpan);
+ 			if (generation === current && current.failed()) try {
+ 				await owner.close();
+ 			} catch (error) {
+@@ -599,13 +636,16 @@
+ 						}
+ 					};
+ 				},
+-				async prepare(source, signal) {
++				async prepare(source, signal, qqWorkerPrepareObserver) {
+ 					assertBorrowed();
+ 					assertCreationReference(true);
+-					const result = run(source, async () => void 0, (nativeIdentity) => {
++					const result = run(source, async () => {
++						const qqCallbackSpan = beginQqWorkerPrepareSpan(qqWorkerPrepareObserver, "prepare_store_callback");
++						endQqWorkerPrepareSpan(qqWorkerPrepareObserver, qqCallbackSpan);
++					}, (nativeIdentity) => {
+ 						assertReferenceCurrent(nativeIdentity);
+ 						assertCreationReference(true);
+-					}, expectedIdentity, false, true, creatingTarget, signal);
++					}, expectedIdentity, false, true, creatingTarget, signal, qqWorkerPrepareObserver);
+ 					pending.add(result);
+ 					result.finally(() => pending.delete(result)).catch(() => void 0);
+ 					await result;

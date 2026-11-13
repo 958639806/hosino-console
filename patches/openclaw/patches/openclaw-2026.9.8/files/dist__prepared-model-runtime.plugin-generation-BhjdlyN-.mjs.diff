@@ -1,0 +1,36 @@
+diff -ruN a/dist/prepared-model-runtime.plugin-generation-BhjdlyN-.mjs b/dist/prepared-model-runtime.plugin-generation-BhjdlyN-.mjs
+--- a/dist/prepared-model-runtime.plugin-generation-BhjdlyN-.mjs	2026-11-13 19:09:04.825059272 +0800
++++ b/dist/prepared-model-runtime.plugin-generation-BhjdlyN-.mjs	2026-11-13 19:09:04.825059272 +0800
+@@ -1849,12 +1849,14 @@
+ const derivedGenerationBases = /* @__PURE__ */ new WeakMap();
+ /** Borrowing may narrow a prepared selection, but cannot acquire a different plugin owner. */
+ function preparedPluginGenerationSupportsSelections(generation, input) {
++	if (generation.runtimePluginPurpose !== input.runtimePluginPurpose) return false;
+ 	if (!input.runtimePluginSelections) return true;
+ 	const registry = generation.pluginRegistry;
+ 	const plan = resolveAgentRuntimePluginLoadPlan({
+ 		config: input.config,
+ 		workspaceDir: generation.pluginMetadataSnapshot.workspaceDir ?? input.workspaceDir ?? process.cwd(),
+ 		selections: input.runtimePluginSelections,
++		...input.runtimePluginPurpose ? { purpose: input.runtimePluginPurpose } : {},
+ 		metadataSnapshot: generation.pluginMetadataSnapshot
+ 	});
+ 	return registry !== void 0 && (plan.pluginIds ?? []).every((id) => registry.plugins.some((plugin) => plugin.id === id && (plugin.status === "error" || plugin.status === "disabled")) || registryContainsRuntimePluginIds(registry, [id]));
+@@ -1863,7 +1865,9 @@
+ 	return generation === base || generation !== void 0 && derivedGenerationBases.get(generation) === base;
+ }
+ function createPreparedPluginGeneration(params) {
++	if (params.runtimePluginPurpose !== void 0 && params.runtimePluginPurpose !== "simple-completion") throw new Error("Unsupported prepared plugin generation purpose");
+ 	const reusable = params.reusablePluginGeneration;
++	if (reusable && reusable.runtimePluginPurpose !== params.runtimePluginPurpose) throw new Error("Prepared plugin generation purpose mismatch");
+ 	if (reusable) {
+ 		if (params.pluginMetadataSnapshot === reusable.pluginMetadataSnapshot && params.runtimePluginRegistry === reusable.pluginRegistry) return reusable;
+ 		const derived = Object.freeze({
+@@ -1880,6 +1884,7 @@
+ 		return derived;
+ 	}
+ 	const generation = Object.freeze({
++		...params.runtimePluginPurpose ? { runtimePluginPurpose: params.runtimePluginPurpose } : {},
+ 		pluginMetadataSnapshot: params.pluginMetadataSnapshot,
+ 		inlineProviderModels: Object.freeze([...params.inlineProviderModels]),
+ 		configuredCatalogEntries: Object.freeze([...params.configuredCatalogEntries]),

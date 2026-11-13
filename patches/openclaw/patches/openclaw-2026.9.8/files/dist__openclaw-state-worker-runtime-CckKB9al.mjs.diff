@@ -1,0 +1,66 @@
+diff -ruN a/dist/openclaw-state-worker-runtime-CckKB9al.mjs b/dist/openclaw-state-worker-runtime-CckKB9al.mjs
+--- a/dist/openclaw-state-worker-runtime-CckKB9al.mjs	2026-11-13 19:09:04.153025346 +0800
++++ b/dist/openclaw-state-worker-runtime-CckKB9al.mjs	2026-11-13 19:09:04.157025548 +0800
+@@ -158,6 +158,7 @@
+ import { isDeepStrictEqual } from "node:util";
+ import { createHash, randomBytes, randomUUID } from "node:crypto";
+ import { MessageChannel, receiveMessageOnPort } from "node:worker_threads";
++import { isPlacementTurnClaimCommand, executePlacementTurnClaimCommand } from "./placement-turn-claims.worker-leaf-20261105.mjs";
+ //#region src/acp/runtime/session-meta-source.worker.ts
+ /** Reuse the metadata writer's exact physical-source and lifecycle admission. */
+ function readAcpSessionSourceInWorker(input, phase) {
+@@ -2046,54 +2047,6 @@
+ 	}, { database }, { operationLabel: "workerPlacements.startDispatch" });
+ }
+ //#endregion
+-//#region src/gateway/worker-environments/placement-turn-claims.worker-contract.ts
+-function isPlacementTurnClaimCommand(command) {
+-	return command.type === "placementTurns.claim" || command.type === "placementTurns.release" || command.type === "placementTurns.releaseIfOwned" || command.type === "placementTurns.recoverWorkspace" || command.type === "placementTurns.handoffRuntimeRefreshResult";
+-}
+-//#endregion
+-//#region src/gateway/worker-environments/placement-turn-claims.worker.ts
+-function executePlacementTurnClaimCommand(command, database) {
+-	return runOpenClawStateWriteTransaction(({ db }) => {
+-		requestSqliteWorkerOperationAdmission({
+-			stage: "transaction",
+-			facts: void 0
+-		});
+-		const runtime = {
+-			path: database.path,
+-			instanceId: command.type === "placementTurns.recoverWorkspace" || command.type === "placementTurns.handoffRuntimeRefreshResult" ? command.input.gatewayInstanceId : "",
+-			now: () => command.input.nowMs ?? Date.now(),
+-			read: () => db,
+-			write: (operation) => operation(db)
+-		};
+-		const claims = createPlacementTurnClaimOps(runtime);
+-		let receipt;
+-		if (command.type === "placementTurns.claim") {
+-			const claim = claims.claimTurn(command.input.claim);
+-			receipt = {
+-				claim,
+-				placement: getRequired(db, claim.sessionId)
+-			};
+-		} else if (command.type === "placementTurns.recoverWorkspace") {
+-			const results = createPlacementWorkspaceResultOps(runtime);
+-			results.markWorkspaceResultPending(command.input.claim);
+-			results.handoffWorkspaceResultRecovery(command.input.claim);
+-			receipt = { placement: getRequired(db, command.input.claim.sessionId) };
+-		} else if (command.type === "placementTurns.handoffRuntimeRefreshResult") {
+-			const placement = getRequired(db, command.input.claim.sessionId);
+-			if (placement.state !== "active" || placement.generation !== command.input.expectedGeneration || command.input.claim.owner.kind !== "worker") throw new Error("Worker runtime refresh lost its workspace result owner");
+-			createPlacementWorkspaceResultOps(runtime).handoffWorkspaceResultRecovery(command.input.claim);
+-			receipt = { placement };
+-		} else if (command.type === "placementTurns.releaseIfOwned" && !claims.validateTurnClaim(command.input.claim)) receipt = {};
+-		else receipt = { placement: claims.releaseTurn(command.input.claim) };
+-		requestSqliteWorkerOperationAdmission({
+-			stage: "commit",
+-			facts: receipt
+-		});
+-		deferSqliteWorkerCommitReceipt(db, receipt);
+-		return receipt;
+-	}, { database }, { operationLabel: command.type });
+-}
+-//#endregion
+ //#region src/gateway/worker-environments/store-worker-contract.ts
+ function isWorkerEnvironmentCommand(command) {
+ 	return command.type.startsWith("workerEnvironments.");

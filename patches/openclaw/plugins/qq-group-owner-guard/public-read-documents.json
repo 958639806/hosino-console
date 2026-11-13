@@ -1,0 +1,62 @@
+{
+  "schema": "qq-public-read-documents-v1",
+  "documents": [
+    {
+      "name": "grok-video-generate",
+      "path": "__HS_OPENCLAW_HOME__/workspace/skills/grok-video-generate/SKILL.md",
+      "sha256": "99d9c57639017303abb46053f29c69486219ea9ddd345181f40510c360ce1fef",
+      "credentialScan": "pass",
+      "source": "operator-approved ordinary media/search documentation"
+    },
+    {
+      "name": "image-text-replate",
+      "path": "__HS_OPENCLAW_HOME__/workspace/skills/image-text-replate/SKILL.md",
+      "sha256": "740873c27db69083830a7f6db13bced0c20dcf5d1b71246ebdb6eafc312f1cc8",
+      "credentialScan": "pass",
+      "source": "operator-approved ordinary media/search documentation"
+    },
+    {
+      "name": "gifgrep",
+      "path": "__HS_OPENCLAW_PKG__/skills/gifgrep/SKILL.md",
+      "sha256": "ac3981d030c96e79100328fb4cf84a317cecaef1c4e186d0acca21b9aef0dbe5",
+      "credentialScan": "pass",
+      "source": "operator-approved ordinary media/search documentation"
+    },
+    {
+      "name": "openai-whisper-api",
+      "path": "__HS_OPENCLAW_PKG__/skills/openai-whisper-api/SKILL.md",
+      "sha256": "afff70c706a9bae250b046b741e9930340ca87cc1689a82d4415dd4d6b45bfa1",
+      "credentialScan": "pass",
+      "source": "operator-approved ordinary media/search documentation"
+    },
+    {
+      "name": "weather",
+      "path": "__HS_OPENCLAW_PKG__/skills/weather/SKILL.md",
+      "sha256": "62ab4821aa873949d1c1091836be1659a42b32caadce4bd145f5505a1ceaeec1",
+      "credentialScan": "pass",
+      "source": "operator-approved ordinary media/search documentation"
+    },
+    {
+      "name": "meme-maker",
+      "path": "__HS_OPENCLAW_PKG__/skills/meme-maker/SKILL.md",
+      "sha256": "682db7cba34a3d3ca791f7cccaee9488810c731d6622d8886a9bcca77c59d2f3",
+      "credentialScan": "pass",
+      "source": "operator-approved ordinary media/search documentation"
+    },
+    {
+      "name": "openai-whisper",
+      "path": "__HS_OPENCLAW_PKG__/skills/openai-whisper/SKILL.md",
+      "sha256": "802e31d7310316fc25a5ec4fbe29308a0897c039cd2ae897f59fc25128ab4644",
+      "credentialScan": "pass",
+      "source": "operator-approved ordinary media/search documentation"
+    },
+    {
+      "name": "sherpa-onnx-tts",
+      "path": "__HS_OPENCLAW_PKG__/skills/sherpa-onnx-tts/SKILL.md",
+      "sha256": "f3a4d30d0e7e14e76dcb5245e197e3dcf490e3f9e8298466e86e4f33847f532d",
+      "credentialScan": "pass",
+      "source": "operator-approved ordinary media/search documentation"
+    }
+  ],
+  "blocked": []
+}

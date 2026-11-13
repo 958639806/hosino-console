@@ -1,0 +1,557 @@
+diff -ruN a/dist/qq-host-latency-trace.mjs b/dist/qq-host-latency-trace.mjs
+--- a/dist/qq-host-latency-trace.mjs	1970-01-01 07:30:00.000000000 +0730
++++ b/dist/qq-host-latency-trace.mjs	2026-11-13 19:09:04.833059675 +0800
+@@ -0,0 +1,553 @@
++// QQ-LATENCY-TRACE host diagnostics. No authority, body access, disk I/O, or async work.
++import { qqLatencyTraceHash, qqLatencyTraceNow } from './qq-latency-trace.mjs';
++import { performance } from 'node:perf_hooks';
++import { createHash as qqWorkerTransportHash } from 'node:crypto';
++
++const GROUPS = new Map([
++  ['agent:main:qqbot:group:__HS_GROUP_OLD_OPENID__', 'old'],
++  ['agent:main:qqbot:group:__HS_GROUP_NEW_OPENID__', 'new']
++]);
++const LAYERS = new Set(['dispatch', 'hot_path', 'resolver', 'agent', 'embedded']);
++const POINTS = new Set([
++  'core_dispatch_enter', 'hot_path_enter', 'resolver_enter', 'agent_loop_enter',
++  'embedded_enter', 'session_target_ready', 'session_lane_enqueue',
++  'session_lane_enter', 'global_lane_enqueue', 'global_lane_enter',
++  'sdk_core_dispatch', 'writer_claim_begin', 'writer_claim_ready',
++  'placement_admission_begin', 'placement_admission_ready',
++  'prepared_runtime_begin', 'prepared_runtime_ready', 'runtime_prepare_begin',
++  'runtime_prepare_ready', 'session_prompt_state_begin', 'session_prompt_state_ready',
++  'context_engine_admit_begin', 'context_engine_admit_ready',
++  'placement_projection_begin', 'placement_projection_ready',
++  'placement_claim_begin', 'placement_claim_ready',
++  'placement_authority_begin', 'placement_authority_ready',
++  'runner_entered', 'workspace', 'runtime_plugins', 'before_agent_reply',
++  'model_resolution', 'auth', 'context_engine', 'attempt_dispatch',
++  'context_assembled', 'turn_accepted', 'process_spawned', 'model_call_started',
++  'tool_execution_started', 'assistant_output_started'
++]);
++const STAGES = new Set([
++  'reply.reply_dispatch_hooks', 'reply.before_dispatch_hooks', 'reply.admit_dispatch',
++  'reply.admit_command_resolution', 'reply.run_reply_resolver',
++  'reply.load_prepared_dispatch_runtime', 'reply.load_runtime_plugin_registry_handle',
++  'reply.load_runtime_plugins', 'reply.stage_remote_media_for_dispatch',
++  'reply.load_reply_resolver', 'reply.wait_admission_ticket', 'reply.admit_pre_dispatch',
++  'reply.resolve_fast_test_bootstrap', 'reply.finalize_context',
++  'reply.resolve_explicit_steer_target', 'reply.resolve_agent_scope',
++  'reply.resolve_trace_context', 'reply.resolve_skill_filter', 'reply.resolve_default_model',
++  'reply.resolve_workspace_agent_dir', 'reply.create_typing_controller',
++  'reply.native_slash_command_fast_path', 'reply.resolve_acp_workspace_provisioning',
++  'reply.ensure_workspace', 'reply.stage_remote_media_pre_understanding',
++  'reply.resolve_session_preprocessing_state', 'reply.apply_media_understanding',
++  'reply.apply_link_understanding', 'reply.init_session_state',
++  'reply.capture_session_diff_baseline', 'reply.resolve_directives',
++  'reply.prepare_status_thinking_catalog', 'reply.handle_inline_actions',
++  'reply.stage_media', 'reply.run_prepared_reply', 'reply_media_context',
++  'current_turn_images', 'model_fallback', 'fallback_prepare_harness',
++  'fallback_resolve_runtime', 'embedded_run', 'cli_run'
++]);
++const minted = new WeakSet();
++const HOST_TRACE_APIS = new WeakSet();
++const validHash = value => typeof value === 'string' && /^[a-f0-9]{24}$/.test(value);
++const finiteMs = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= 604800000;
++
++function createTrace(context, layer, log, sdkBoundary) {
++  try {
++    if (!minted.has(context) || !LAYERS.has(layer) || typeof log?.info !== 'function') return null;
++    const start = qqLatencyTraceNow();
++    if (start === null) return null;
++    let emitted = 0;
++    let previousPoint;
++    function emit(stage, span, boundaryMonoMs) {
++      try {
++        if (emitted >= 128 || !stage || !POINTS.has(stage) && !STAGES.has(stage)) return;
++        const atMonoMs = boundaryMonoMs ?? qqLatencyTraceNow();
++        if (atMonoMs === null) return;
++        // Only fixed enums, hashes and numbers reach the logger. Never spread caller objects.
++        const event = {
++          schema: 'qq-latency-trace-v1', layer, stage, groupAlias: context.groupAlias,
++          runHash: context.runHash, scopeHash: context.scopeHash, sourceHash: context.sourceHash,
++          atMonoMs: Math.round(atMonoMs * 1000) / 1000,
++          elapsedMs: Math.round(Math.max(0, atMonoMs - start) * 1000) / 1000,
++          timingKind: span ? 'legacy_stage_span' : 'monotonic_point'
++        };
++        if (span) {
++          if (!finiteMs(span.durationMs) || !finiteMs(span.elapsedMs)) return;
++          event.durationMs = span.durationMs;
++          event.stageElapsedMs = span.elapsedMs;
++          event.spanClock = 'Date.now';
++        }
++        emitted++;
++        log.info('[qq-latency-trace] ' + JSON.stringify(event));
++      } catch {}
++    }
++    if (layer === 'dispatch' && Object.isFrozen(sdkBoundary) && sdkBoundary?.schema === 'qq-latency-sdk-boundary-v1' &&
++        sdkBoundary.timeOrigin === performance.timeOrigin && typeof sdkBoundary.atMonoMs === 'number' &&
++        Number.isFinite(sdkBoundary.atMonoMs) && sdkBoundary.atMonoMs >= 0 &&
++        sdkBoundary.atMonoMs <= start && start - sdkBoundary.atMonoMs <= 300000)
++      emit('sdk_core_dispatch', undefined, sdkBoundary.atMonoMs);
++    const api = Object.freeze({
++      context,
++      admission() { try { return createAdmissionTrace(context, log); } catch { return null; } },
++      point(stage) {
++        try {
++          if (!POINTS.has(stage) || previousPoint === stage) return;
++          previousPoint = stage;
++          emit(stage);
++        } catch {}
++      },
++      onStage(span) { try { if (STAGES.has(span?.name)) emit(span.name, span); } catch {} }
++    });
++    HOST_TRACE_APIS.add(api);
++    return api;
++  } catch { return null; }
++}
++
++export function createQqHostLatencyTrace(ctx, options, layer, log, runId) {
++  try {
++    if (process.env.OPENCLAW_QQ_PREPARATION_PROFILE !== '1' || !GROUPS.has(ctx?.SessionKey) ||
++        options?.isHeartbeat || ctx.InternalTurnSource != null || ctx.InputProvenance?.kind === 'internal_system') return null;
++    const channels = [ctx.Provider, ctx.Surface, ctx.OriginatingChannel].filter(value => value != null);
++    if (!channels.length || !channels.every(value => typeof value === 'string' && value.trim().toLowerCase() === 'qqbot')) return null;
++    const account = typeof ctx.AccountId === 'string' && ctx.AccountId.trim() ? ctx.AccountId.trim().toLowerCase() : 'default';
++    const currentMessageId = ctx.MessageSidFull ?? ctx.MessageSid;
++    const sourceHash = qqLatencyTraceHash('source', ['qqbot', account, ctx.SessionKey, currentMessageId]);
++    const scopeHash = qqLatencyTraceHash('scope', ['qqbot', account, ctx.SessionKey]);
++    const runHash = runId == null ? null : qqLatencyTraceHash('run', [runId]);
++    if (!validHash(sourceHash) || !validHash(scopeHash) || runId != null && !validHash(runHash)) return null;
++    const context = Object.freeze({ schema: 'qq-latency-trace-v1', groupAlias: GROUPS.get(ctx.SessionKey), runHash, scopeHash, sourceHash });
++    minted.add(context);
++    return createTrace(context, layer, log, options?.qqLatencyTraceSdkBoundary);
++  } catch { return null; }
++}
++
++// Only the in-process capsule minted above is accepted. It grants no execution authority.
++export function qqHostLatencyTraceFromContext(context, layer, log) {
++  return createTrace(context, layer, log);
++}
++
++// Bounded invocation-local diagnostics. No authority, model body or await.
++const ADMISSION_APIS = new WeakSet();
++const ADMISSION_NAMES = new Set(['foreground_maintenance','lifecycle_admission','lifecycle_queue','initial_assert_allowed','store_writer_queue','revalidate_allowed','database_entry','store_target_discovery','worker_write_queue','owner_refresh','worker_prepare','worker_execute','owner_revalidate','database_claim_release']);
++const ADMISSION_COUNTS = new Set(['foregroundOwners','foregroundPreemptibleOwners','foregroundRunningOwners','workerPrepareObserverCount','workerPrepareObserverDroppedCount']);
++let admissionSequence = 0;
++function createAdmissionTrace(context, log) {
++  try {
++    if (!minted.has(context) || admissionSequence >= Number.MAX_SAFE_INTEGER) return null;
++    const operationHash = qqLatencyTraceHash('span', ['qq-admission', context.sourceHash, String(++admissionSequence)]);
++    if (!validHash(operationHash)) return null;
++    const beganMonoMs = qqLatencyTraceNow();
++    const spans = [], tokens = new WeakMap(), workerPrepareParents = new WeakSet(), counts = Object.fromEntries([...ADMISSION_COUNTS].map(k=>[k,null]));
++    counts.workerPrepareObserverCount=0; counts.workerPrepareObserverDroppedCount=0;
++    let closed=false, droppedSpanCount=0;
++    const ms=v=>typeof v==='number'&&Number.isFinite(v)&&v>=0?Math.round(v*1000)/1000:null;
++    const api={
++      workerPrepare(parentToken) { try {
++        const parent=parentToken&&tokens.get(parentToken);
++        if(closed||!parent||parent.name!=='worker_prepare'||parent.endedMonoMs!==null)return null;
++        if(workerPrepareParents.has(parentToken)){counts.workerPrepareObserverDroppedCount=Math.min(65535,counts.workerPrepareObserverDroppedCount+1);return null;}
++        if(counts.workerPrepareObserverCount>=8){counts.workerPrepareObserverDroppedCount=Math.min(65535,counts.workerPrepareObserverDroppedCount+1);return null;}
++        workerPrepareParents.add(parentToken);
++        const prepareIndex=++counts.workerPrepareObserverCount;
++        return createWorkerPrepareTrace(context,log,operationHash,prepareIndex,parent.spanId,()=>!closed);
++      }catch{return null;} },
++      begin(name) { try {
++        if (closed || !ADMISSION_NAMES.has(name)) return null;
++        if (spans.length>=96) {droppedSpanCount=Math.min(65535,droppedSpanCount+1);return null;}
++        const token=Object.freeze({});
++        const span={spanId:spans.length+1,name,beganMonoMs:ms(qqLatencyTraceNow()),endedMonoMs:null,durationMs:null};
++        if (span.beganMonoMs===null) return null;
++        spans.push(span);tokens.set(token,span);return token;
++      } catch{return null;} },
++      end(token) { try {
++        const span=token&&tokens.get(token);
++        if(closed||!span||span.endedMonoMs!==null)return;
++        const ended=ms(qqLatencyTraceNow());if(ended===null||ended<span.beganMonoMs)return;
++        span.endedMonoMs=ended;span.durationMs=ms(ended-span.beganMonoMs);
++      }catch{} },
++      count(name,value) { try {if(!closed&&ADMISSION_COUNTS.has(name)&&Number.isInteger(value)&&value>=0)counts[name]=Math.min(65535,value);}catch{} },
++      close() { try {
++        if(closed)return;closed=true;
++        const endedMonoMs=ms(qqLatencyTraceNow());
++        if(endedMonoMs===null||beganMonoMs===null||endedMonoMs<beganMonoMs)return;
++        log.info('[qq-latency-trace] '+JSON.stringify({schema:'qq-latency-trace-v1',layer:'admission',stage:'admission_summary',groupAlias:context.groupAlias,runHash:context.runHash,scopeHash:context.scopeHash,sourceHash:context.sourceHash,operationHash,beganMonoMs:ms(beganMonoMs),endedMonoMs,durationMs:ms(endedMonoMs-beganMonoMs),spanCount:spans.length,unfinishedSpanCount:spans.filter(s=>s.endedMonoMs===null).length,droppedSpanCount,counts,spans}));
++      }catch{} }
++    };
++    ADMISSION_APIS.add(api);return Object.freeze(api);
++  }catch{return null;}
++}
++export function beginQqAdmissionSpan(trace,name) {try{return ADMISSION_APIS.has(trace)?trace.begin(name):null;}catch{return null;}}
++export function endQqAdmissionSpan(trace,token) {try{if(ADMISSION_APIS.has(trace))trace.end(token);}catch{}}
++export function noteQqAdmissionCount(trace,name,value) {try{if(ADMISSION_APIS.has(trace))trace.count(name,value);}catch{}}
++export function createQqAdmissionTrace(trace) {try{return HOST_TRACE_APIS.has(trace)?trace.admission():null;}catch{return null;}}
++export function closeQqAdmissionTrace(trace) {try{if(ADMISSION_APIS.has(trace))trace.close();}catch{}}
++
++// Invocation-local worker preparation diagnostics. No authority or wire fields.
++import { isProxy as qqWorkerPrepareIsProxy } from 'node:util/types';
++const WORKER_PREPARE_STATES = new WeakMap();
++const WORKER_PREPARE_BOUND = new WeakMap();
++const WORKER_PREPARE_JOB_POINTS = new WeakMap();
++const WORKER_PREPARE_NAMES = new Set(['prepare_pending_opener','prepare_native_closing','prepare_cleanup_retry','prepare_idle_owner_close','prepare_generation_create','prepare_native_run','prepare_native_open','prepare_store_open','prepare_registration_open','prepare_write_registration','prepare_write_execute','claim_terminal_failure','claim_owner_open','claim_native_operation','broker_input_queue','broker_open_admitted','broker_database_admission','broker_module_resolution','broker_actor_retirement_wait','broker_actor_close_wait','broker_slot_acquire','broker_slot_retirement_wait','broker_worker_construct','broker_open_job_queue','broker_open_job_setup','broker_open_post_to_reply','broker_open_reply_to_settle','broker_execute_job_queue','broker_execute_job_setup','broker_execute_post_to_reply','broker_execute_reply_to_settle','broker_admission_open_host','broker_admission_open_receive_to_admit','broker_admission_open_admit_to_grant','broker_admission_open_grant_to_terminal','broker_admission_prepare_host','broker_admission_prepare_receive_to_admit','broker_admission_prepare_admit_to_grant','broker_admission_prepare_grant_to_terminal','broker_admission_transaction_host','broker_admission_transaction_receive_to_admit','broker_admission_transaction_admit_to_grant','broker_admission_transaction_grant_to_terminal','broker_admission_commit_host','broker_admission_commit_receive_to_admit','broker_admission_commit_admit_to_grant','broker_admission_commit_grant_to_terminal','broker_opened_identity','broker_actor_opened_wait','broker_cleanup_after_open_failure','prepare_store_callback']);
++const WORKER_PREPARE_COUNTS = new Set(['generationReused','openedStoreReused','nativeIdentityReused','pendingOpenerSeen','nativeClosingSeen','cleanupRetrySeen','idleOwnerCloseCount','openingPromiseReused','brokerActorReused','brokerWorkerCreated','brokerSlotReused','brokerOpenPosted','brokerOpenReplySeen','brokerExecutePosted','brokerExecuteReplySeen','cacheEnvConfigured','cacheEnvDisabled','bindingCount','bindingRejectedCount']);
++const WORKER_PREPARE_FLAGS = new Set([...WORKER_PREPARE_COUNTS].filter(n=>!['idleOwnerCloseCount','bindingCount','bindingRejectedCount'].includes(n)));
++function workerPrepareState(target) {
++  try {
++    const observer = WORKER_PREPARE_STATES.has(target) ? target : WORKER_PREPARE_BOUND.get(target);
++    const state = observer && WORKER_PREPARE_STATES.get(observer);
++    return state && !state.closed && state.parentActive() ? state : null;
++  } catch { return null; }
++}
++function createWorkerPrepareTrace(context, log, operationHash, prepareIndex, parentAdmissionSpanId, parentActive) {
++  try {
++    const observer = Object.freeze({});
++    const counts = Object.fromEntries([...WORKER_PREPARE_COUNTS].map(n=>[n,null]));
++    counts.bindingCount = 0; counts.bindingRejectedCount = 0;
++    const state = { observer, context, log, operationHash, prepareIndex, parentAdmissionSpanId, parentActive,
++      beganMonoMs: qqLatencyTraceNow(), closed:false, counts, spans:[], tokens:new WeakMap(), targets:new Set(), droppedSpanCount:0, transportJobs:[] };
++    WORKER_PREPARE_STATES.set(observer,state);
++    return observer;
++  } catch { return null; }
++}
++export function createQqWorkerPrepareObserver(trace,parentToken) {
++  try { return ADMISSION_APIS.has(trace) ? trace.workerPrepare(parentToken) : null; } catch { return null; }
++}
++export function beginQqWorkerPrepareSpan(target,name) {
++  try {
++    const state=workerPrepareState(target);
++    if (!state || !WORKER_PREPARE_NAMES.has(name)) return null;
++    if (state.spans.length>=64) { state.droppedSpanCount=Math.min(65535,state.droppedSpanCount+1); return null; }
++    const now=qqLatencyTraceNow();
++    if (typeof now!=='number'||!Number.isFinite(now)||now<0) return null;
++    const token=Object.freeze({});
++    const span={spanId:state.spans.length+1,name,beganMonoMs:Math.round(now*1000)/1000,endedMonoMs:null,durationMs:null};
++    state.spans.push(span); state.tokens.set(token,span); return token;
++  } catch { return null; }
++}
++export function endQqWorkerPrepareSpan(target,token) {
++  try {
++    const state=workerPrepareState(target), span=state&&token&&state.tokens.get(token);
++    if(!span||span.endedMonoMs!==null)return;
++    const now=qqLatencyTraceNow();
++    if(typeof now!=='number'||!Number.isFinite(now)||now<span.beganMonoMs)return;
++    span.endedMonoMs=Math.round(now*1000)/1000;
++    span.durationMs=Math.round((span.endedMonoMs-span.beganMonoMs)*1000)/1000;
++  }catch{}
++}
++export function noteQqWorkerPrepareCount(target,name,value) {
++  try {
++    const state=workerPrepareState(target);
++    if(!state||!WORKER_PREPARE_COUNTS.has(name)||!Number.isInteger(value)||value<0||(WORKER_PREPARE_FLAGS.has(name)&&value>1))return;
++    state.counts[name]=Math.min(65535,value);
++  }catch{}
++}
++export function incrementQqWorkerPrepareCount(target,name) {
++  try {
++    const state=workerPrepareState(target);
++    if(!state||!['idleOwnerCloseCount'].includes(name))return;
++    state.counts[name]=Math.min(65535,(state.counts[name]??0)+1);
++  }catch{}
++}
++export function bindQqWorkerPrepareObserver(target,source) {
++  try {
++    const state=workerPrepareState(source);
++    if(!state||target===null||(typeof target!=='object'&&typeof target!=='function'))return;
++    const prior=WORKER_PREPARE_BOUND.get(target);
++    if(prior!==undefined){if(prior!==state.observer)state.counts.bindingRejectedCount=Math.min(65535,state.counts.bindingRejectedCount+1);return;}
++    if(state.targets.size>=64){state.counts.bindingRejectedCount=Math.min(65535,state.counts.bindingRejectedCount+1);return;}
++    WORKER_PREPARE_BOUND.set(target,state.observer);state.targets.add(target);state.counts.bindingCount++;
++  }catch{}
++}
++export function observeQqWorkerPrepareCacheEnv(target,env) {
++  try {
++    if(!workerPrepareState(target)||!env||typeof env!=='object'||qqWorkerPrepareIsProxy(env))return;
++    const prototype=Object.getPrototypeOf(env);
++    if(prototype!==Object.prototype&&prototype!==null)return;
++    const cache=Object.getOwnPropertyDescriptor(env,'NODE_COMPILE_CACHE');
++    const disabled=Object.getOwnPropertyDescriptor(env,'NODE_DISABLE_COMPILE_CACHE');
++    if(!cache||Object.prototype.hasOwnProperty.call(cache,'value'))noteQqWorkerPrepareCount(target,'cacheEnvConfigured',cache&&typeof cache.value==='string'&&cache.value.length>0?1:0);
++    if(!disabled||Object.prototype.hasOwnProperty.call(disabled,'value'))noteQqWorkerPrepareCount(target,'cacheEnvDisabled',disabled&&disabled.value!==void 0?1:0);
++  }catch{}
++}
++
++const QQ_WORKER_TRANSPORT_POINTS = new Set(["enqueued","dispatch","post_begin","posted","reply","reply_terminal","settle",
++  "open_receive","open_before_admit","open_grant","open_terminal","prepare_receive","prepare_before_admit","prepare_grant","prepare_terminal",
++  "transaction_receive","transaction_before_admit","transaction_grant","transaction_terminal","commit_receive","commit_before_admit","commit_grant","commit_terminal"]);
++function qqWorkerTransportPoint(points,name){
++ try{
++  const record=points?.transport;if(!record||!QQ_WORKER_TRANSPORT_POINTS.has(name)||record.seen.has(name))return;
++  if(record.points.length>=24){record.droppedPointCount=Math.min(65535,record.droppedPointCount+1);return;}
++  const at=Number(process.hrtime.bigint())/1e6;if(!Number.isFinite(at)||at<0)return;
++  const point={name,atMonoMs:Math.round(at*1000)/1000};
++  try{
++   if(name==="post_begin")record.eluStart=performance.eventLoopUtilization();
++   if(record.eluStart){
++    const elu=performance.eventLoopUtilization(record.eluStart);
++    if(["active","idle","utilization"].every(k=>typeof elu[k]==="number"&&Number.isFinite(elu[k])&&elu[k]>=0)){
++     point.eluActiveSincePostMs=Math.round(elu.active*1000)/1000;
++     point.eluIdleSincePostMs=Math.round(elu.idle*1000)/1000;
++     point.eluUtilizationSincePost=Math.round(elu.utilization*1e6)/1e6;
++    }
++   }
++  }catch{}
++  record.seen.add(name);record.points.push(point);
++ }catch{}
++}
++function qqWorkerTransportBind(state,points,request){
++ try{
++  const id=Object.getOwnPropertyDescriptor(request,"id");
++  if(!id||!Object.prototype.hasOwnProperty.call(id,"value")||!Number.isSafeInteger(id.value)||id.value<1||state.transportJobs.length>=8)return;
++  const record={requestHash:qqWorkerTransportHash("sha256").update("openclaw.sqlite.operation-observation.v1\0"+String(process.pid)+"\0"+String(id.value),"utf8").digest("hex"),
++    requestHashDomain:"openclaw.sqlite.operation-observation.v1",clockKind:"process.hrtime.bigint-monotonic-ms",pid:process.pid,points:[],seen:new Set(),droppedPointCount:0};
++  points.transport=record;state.transportJobs.push(record);
++ }catch{}
++}
++
++export function markQqWorkerPrepareJob(target,point) {
++  try {
++    const state=workerPrepareState(target);
++    if(!state)return;
++    let points=WORKER_PREPARE_JOB_POINTS.get(target);
++    if(point==='enqueued'){
++      if(points||qqWorkerPrepareIsProxy(target))return;
++      const request=Object.getOwnPropertyDescriptor(target,'request');
++      if(!request||!Object.prototype.hasOwnProperty.call(request,'value')||!request.value||qqWorkerPrepareIsProxy(request.value))return;
++      const type=Object.getOwnPropertyDescriptor(request.value,'type');
++      if(!type||!Object.prototype.hasOwnProperty.call(type,'value')||!['open','execute'].includes(type.value))return;
++      const kind=type.value, prefix=kind==='execute'?'broker_execute_':'broker_open_';
++      points={kind,prefix,queued:beginQqWorkerPrepareSpan(target,prefix+'job_queue')};
++      qqWorkerTransportBind(state,points,request.value);
++      WORKER_PREPARE_JOB_POINTS.set(target,points);
++      noteQqWorkerPrepareCount(target,kind==='execute'?'brokerExecutePosted':'brokerOpenPosted',0);
++      noteQqWorkerPrepareCount(target,kind==='execute'?'brokerExecuteReplySeen':'brokerOpenReplySeen',0);
++    }else if(points&&point==='dispatch'&&!points.dispatch){
++      points.dispatch=true;endQqWorkerPrepareSpan(target,points.queued);points.setup=beginQqWorkerPrepareSpan(target,points.prefix+'job_setup');
++    }else if(points&&point==='post_begin'&&!points.post){
++      points.post=true;endQqWorkerPrepareSpan(target,points.setup);points.roundtrip=beginQqWorkerPrepareSpan(target,points.prefix+'post_to_reply');
++    }else if(points&&point==='posted')noteQqWorkerPrepareCount(target,points.kind==='execute'?'brokerExecutePosted':'brokerOpenPosted',1);
++    else if(points&&!points.reply&&(points.kind==='open'&&point==='reply'||points.kind==='execute'&&point==='reply_terminal')){
++      points.reply=true;endQqWorkerPrepareSpan(target,points.roundtrip);points.settle=beginQqWorkerPrepareSpan(target,points.prefix+'reply_to_settle');
++      noteQqWorkerPrepareCount(target,points.kind==='execute'?'brokerExecuteReplySeen':'brokerOpenReplySeen',1);
++    }else if(points&&point==='settle')endQqWorkerPrepareSpan(target,points.settle);
++    if(points)qqWorkerTransportPoint(points,point);
++  }catch{}
++}
++// Host-local stages only; never contains a wire decision, grant callback, or facts.
++const WORKER_PREPARE_ADMISSION_POINTS = new WeakMap();
++export function createQqWorkerPrepareAdmissionObserver(target) {
++  try {
++    if (!workerPrepareState(target)) return;
++    return (key, stage, point) => {
++      try {
++        const state=workerPrepareState(target);
++        if(!state||!key||typeof key!=='object'||qqWorkerPrepareIsProxy(key)||!['open','prepare','transaction','commit'].includes(stage)||!['receive','before_admit','grant','terminal'].includes(point))return;
++        let points=WORKER_PREPARE_ADMISSION_POINTS.get(key);
++        if(point==='receive'){
++          if(points)return;
++          const index=(state.admissionSequence??0)+1;
++          if(index>64)return;
++          state.admissionSequence=index;
++          points={observer:state.observer,index,prefix:'broker_admission_'+stage+'_'};
++          WORKER_PREPARE_ADMISSION_POINTS.set(key,points);
++        }else if(!points||points.observer!==state.observer)return;
++        qqWorkerTransportPoint(WORKER_PREPARE_JOB_POINTS.get(target),stage+"_"+point);
++        const begin=phase=>{
++          const token=beginQqWorkerPrepareSpan(target,points.prefix+phase);
++          const span=token&&state.tokens.get(token);
++          if(span)span.admissionRequestIndex=points.index;
++          return token;
++        };
++        if(point==='receive'){
++          points.host=begin('host');points.receiveToAdmit=begin('receive_to_admit');
++        }else if(point==='before_admit'&&!points.admitted&&!points.terminal){
++          points.admitted=true;endQqWorkerPrepareSpan(target,points.receiveToAdmit);points.admitToGrant=begin('admit_to_grant');
++        }else if(point==='grant'&&!points.granted&&!points.terminal){
++          points.granted=true;endQqWorkerPrepareSpan(target,points.admitToGrant);points.grantToTerminal=begin('grant_to_terminal');
++        }else if(point==='terminal'&&!points.terminal){
++          points.terminal=true;endQqWorkerPrepareSpan(target,points.host);endQqWorkerPrepareSpan(target,points.grantToTerminal);
++        }
++      }catch{}
++    };
++  }catch{return;}
++}
++export function closeQqWorkerPrepareObserver(observer,outcome) {
++  let state;
++  try {
++    state=WORKER_PREPARE_STATES.get(observer);
++    if(!state||state.closed)return;
++    const active=state.parentActive();state.closed=true;
++    const ended=qqLatencyTraceNow(),began=state.beganMonoMs;
++    if(!active||!['ok','error'].includes(outcome)||!Number.isFinite(ended)||!Number.isFinite(began)||ended<began)return;
++    const ms=v=>Math.round(v*1000)/1000;
++    const context=state.context;
++    state.log.info('[qq-latency-trace] '+JSON.stringify({schema:'qq-latency-trace-v1',layer:'worker_prepare',stage:'worker_prepare_summary',
++      groupAlias:context.groupAlias,runHash:context.runHash,scopeHash:context.scopeHash,sourceHash:context.sourceHash,
++      operationHash:state.operationHash,prepareIndex:state.prepareIndex,parentAdmissionSpanId:state.parentAdmissionSpanId,
++      beganMonoMs:ms(began),endedMonoMs:ms(ended),durationMs:ms(ended-began),outcome,
++      spanCount:state.spans.length,unfinishedSpanCount:state.spans.filter(s=>s.endedMonoMs===null).length,
++      droppedSpanCount:state.droppedSpanCount,counts:state.counts,spans:state.spans,
++      transportJobs:state.transportJobs.map(({requestHash,requestHashDomain,clockKind,pid,points,droppedPointCount})=>({requestHash,requestHashDomain,clockKind,pid,points,droppedPointCount,missingPointsAreUnknown:true,postBeginIsBeforePostMessage:true,eluIsMainThreadLoopNotCpuProof:true}))}));
++  }catch{}finally{
++    if(state){state.closed=true;
++      for(const target of state.targets){if(WORKER_PREPARE_BOUND.get(target)===observer)WORKER_PREPARE_BOUND.delete(target);WORKER_PREPARE_JOB_POINTS.delete(target);}
++      state.targets.clear();
++    }
++  }
++}
++
++// QQ-CLAUDE-CORE-ROUTE v1. Observer only: no delivery, authority or history state.
++import { AsyncLocalStorage as QQCoreRouteAsyncLocalStorage } from 'node:async_hooks';
++import { createHash as qqCoreRouteCreateHash } from 'node:crypto';
++
++const QQ_CORE_ROUTE_GROUPS = new Map([
++  ['agent:main:qqbot:group:__HS_GROUP_NEW_OPENID__', 'new'],
++  ['agent:main:qqbot:group:__HS_GROUP_OLD_OPENID__', 'old']
++]);
++const QQ_CORE_ROUTE_POINTS = new Set(['sdk_core_boundary', 'buffered_dispatch_enter', 'core_dispatch_enter', 'config_dispatch_enter', 'hot_path_enter', 'done']);
++const QQ_CORE_ROUTE_STAGES = new Set([...STAGES,
++  'reply.gather_dispatch_request', 'reply.prepare_dispatch_delivery', 'reply.prepare_dispatch_operation_context',
++  'reply.prepare_dispatch_operation', 'reply.load_abort_runtime', 'reply.fast_abort_resolver'
++]);
++const QQ_CORE_ROUTE_STORAGE = new QQCoreRouteAsyncLocalStorage();
++const qqCoreRouteSafe = run => { try { return run(); } catch {} };
++const qqCoreRouteMs = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= Number.MAX_SAFE_INTEGER / 1000 ? Math.round(value * 1000) / 1000 : null;
++const qqCoreRouteId = value => typeof value === 'string' && value.length > 0 && value.length <= 512 && !/[\x00-\x1f]/.test(value);
++const qqCoreRouteHash = value => qqCoreRouteCreateHash('sha256').update('qq-claude-native-run-v1\0').update(value).digest('hex').slice(0, 24);
++
++function inspectQQCoreRoute(ctx, options) {
++  return qqCoreRouteSafe(() => {
++    const groupAlias = QQ_CORE_ROUTE_GROUPS.get(ctx?.SessionKey);
++    if (!groupAlias) return null;
++    const id = options?.runId;
++    const sourceId = ctx.MessageSidFull ?? ctx.MessageSid;
++    const sourceMatched = qqCoreRouteId(id) && qqCoreRouteId(sourceId) && sourceId === id;
++    const channels = [ctx.Provider, ctx.Surface, ctx.OriginatingChannel].filter(value => value != null);
++    const routeChannels = [ctx.Provider, ctx.OriginatingChannel].filter(value => value != null);
++    const isQQChannel = value => typeof value === 'string' && value.trim().toLowerCase() === 'qqbot';
++    const legacyGate = process.env.OPENCLAW_QQ_PREPARATION_PROFILE !== '1' ? 'profile_disabled'
++      : options?.isHeartbeat ? 'heartbeat'
++      : ctx.InternalTurnSource != null ? 'internal_turn'
++      : ctx.InputProvenance?.kind === 'internal_system' ? 'internal_provenance'
++      : !channels.length ? 'channel_missing'
++      : !channels.every(isQQChannel) ? 'channel_mismatch'
++      : 'eligible';
++    const boundary = options?.qqLatencyTraceSdkBoundary;
++    const now = performance.now();
++    const sdkBoundaryValid = qqCoreRouteMs(now) !== null && Object.isFrozen(boundary) && boundary?.schema === 'qq-latency-sdk-boundary-v1'
++      && boundary.timeOrigin === performance.timeOrigin && typeof boundary.atMonoMs === 'number'
++      && Number.isFinite(boundary.atMonoMs) && boundary.atMonoMs >= 0 && boundary.atMonoMs <= now
++      && now - boundary.atMonoMs <= 300000;
++    // Only trusted SDK metadata participates. Body, prompt, names and tool arguments are never read.
++    // Independent observer scope: Surface is presentation metadata, retained in legacyGate only.
++    // A recent same-process SDK boundary plus exact current source identity is still mandatory.
++    const reason = process.env.OPENCLAW_QQ_PREPARATION_PROFILE !== '1' ? 'profile_disabled'
++      : options?.isHeartbeat ? 'heartbeat'
++      : ctx.InternalTurnSource != null ? 'internal_turn'
++      : ctx.InputProvenance?.kind === 'internal_system' ? 'internal_provenance'
++      : !routeChannels.length ? 'channel_missing'
++      : !routeChannels.every(isQQChannel) ? 'channel_mismatch'
++      : !sourceMatched ? 'source_mismatch'
++      : !sdkBoundaryValid ? 'sdk_boundary_invalid'
++      : ctx.InboundEventKind != null && ctx.InboundEventKind !== 'user_request' ? 'non_user_event' : 'active';
++    const runHash = sourceMatched ? qqCoreRouteHash(id) : null;
++    let legacySourceHash = null, legacyRunHash = null, legacyScopeHash = null;
++    if (reason === 'active') {
++      const account = typeof ctx.AccountId === 'string' && ctx.AccountId.trim() ? ctx.AccountId.trim().toLowerCase() : 'default';
++      // Explicit in-process privacy-safe bridge. The HMAC secret is never extracted or persisted.
++      legacySourceHash = qqLatencyTraceHash('source', ['qqbot', account, ctx.SessionKey, sourceId]);
++      legacyRunHash = qqLatencyTraceHash('run', [id]);
++      legacyScopeHash = qqLatencyTraceHash('scope', ['qqbot', account, ctx.SessionKey]);
++    }
++    const legacyHashesAvailable = [legacySourceHash, legacyRunHash, legacyScopeHash].every(value => typeof value === 'string' && /^[a-f0-9]{24}$/.test(value));
++    return { groupAlias, runHash, sourceMatched, sdkBoundaryValid, reason,
++      legacyGate, legacyHashesAvailable,
++      legacySourceHash: legacyHashesAvailable ? legacySourceHash : null,
++      legacyRunHash: legacyHashesAvailable ? legacyRunHash : null,
++      legacyScopeHash: legacyHashesAvailable ? legacyScopeHash : null,
++      sdkBoundaryAtMonoMs: sdkBoundaryValid ? qqCoreRouteMs(boundary.atMonoMs) : null };
++  });
++}
++
++function createQQCoreRouteObserver(scope) {
++  const points = [], spans = [], seen = new Set();
++  let closed = false, droppedSpanCount = 0, lastMonoMs = null;
++  const now = () => qqCoreRouteSafe(() => qqCoreRouteMs(performance.now())) ?? null;
++  const point = (name, supplied) => qqCoreRouteSafe(() => {
++    if (closed || !QQ_CORE_ROUTE_POINTS.has(name) || seen.has(name)) return;
++    const atMonoMs = supplied ?? now();
++    if (atMonoMs === null || lastMonoMs !== null && atMonoMs < lastMonoMs) return;
++    seen.add(name); points.push({ name, atMonoMs }); lastMonoMs = atMonoMs;
++  });
++  if (scope.sdkBoundaryAtMonoMs !== null) point('sdk_core_boundary', scope.sdkBoundaryAtMonoMs);
++  point('buffered_dispatch_enter');
++  return {
++    scope,
++    get closed() { return closed; },
++    point,
++    async measure(name, run) {
++      if (closed || !QQ_CORE_ROUTE_STAGES.has(name)) return await run();
++      if (spans.length >= 64) { droppedSpanCount = Math.min(65535, droppedSpanCount + 1); return await run(); }
++      const span = { spanId: spans.length + 1, name, beganMonoMs: now(), endedMonoMs: null, durationMs: null };
++      if (span.beganMonoMs === null) return await run();
++      spans.push(span);
++      try { return await run(); }
++      finally { qqCoreRouteSafe(() => {
++        if (closed) return;
++        const ended = now();
++        if (ended !== null && ended >= span.beganMonoMs) { span.endedMonoMs = ended; span.durationMs = qqCoreRouteMs(ended - span.beganMonoMs); }
++      }); }
++    },
++    finish(outcome) { qqCoreRouteSafe(() => {
++      if (closed) return;
++      point('done'); closed = true;
++      const durationMs = points.length > 1 ? qqCoreRouteMs(points.at(-1).atMonoMs - points[0].atMonoMs) : null;
++      console.info('[qq-claude-core-route] ' + JSON.stringify({ schema: 'qq-claude-core-route-v1', ...scope,
++        outcome, points, spans, durationMs, unfinishedSpanCount: spans.filter(span => span.endedMonoMs === null).length, droppedSpanCount }));
++    }); }
++  };
++}
++
++function currentQQCoreRoute(ctx, options) {
++  return qqCoreRouteSafe(() => {
++    const observer = QQ_CORE_ROUTE_STORAGE.getStore();
++    if (!observer || observer.closed || QQ_CORE_ROUTE_GROUPS.get(ctx?.SessionKey) !== observer.scope.groupAlias) return null;
++    if (process.env.OPENCLAW_QQ_PREPARATION_PROFILE !== '1' || options?.isHeartbeat || ctx.InternalTurnSource != null
++        || ctx.InputProvenance?.kind === 'internal_system'
++        || ctx.InboundEventKind != null && ctx.InboundEventKind !== 'user_request') return null;
++    const channels = [ctx.Provider, ctx.OriginatingChannel].filter(value => value != null);
++    if (!channels.length || !channels.every(value => typeof value === 'string' && value.trim().toLowerCase() === 'qqbot')) return null;
++    const id = options?.runId, sourceId = ctx?.MessageSidFull ?? ctx?.MessageSid;
++    return qqCoreRouteId(id) && sourceId === id && qqCoreRouteHash(id) === observer.scope.runHash ? observer : null;
++  });
++}
++
++export async function withQQClaudeCoreRouteTrace(ctx, options, run) {
++  const existing = currentQQCoreRoute(ctx, options);
++  if (existing) return await run();
++  const scope = inspectQQCoreRoute(ctx, options);
++  if (!scope) return await run();
++  if (scope.reason !== 'active') {
++    qqCoreRouteSafe(() => console.info('[qq-claude-core-route] ' + JSON.stringify({ schema: 'qq-claude-core-route-v1', ...scope,
++      outcome: 'not_observed', points: [], spans: [], durationMs: null, unfinishedSpanCount: 0, droppedSpanCount: 0 })));
++    return await run();
++  }
++  const observer = qqCoreRouteSafe(() => createQQCoreRouteObserver(scope));
++  if (!observer) return await run();
++  let invoked = false;
++  const execute = async () => {
++    let outcome = 'completed';
++    try { invoked = true; return await run(); }
++    catch (error) { outcome = qqCoreRouteSafe(() => options?.abortSignal?.aborted) === true ? 'aborted' : 'error'; throw error; }
++    finally { observer.finish(outcome); }
++  };
++  try { return await QQ_CORE_ROUTE_STORAGE.run(observer, execute); }
++  catch (error) { if (!invoked) return await run(); throw error; }
++}
++
++export function qqClaudeCoreRoutePoint(ctx, options, name) {
++  qqCoreRouteSafe(() => currentQQCoreRoute(ctx, options)?.point(name));
++}
++
++export async function measureQQClaudeCoreRoute(ctx, options, name, run) {
++  const observer = currentQQCoreRoute(ctx, options);
++  return observer ? await observer.measure(name, run) : await run();
++}
++// END QQ-CLAUDE-CORE-ROUTE v1.

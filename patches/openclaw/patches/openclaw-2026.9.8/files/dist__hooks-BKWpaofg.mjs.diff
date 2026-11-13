@@ -1,0 +1,166 @@
+diff -ruN a/dist/hooks-BKWpaofg.mjs b/dist/hooks-BKWpaofg.mjs
+--- a/dist/hooks-BKWpaofg.mjs	2026-11-13 19:09:04.097022520 +0800
++++ b/dist/hooks-BKWpaofg.mjs	2026-11-13 19:09:04.097022520 +0800
+@@ -1,3 +1,4 @@
++import { createQQClaudeLegacyRecallClaim, retainQQClaudeLegacyRecallDispatch } from "./qq-claude-memory-prefetch-bridge.mjs";
+ import { l as normalizeOptionalString, o as normalizeLowercaseStringOrEmpty } from "./string-coerce-6kR-86XC.mjs";
+ import { F as resolveTimerTimeoutMs, p as clampPositiveTimerTimeoutMs } from "./number-coercion-Dq1l5muL.mjs";
+ import { i as resolveGlobalSingleton } from "./global-singleton-BfHBYj6Y.mjs";
+@@ -468,6 +469,34 @@
+ function getHooksForNameAndPlugin(registry, hookName, pluginId) {
+ 	return getHooksForName(registry, hookName).filter((hook) => hook.pluginId === pluginId);
+ }
++// QQ-PROMPT-HOOK-TIMING v1: bounded metadata only; no event/result access.
++function createQQPromptHookTiming(ctx, hookName, hook, ordinal) {
++	try {
++		if (!["agent_turn_prepare", "before_prompt_build", "heartbeat_prompt_contribution"].includes(hookName) || ordinal >= 64 || ctx?.trigger !== "user") return;
++		const groupAlias = ctx?.sessionKey === "agent:main:qqbot:group:__HS_GROUP_NEW_OPENID__" ? "new" : ctx?.sessionKey === "agent:main:qqbot:group:__HS_GROUP_OLD_OPENID__" ? "old" : null;
++		if (!groupAlias || typeof ctx.runId !== "string" || !ctx.runId.length || ctx.runId.length > 512) return;
++		// QQ-PROMPT-HOOK-TIMING v2: existing two-group observer also covers native Codex.
++		const legacyClaudeTiming = ["anthropic", "claude-cli"].includes(ctx.modelProviderId) || typeof ctx.modelId === "string" && ctx.modelId.startsWith("claude-");
++		const qqChannels = [ctx.messageProvider, ctx.channel].filter((value) => value != null);
++		const qqNativeTiming = qqChannels.length > 0 && qqChannels.every((value) => value === "qqbot");
++		if (!legacyClaudeTiming && !qqNativeTiming) return;
++		const runHash = createHash("sha256").update("qq-claude-native-run-v1\0").update(ctx.runId).digest("hex").slice(0, 24);
++		const plugin = ["openclaw-mem0", "qq-group-followup-gate"].includes(hook.pluginId) ? hook.pluginId : "other";
++		const authorizedPhase = ctx.toolAuthority !== void 0;
++		const beganMonoMs = performance.now();
++		let finished = false;
++		return Object.freeze({ finish(outcome) {
++			try {
++				if (finished) return;
++				finished = true;
++				const endedMonoMs = performance.now();
++				if (![beganMonoMs, endedMonoMs].every(Number.isFinite) || endedMonoMs < beganMonoMs) return;
++				const numeric = n => Math.round(n * 1000) / 1000;
++				console.info("[qq-prompt-hook-timing] " + JSON.stringify({ schema: "qq-prompt-hook-timing-v1", groupAlias, runHash, hookName, plugin, ordinal, authorizedPhase, beganMonoMs: numeric(beganMonoMs), endedMonoMs: numeric(endedMonoMs), durationMs: numeric(endedMonoMs - beganMonoMs), outcome: outcome === "completed" ? "completed" : "error" }));
++			} catch { /* Diagnostics never change handler return or error. */ }
++		} });
++	} catch { return; }
++}
+ function createHookRunner(registry, options = {}) {
+ 	const logger = options.logger;
+ 	const catchErrors = options.catchErrors ?? true;
+@@ -726,26 +755,12 @@
+ 		}) : event;
+ 		logger?.debug?.(`[hooks] running ${hookName} (${selectedHooks.length} handlers, sequential)`);
+ 		let result;
++		let qqPromptHookOrdinal = 0;
+ 		for (const hook of selectedHooks) {
++			const qqPromptHookIndex = qqPromptHookOrdinal++;
+ 			policy.assertHandlerBoundaryActive?.();
+ 			let shouldStop = false;
+-			try {
+-				const handler = hook.handler;
+-				const handlerEvent = policy.eventForHandler ? policy.eventForHandler(dispatchEvent, result) : policy.isolateEventPerHandler ? cloneHookIsolationValue(hookName, dispatchEvent) : dispatchEvent;
+-				const invocation = hookName === "before_prompt_build" ? { active: true } : void 0;
+-				const handlerContext = invocation ? {
+-					...ctx,
+-					hookInvocation: Object.freeze({ assertActive() {
+-						if (!invocation.active) throw new Error("prompt hook invocation is no longer active");
+-					} })
+-				} : ctx;
+-				let handlerResult;
+-				try {
+-					const promise = Promise.resolve(handler(handlerEvent, handlerContext));
+-					handlerResult = await awaitHook(hook, promise, modifyingHookTimeoutMsByHook[hookName]);
+-				} finally {
+-					if (invocation) invocation.active = false;
+-				}
++			const completeHandlerResult = (handlerResult) => {
+ 				policy.onHandlerResult?.({
+ 					hook,
+ 					result: handlerResult
+@@ -760,7 +775,8 @@
+ 						shouldStop = true;
+ 					}
+ 				}
+-			} catch (err) {
++			};
++			const completeHandlerError = (err) => {
+ 				const failOpen = !(err instanceof HookIsolationError) && shouldCatchHookErrors(hookName);
+ 				policy.onHandlerError?.(hook, failOpen);
+ 				if (err instanceof HookIsolationError) throw err;
+@@ -769,6 +785,69 @@
+ 					pluginId: hook.pluginId,
+ 					error: err
+ 				});
++			};
++			try {
++				const handler = hook.handler;
++				const handlerEvent = policy.eventForHandler ? policy.eventForHandler(dispatchEvent, result) : policy.isolateEventPerHandler ? cloneHookIsolationValue(hookName, dispatchEvent) : dispatchEvent;
++				const invocation = hookName === "before_prompt_build" ? { active: true } : void 0;
++				let invocationReleased = false;
++				const releaseHookInvocation = () => {
++					if (invocationReleased) return;
++					invocationReleased = true;
++					if (invocation) invocation.active = false;
++				};
++				const deferredLegacy = policy.deferLegacyPrepend === true && hookName === "before_prompt_build" &&
++					qqPromptHookIndex === selectedHooks.length - 1 && hook.pluginId === "openclaw-mem0" &&
++					hook.requiresToolAuthority !== true && shouldCatchHookErrors(hookName) ?
++					createQQClaudeLegacyRecallClaim(ctx, handler, handlerEvent, releaseHookInvocation) : void 0;
++				const handlerContext = invocation ? {
++					...ctx,
++					hookInvocation: Object.freeze({
++						...(deferredLegacy ? { deferLegacyPrepend: deferredLegacy.claim, bindLegacyRecallQuery: deferredLegacy.bindQuery } : {}),
++						assertActive() {
++						if (!invocation.active) throw new Error("prompt hook invocation is no longer active");
++					} })
++				} : ctx;
++				deferredLegacy?.bindInvocation(handlerContext);
++				let handlerResult;
++				const qqPromptHookTiming = createQQPromptHookTiming(ctx, hookName, hook, qqPromptHookIndex);
++				let qqPromptHookOutcome = "error";
++				let deferredLegacyRetained = false;
++				try {
++					const rawReturn = handler(handlerEvent, handlerContext);
++					const promise = Promise.resolve(rawReturn);
++					const awaited = awaitHook(hook, promise, modifyingHookTimeoutMsByHook[hookName]);
++					if (deferredLegacy) {
++						let outcome;
++						const settled = awaited.then(value => { outcome = { ok: true, value }; }, error => { outcome = { ok: false, error }; });
++						const dispatchToken = beforePromptBuildDispatch.getStore();
++						const resumeHook = () => beforePromptBuildDispatch.run(dispatchToken, () => {
++							try {
++								let handlerResult;
++								let finishOutcome = "error";
++								try {
++									if (!outcome.ok) throw outcome.error;
++									handlerResult = outcome.value;
++									finishOutcome = "completed";
++								} finally { releaseHookInvocation(); qqPromptHookTiming?.finish(finishOutcome); outcome = undefined; }
++								completeHandlerResult(handlerResult);
++							} catch (err) { completeHandlerError(err); }
++							policy.assertHandlerBoundaryActive?.();
++							return result;
++						});
++						if (deferredLegacy.adopt(rawReturn, settled, resumeHook)) {
++							deferredLegacyRetained = true;
++							return result; // Original merge is resumed only at the pre-authority join.
++						}
++					}
++					handlerResult = await awaited;
++					qqPromptHookOutcome = "completed";
++				} finally {
++					if (!deferredLegacyRetained) { releaseHookInvocation(); qqPromptHookTiming?.finish(qqPromptHookOutcome); }
++				}
++				completeHandlerResult(handlerResult);
++			} catch (err) {
++				completeHandlerError(err);
+ 			}
+ 			policy.assertHandlerBoundaryActive?.();
+ 			if (shouldStop) break;
+@@ -821,10 +900,11 @@
+ 			try {
+ 				return await runModifyingHook("before_prompt_build", event, ctx, {
+ 					mergeResults: mergeBeforePromptBuild,
++					deferLegacyPrepend: true,
+ 					includeRegistration: (registration) => registration.requiresToolAuthority !== true
+ 				});
+ 			} finally {
+-				token.active = false;
++				if (!retainQQClaudeLegacyRecallDispatch(ctx, () => { token.active = false; })) token.active = false;
+ 			}
+ 		});
+ 	}

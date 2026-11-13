@@ -1,0 +1,24 @@
+diff -ruN a/dist/get-reply-run-queue-Bmv2zHLu.mjs b/dist/get-reply-run-queue-Bmv2zHLu.mjs
+--- a/dist/get-reply-run-queue-Bmv2zHLu.mjs	2026-11-13 19:09:04.085021913 +0800
++++ b/dist/get-reply-run-queue-Bmv2zHLu.mjs	2026-11-13 19:09:04.085021913 +0800
+@@ -1,3 +1,4 @@
++import { qqOwnerWait } from "./qq-queue-diagnostics.mjs";
+ //#region src/auto-reply/reply/get-reply-run-queue.ts
+ const REPLY_RUN_STILL_SHUTTING_DOWN_TEXT = "⚠️ Previous run is still shutting down. Please try again in a moment.";
+ /** Resolves whether a new reply may continue after active-run queue handling. */
+@@ -6,8 +7,13 @@
+ 		kind: "continue",
+ 		busyState: params.resolveBusyState()
+ 	};
+-	if (params.queueMode === "interrupt") await params.interruptActiveRun();
+-	else await params.waitForActiveRunEnd(params.activeSessionId);
++	const diagnostic = params.queueDiagnostic;
++	const finishWait = diagnostic?.channel === "qqbot" ? qqOwnerWait(diagnostic.key ?? params.activeSessionId, { queueMode:params.queueMode, messageId:diagnostic.messageId }) : () => {};
++	try {
++		if (params.queueMode === "interrupt") await params.interruptActiveRun();
++		else await params.waitForActiveRunEnd(params.activeSessionId);
++		finishWait("continue");
++	} catch (error) { finishWait("failed"); throw error; }
+ 	await params.refreshPreparedState();
+ 	const refreshedBusyState = params.resolveBusyState();
+ 	if (refreshedBusyState.isActive) return {

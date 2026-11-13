@@ -1,0 +1,11 @@
+{
+  "name": "qq-group-owner-guard",
+  "version": "1.2.0",
+  "type": "module",
+  "main": "index.js",
+  "openclaw": {
+    "extensions": [
+      "./index.js"
+    ]
+  }
+}

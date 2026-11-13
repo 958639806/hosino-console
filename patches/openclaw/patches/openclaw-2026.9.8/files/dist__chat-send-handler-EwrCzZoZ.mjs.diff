@@ -1,0 +1,11 @@
+diff -ruN a/dist/chat-send-handler-EwrCzZoZ.mjs b/dist/chat-send-handler-EwrCzZoZ.mjs
+--- a/dist/chat-send-handler-EwrCzZoZ.mjs	2026-11-13 19:09:04.029019088 +0800
++++ b/dist/chat-send-handler-EwrCzZoZ.mjs	2026-11-13 19:09:04.029019088 +0800
+@@ -350,6 +350,7 @@
+ 			restartRecoveryDeliverySourceRunId: params.clientRunId,
+ 			restartRecoveryRequesterAccountId: void 0,
+ 			restartRecoveryRequesterSenderId: void 0,
++			restartRecoveryQQRequesterAuthority: void 0,
+ 			restartRecoverySameChannelThreadRequired: void 0,
+ 			restartRecoverySourceIngress: "control-ui",
+ 			restartRecoverySourceReplyDeliveryMode: void 0,

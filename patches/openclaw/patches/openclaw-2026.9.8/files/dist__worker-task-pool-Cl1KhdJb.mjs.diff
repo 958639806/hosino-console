@@ -1,0 +1,58 @@
+diff -ruN a/dist/worker-task-pool-Cl1KhdJb.mjs b/dist/worker-task-pool-Cl1KhdJb.mjs
+--- a/dist/worker-task-pool-Cl1KhdJb.mjs	2026-11-13 19:09:04.937064925 +0800
++++ b/dist/worker-task-pool-Cl1KhdJb.mjs	2026-11-13 19:09:04.941065127 +0800
+@@ -349,9 +349,10 @@
+ 	return {
+ 		retire,
+ 		clearIdle,
+-		idle(slot) {
+-			const idleMs = options.idleTimeoutMs ?? 6e4;
+-			if (idleMs <= 0) return;
++		idle(slot, taskIdleRetentionMs) { /* QQ-HISTORY-IDLE-REUSE-PATCH v1 */
++			const configuredIdleMs = options.idleTimeoutMs ?? 6e4;
++			if (configuredIdleMs <= 0) return;
++			const idleMs = Number.isSafeInteger(taskIdleRetentionMs) && taskIdleRetentionMs > 0 && taskIdleRetentionMs <= WORKER_WARM_WINDOW_MS ? Math.max(configuredIdleMs, taskIdleRetentionMs) : configuredIdleMs;
+ 			if (!warmSlot && now() - lastIdleRetirementAt < WORKER_WARM_WINDOW_MS) warmSlot = slot;
+ 			slot.idleTimer = runInContext(() => setTimeoutFn(() => void retire(slot, "idle_timeout").catch(() => void 0), warmSlot === slot ? Math.max(idleMs, WORKER_WARM_WINDOW_MS) : idleMs));
+ 			slot.idleTimer.unref();
+@@ -395,7 +396,7 @@
+ 				this.releaseAdmission(task);
+ 				task.runInContext = runInWorkerPoolContext;
+ 				this.dispatch();
+-				if (slot && !task.owner?.retire && !slot.task && !slot.retiring) this.idle(slot);
++				if (slot && !task.owner?.retire && !slot.task && !slot.retiring) this.idle(slot, task.owner?.idleRetentionMs);
+ 			}
+ 		};
+ 		this.completion = {
+@@ -463,7 +464,9 @@
+ 			admitted: false,
+ 			...owned ? { owner: {
+ 				closed: false,
+-				retire: false
++				retire: false,
++				// Retain only a bounded numeric policy across cleanup of the owned task options.
++				idleRetentionMs: Number.isSafeInteger(options.idleRetentionMs) && options.idleRetentionMs > 0 && options.idleRetentionMs <= WORKER_WARM_WINDOW_MS ? options.idleRetentionMs : void 0
+ 			} } : {},
+ 			inputBytes,
+ 			enqueuedAt: performance.now(),
+@@ -814,7 +817,7 @@
+ 		}
+ 		complete();
+ 		this.dispatch();
+-		if (slot && !slot.task && !slot.retiring) this.idle(slot);
++		if (slot && !slot.task && !slot.retiring) this.idle(slot, task.options.idleRetentionMs);
+ 	}
+ 	releaseAdmission(task) {
+ 		if (task.admitted) {
+@@ -824,9 +827,9 @@
+ 			this.computeCapacity?.finish(task.inputBytes);
+ 		}
+ 	}
+-	idle(slot) {
++	idle(slot, taskIdleRetentionMs) {
+ 		if (slot.worker && !this.resourceClosures.get(slot.worker)?.pending) slot.worker.unref();
+-		this.retirement.idle(slot);
++		this.retirement.idle(slot, taskIdleRetentionMs);
+ 	}
+ };
+ //#endregion

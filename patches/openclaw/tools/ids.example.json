@@ -1,0 +1,22 @@
+{
+ "_说明": "复制为 my-ids.json 再填。QQ openid 是 32 位十六进制，在网关日志或 openclaw sessions 列表里能看到；不填就留空字符串，对应功能（主人识别、两群专属逻辑）不生效。不要把填好的文件提交到任何公开仓库。 GROUP_*_SESSION_ID 是两个群会话的 sessionId（UUID，openclaw sessions 列表里看），只影响历史读取 worker 的空闲复用优化，可留空。GATEWAY_CERT_IP 是 xingye_tts.py 校验网关 TLS 证书时用的 IP。",
+ "OWNER_NAME": "主人",
+ "OWNER_OPENID": "",
+ "BOT_NAME": "星野",
+ "GROUP_NEW_OPENID": "",
+ "GROUP_OLD_OPENID": "",
+ "GROUP_IDENTITY_TABLE": "",
+ "MEMBER1_OPENID": "",
+ "MEMBER1_NAME": "群友A",
+ "MEMBER1_ALIAS": "群友A",
+ "MEMBER2_OPENID": "",
+ "MEMBER2_NAME": "群友B",
+ "OTHER_BOT_OPENID": "",
+ "OTHER_BOT_NAME": "另一个机器人",
+ "OPENCLAW_HOME": "/home/ubuntu/.openclaw",
+ "OPENCLAW_PKG": "/home/ubuntu/.npm-global/lib/node_modules/openclaw",
+ "USER_HOME": "/home/ubuntu",
+ "GATEWAY_CERT_IP": "127.0.0.1",
+ "GROUP_NEW_SESSION_ID": "",
+ "GROUP_OLD_SESSION_ID": ""
+}

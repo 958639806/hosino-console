@@ -1,0 +1,267 @@
+diff -ruN a/dist/extensions/anthropic/cli.runtime.js b/dist/extensions/anthropic/cli.runtime.js
+--- a/dist/extensions/anthropic/cli.runtime.js	2026-11-13 19:09:04.073021308 +0800
++++ b/dist/extensions/anthropic/cli.runtime.js	2026-11-13 19:09:04.073021308 +0800
+@@ -4,13 +4,105 @@
+ import "../../string-coerce-runtime-B1b8UNzb.mjs";
+ import { t as hasClaudeRawToolInvocation } from "../../cli-output-Df35BmhW.mjs";
+ import { t as prepareClaudeCliTransportArgs } from "../../cli-runtime-args-UumcGmHy.mjs";
+-import { t as createClaudeCliTransport } from "../../cli-transport-CgOJLNk7.mjs";
++import { t as createClaudeCliTransport, q as prepareQQClaudeApiTiming } from "../../cli-transport-CgOJLNk7.mjs";
+ import { t as createClaudeCliUserInputAuthorizer } from "../../cli-user-input-BwBkXAs1.mjs";
+-import { randomUUID } from "node:crypto";
++import { createHash, randomUUID } from "node:crypto";
+ import { once } from "node:events";
+ import { PassThrough } from "node:stream";
+ //#region extensions/anthropic/cli.runtime.ts
++// QQ-CLAUDE-NATIVE-LATENCY v1. Observer only; no authority or message contents.
++// All points use this host process's monotonic clock. stdin-flushed is the
++// subprocess write callback, not an upstream API/network acknowledgement.
++function createQQClaudeLatencyTrace(context) {
++	try {
++		const metadata = context.qqClaudeLatencyContext;
++		const groupAlias = metadata?.sessionKey === "agent:main:qqbot:group:__HS_GROUP_NEW_OPENID__" ? "new" : metadata?.sessionKey === "agent:main:qqbot:group:__HS_GROUP_OLD_OPENID__" ? "old" : null;
++		if (!groupAlias || typeof metadata.runId !== "string" || metadata.runId.length < 1 || metadata.runId.length > 512) return;
++		const runHash = createHash("sha256").update("qq-claude-native-run-v1\0").update(metadata.runId).digest("hex").slice(0, 24);
++		const trigger = metadata.trigger === "user" ? "user" : metadata.trigger === "heartbeat" ? "heartbeat" : "unknown";
++		const numeric = (value) => typeof value === "number" && Number.isFinite(value) && value >= 0 ? Math.round(value * 1000) / 1000 : null;
++		const now = () => numeric(performance.now());
++		const points = Object.fromEntries(["executeEntry", "sessionRestartBegin", "sessionRestartReady", "prepareArgsBegin", "prepareArgsReady", "transportCreateBegin", "transportCreateReady", "initializeBegin", "initializeReady", "inputSendBegin", "inputStdinFlushed", "commandStarted", "firstAcceptedEvent", "firstPostInputEvent", "firstModelEvent", "firstText", "firstResult", "terminal", "cleanupDone", "firstPostInputChunkObserved", "firstPostInputLineReady", "firstModelChunkObserved", "firstModelLineReady", "firstTextChunkObserved", "firstTextLineReady"].map((key) => [key + "MonoMs", null]));
++		points.executeEntryMonoMs = now();
++		let emitted = false, handleReused = null, transportReused = null, firstEventKind = null, firstPostInputEventKind = null, firstTextKind = null, terminalOutcome = null, acceptedEventCount = 0, interimResultCount = 0;
++		// QQ-CLAUDE-LOCAL-BOUNDARIES v1: metadata only, observed host pipe timing.
++		const local = { acceptedParseCount: 0, acceptedParseTotalMs: 0, acceptedParseMaxMs: null, pipeCallbackCount: 0, pipeCallbackTotalMs: 0, pipeCallbackMaxMs: null, controlHandlerCount: 0, controlHandlerTotalMs: 0, controlHandlerMaxMs: null, eventDrainCount: 0, eventDrainTotalMs: 0, eventDrainMaxMs: null };
++		let firstModelEventKind = null, firstModelBlockKind = null, acceptedEventsAfterFirstModelThroughFirstText = 0;
++		const preTextDeltaCounts = { text_delta: 0, thinking_delta: 0, input_json_delta: 0, signature_delta: 0, other: 0 };
++		const safe = (callback) => { try { return callback(); } catch {} };
++		const mark = (name) => { const key = name + "MonoMs"; if (Object.hasOwn(points, key) && points[key] === null) points[key] = now(); };
++		const kind = (message) => {
++			if (message.type === "stream_event") return ["message_start", "content_block_start", "content_block_delta", "content_block_stop", "message_delta", "message_stop"].includes(message.event?.type) ? "stream." + message.event.type : "stream.other";
++			if (message.type === "system") return ["init", "task_started", "task_notification", "background_tasks_changed", "status"].includes(message.subtype) ? "system." + message.subtype : "system.other";
++			return ["assistant", "user", "result", "command_lifecycle"].includes(message.type) ? message.type : "other";
++		};
++		const pipePoints = (prefix, metadata) => {
++			const current = now();
++			const chunk = numeric(metadata?.chunkObservedMonoMs), line = numeric(metadata?.lineReadyMonoMs);
++			if (chunk === null || line === null || chunk < points.inputSendBeginMonoMs || line < chunk || line > current) return;
++			points[prefix + "ChunkObservedMonoMs"] = chunk;
++			points[prefix + "LineReadyMonoMs"] = line;
++		};
++		const add = (bucket, elapsed) => {
++			if (emitted || points.inputSendBeginMonoMs === null || !["acceptedParse", "pipeCallback", "controlHandler", "eventDrain"].includes(bucket)) return;
++			const value = numeric(elapsed);
++			if (value === null) return;
++			local[bucket + "Count"] = Math.min(65535, local[bucket + "Count"] + 1);
++			local[bucket + "TotalMs"] = numeric(local[bucket + "TotalMs"] + value);
++			local[bucket + "MaxMs"] = Math.max(local[bucket + "MaxMs"] ?? 0, value);
++		};
++		const text = (sourceKind, metadata) => { if (points.firstTextMonoMs === null) { mark("firstText"); pipePoints("firstText", metadata); firstTextKind = sourceKind; } };
++		const delta = (start, end) => start !== null && end !== null && end >= start ? numeric(end - start) : null;
++		return Object.freeze({
++			mark(name) { safe(() => mark(name)); },
++			reused(handle, transport) { safe(() => { handleReused = handle === true; transportReused = transport === true; }); },
++			localSpan(bucket, elapsed) { safe(() => add(bucket, elapsed)); },
++			message(message, metadata) { safe(() => {
++				if (emitted) return;
++				acceptedEventCount = Math.min(65535, acceptedEventCount + 1);
++				const eventKind = kind(message);
++				if (points.firstAcceptedEventMonoMs === null) { mark("firstAcceptedEvent"); firstEventKind = eventKind; }
++				if (points.inputSendBeginMonoMs !== null && points.firstPostInputEventMonoMs === null) { mark("firstPostInputEvent"); firstPostInputEventKind = eventKind; pipePoints("firstPostInput", metadata); }
++				if (points.inputSendBeginMonoMs === null) return;
++				add("acceptedParse", metadata?.jsonParseMs);
++				if (points.firstModelEventMonoMs !== null && points.firstTextMonoMs === null) acceptedEventsAfterFirstModelThroughFirstText = Math.min(65535, acceptedEventsAfterFirstModelThroughFirstText + 1);
++				if (message.type === "stream_event") {
++					const event = message.event;
++					if (["message_start", "content_block_start", "content_block_delta", "content_block_stop", "message_delta", "message_stop"].includes(event?.type) && points.firstModelEventMonoMs === null) { mark("firstModelEvent"); firstModelEventKind = eventKind; pipePoints("firstModel", metadata); }
++					if (event?.type === "content_block_start" && firstModelBlockKind === null) firstModelBlockKind = ["text", "thinking", "redacted_thinking", "tool_use", "server_tool_use", "tool_result"].includes(event.content_block?.type) ? event.content_block.type : "other";
++					if (event?.type === "content_block_delta" && points.firstTextMonoMs === null) { const key = Object.hasOwn(preTextDeltaCounts, event.delta?.type) ? event.delta.type : "other"; preTextDeltaCounts[key] = Math.min(65535, preTextDeltaCounts[key] + 1); }
++					if (event?.type === "content_block_delta" && event.delta?.type === "text_delta" && typeof event.delta.text === "string" && event.delta.text.length > 0) text("stream_text_delta", metadata);
++					if (event?.type === "content_block_start" && event.content_block?.type === "text" && typeof event.content_block.text === "string" && event.content_block.text.length > 0) text("stream_text_start", metadata);
++				} else if (message.type === "assistant") {
++					if (points.firstModelEventMonoMs === null) { mark("firstModelEvent"); firstModelEventKind = eventKind; pipePoints("firstModel", metadata); }
++					const content = message.message?.content;
++					if (typeof content === "string" && content.length > 0 || Array.isArray(content) && content.some((part) => part?.type === "text" && typeof part.text === "string" && part.text.length > 0)) text("assistant_text", metadata);
++				}
++			}); },
++			result(message, completesTurn, failed) { safe(() => {
++				if (emitted) return;
++				mark("firstResult");
++				if (!completesTurn) { interimResultCount = Math.min(65535, interimResultCount + 1); return; }
++				mark("terminal"); terminalOutcome = failed ? "terminal_error" : "completed";
++				if (!failed && typeof message.result === "string" && message.result.length > 0) text("terminal_result");
++			}); },
++			finish(failure) { safe(() => {
++				if (emitted) return;
++				emitted = true; mark("cleanupDone");
++				const outcome = failure === "aborted" ? "aborted" : failure === "error" ? "error" : terminalOutcome ?? "consumer_cancelled";
++				const intervals = Object.fromEntries([["executeToInputMs", "executeEntry", "inputSendBegin"], ["sessionRestartMs", "sessionRestartBegin", "sessionRestartReady"], ["prepareArgsMs", "prepareArgsBegin", "prepareArgsReady"], ["transportCreateMs", "transportCreateBegin", "transportCreateReady"], ["initializeMs", "initializeBegin", "initializeReady"], ["inputFlushMs", "inputSendBegin", "inputStdinFlushed"], ["inputToCommandStartedMs", "inputSendBegin", "commandStarted"], ["inputToFirstEventMs", "inputSendBegin", "firstPostInputEvent"], ["inputToFirstModelEventMs", "inputSendBegin", "firstModelEvent"], ["inputToFirstTextMs", "inputSendBegin", "firstText"], ["firstTextToTerminalMs", "firstText", "terminal"], ["inputToTerminalMs", "inputSendBegin", "terminal"], ["terminalToCleanupMs", "terminal", "cleanupDone"], ["executeTotalMs", "executeEntry", "cleanupDone"]].map(([key, from, to]) => [key, delta(points[from + "MonoMs"], points[to + "MonoMs"])]));
++				console.info("[qq-claude-latency] " + JSON.stringify({ schema: "qq-claude-native-latency-v1", groupAlias, runHash, trigger, handleReused, transportReused, firstEventKind, firstPostInputEventKind, firstTextKind, outcome, acceptedEventCount, interimResultCount, ...points, ...intervals, localBoundarySchema: "qq-claude-local-boundaries-v1", ...local, firstModelEventKind, firstModelBlockKind, acceptedEventsAfterFirstModelThroughFirstText, preTextDeltaCounts, firstModelToFirstTextMs: delta(points.firstModelEventMonoMs, points.firstTextMonoMs), firstTextChunkToLineReadyMs: delta(points.firstTextChunkObservedMonoMs, points.firstTextLineReadyMonoMs), firstTextLineReadyToAcceptedMs: delta(points.firstTextLineReadyMonoMs, points.firstTextMonoMs) }));
++			}); }
++		});
++	} catch { return; }
++}
++// END QQ-CLAUDE-NATIVE-LATENCY v1.
++
+ const IDLE_TIMEOUT_MS = 6e5;
++// QQ-CLAUDE-KEEPALIVE v1: 两群 + __HS_OWNER_NAME__私聊空闲 12h 才关，其他会话仍 10 分钟。指纹不一致照旧重启。
++const HOSINO_KEEPALIVE_KEYS = new Set(["agent:main:qqbot:group:__HS_GROUP_NEW_OPENID__", "agent:main:qqbot:group:__HS_GROUP_OLD_OPENID__", "agent:main:main"]);
++const HOSINO_KEEPALIVE_MS = 432e5;
++// END QQ-CLAUDE-KEEPALIVE v1
+ const RESULT_HOLDING_TASK_TYPES = /* @__PURE__ */ new Set(["local_agent", "local_workflow"]);
+ const TIMEOUT_BACKGROUNDED_TASK_TYPE = "local_bash";
+ function readReplayedTaskId(message, inputUuid) {
+@@ -121,19 +213,24 @@
+ 	turn.events.end();
+ 	if (!session.capability || holdsBackgroundTasks) session.handle.close(holdsBackgroundTasks ? "abort" : "idle");
+ 	else {
+-		session.idleTimer = setTimeout(() => session.handle.close("idle"), IDLE_TIMEOUT_MS);
++		session.idleTimer = setTimeout(() => session.handle.close("idle"), session.hosinoPinned === true ? HOSINO_KEEPALIVE_MS : IDLE_TIMEOUT_MS); /* QQ-CLAUDE-KEEPALIVE v1 */
+ 		session.idleTimer.unref();
+ 	}
+ }
+-async function acceptMessage(session, message) {
++async function acceptMessage(session, message, pipeMetadata) {
+ 	if (message.type === "system" && message.subtype === "init") session.hasInputLifecycle = Array.isArray(message.capabilities) && message.capabilities.includes("msg_lifecycle_v1");
+ 	const turn = session.currentTurn;
+ 	if (!turn) return;
+ 	if (message.type === "command_lifecycle") {
+-		if (message.state === "started" && message.command_uuid === turn.inputUuid) turn.inputStarted = true;
++		if (message.state === "started" && message.command_uuid === turn.inputUuid) {
++			turn.inputStarted = true;
++			turn.timing?.mark("commandStarted");
++			turn.timing?.message(message, pipeMetadata);
++		}
+ 		return;
+ 	}
+ 	if (session.hasInputLifecycle && !turn.inputStarted && !(message.type === "system" && message.subtype === "init")) return;
++	turn.timing?.message(message, pipeMetadata);
+ 	if (message.type === "system" && message.subtype === "task_started") {
+ 		if (typeof message.task_id === "string" && message.task_id) {
+ 			if (message.is_backgrounded === false) turn.foregroundTaskIds.add(message.task_id);
+@@ -167,12 +264,17 @@
+ 		const queuedContinuation = turn.sawTerminalResult && taskNotification && message.num_turns === 0 && message.result === "" && message.stop_reason === null && message.terminal_reason === void 0;
+ 		turn.sawTerminalResult = true;
+ 		completesTurn = turn.pendingBackgroundTaskIds.size === 0 && !queuedContinuation || failed;
++		turn.timing?.result(message, completesTurn, failed);
+ 	}
+ 	const outputMessage = message.type === "result" && !completesTurn ? {
+ 		...message,
+ 		openclaw_interim_result: true
+ 	} : message;
+-	if (!turn.events.write(outputMessage)) await once(turn.events, "drain", { signal: turn.controller.signal });
++	if (!turn.events.write(outputMessage)) {
++		const drainBegin = performance.now();
++		try { await once(turn.events, "drain", { signal: turn.controller.signal }); }
++		finally { turn.timing?.localSpan("eventDrain", performance.now() - drainBegin); }
++	}
+ 	if (completesTurn) completeTurn(session, turn);
+ }
+ function createSession(capability) {
+@@ -193,19 +295,38 @@
+ 	return session;
+ }
+ async function* executeClaudeCli(context, secretInput) {
++	const timing = createQQClaudeLatencyTrace(context);
++	let failure;
++	try {
++		yield* executeClaudeCliTimed(context, secretInput, timing);
++	} catch (error) {
++		failure = context.abortSignal?.aborted ? "aborted" : "error";
++		throw error;
++	} finally {
++		timing?.finish(failure);
++	}
++}
++async function* executeClaudeCliTimed(context, secretInput, timing) {
+ 	context.assertCurrent?.();
+ 	context.abortSignal?.throwIfAborted();
+ 	const capability = context.liveSession;
+ 	const existing = capability?.current();
+ 	const reusable = existing && existing.fingerprint === capability?.fingerprint ? sessions.get(existing) : void 0;
+-	if (!reusable && capability) await capability.restart();
++	timing?.reused(Boolean(reusable), Boolean(reusable?.transport));
++	if (!reusable && capability) {
++		timing?.mark("sessionRestartBegin");
++		await capability.restart();
++		timing?.mark("sessionRestartReady");
++	}
+ 	context.assertCurrent?.();
+ 	const session = reusable ?? createSession(capability);
+ 	session.capability = capability;
++	session.hosinoPinned = HOSINO_KEEPALIVE_KEYS.has(context.qqClaudeLatencyContext?.sessionKey); /* QQ-CLAUDE-KEEPALIVE v1 */
+ 	if (session.closed || session.currentTurn) throw new Error("Claude CLI live session is closed or already handling another turn.");
+ 	clearTimeout(session.idleTimer);
+ 	const turn = {
+ 		context,
++		timing,
+ 		controller: new AbortController(),
+ 		userInput: createClaudeCliUserInputAuthorizer(context),
+ 		events: new PassThrough({ objectMode: true }),
+@@ -224,9 +345,17 @@
+ 		context.abortSignal?.throwIfAborted();
+ 		capability?.activate(session.handle);
+ 		if (!session.transport) {
++			timing?.mark("prepareArgsBegin");
+ 			const { args, excludeDynamicSections } = prepareClaudeCliTransportArgs(context);
++			timing?.mark("prepareArgsReady");
++			timing?.mark("transportCreateBegin");
++			session.qqApiTiming = await prepareQQClaudeApiTiming(context);
++			context.assertCurrent?.();
++			context.abortSignal?.throwIfAborted();
++			if (session.closed || session.currentTurn !== turn) throw turn.error ?? new Error("Claude CLI closed before diagnostic transport creation.");
+ 			session.transport = createClaudeCliTransport({
+ 				context,
++				qqApiTiming: session.qqApiTiming,
+ 				args,
+ 				secretInput,
+ 				currentContext: () => session.currentTurn?.context,
+@@ -238,11 +367,15 @@
+ 						PreToolUse: [{ hookCallbackIds: ["PreToolUse"] }]
+ 					}
+ 				},
+-				onMessage: (message) => acceptMessage(session, message),
++				currentTiming: () => session.currentTurn?.timing,
++				onMessage: (message, pipeMetadata) => acceptMessage(session, message, pipeMetadata),
+ 				onRequest: async (request, signal) => {
+ 					if (request.subtype === "elicitation") return () => ({ action: "decline" });
+ 					const admittedTurn = activeTurn(session);
+-					const response = await handleRequest(session, request, signal);
++					const handlerBegin = performance.now();
++					let response;
++					try { response = await handleRequest(session, request, signal); }
++					finally { admittedTurn?.timing?.localSpan("controlHandler", performance.now() - handlerBegin); }
+ 					return () => {
+ 						if (admittedTurn && activeTurn(session) === admittedTurn && !signal.aborted) return response;
+ 						const message = "The OpenClaw run is no longer active.";
+@@ -260,10 +393,15 @@
+ 				},
+ 				onError: (error) => session.handle.close("abort", error)
+ 			});
++			timing?.mark("transportCreateReady");
++			timing?.mark("initializeBegin");
+ 			await session.transport.initialize();
++			timing?.mark("initializeReady");
+ 		}
+ 		context.assertCurrent?.();
+ 		if (session.closed || session.currentTurn !== turn) throw turn.error ?? /* @__PURE__ */ new Error("Claude CLI closed before its prompt was accepted.");
++		try { session.qqApiTiming?.begin(turn.inputUuid, context); } catch {}
++		timing?.mark("inputSendBegin");
+ 		await session.transport.send({
+ 			type: "user",
+ 			message: {
+@@ -274,6 +412,7 @@
+ 			uuid: turn.inputUuid,
+ 			...context.sessionId ? { session_id: context.sessionId } : {}
+ 		});
++		timing?.mark("inputStdinFlushed");
+ 		for await (const record of turn.events) yield record;
+ 		if (turn.error) throw turn.error;
+ 		if (!turn.sawTerminalResult) throw new Error("Claude CLI exited without a terminal result.");
+@@ -281,6 +420,8 @@
+ 		session.handle.close("abort", error);
+ 		throw error;
+ 	} finally {
++		try { session.qqApiTiming?.end(turn.inputUuid); } catch {}
++		if (!session.transport) { try { session.qqApiTiming?.close(); } catch {} }
+ 		turn.controller.abort();
+ 		context.abortSignal?.removeEventListener("abort", abort);
+ 		if (session.currentTurn === turn) session.handle.close("abort");

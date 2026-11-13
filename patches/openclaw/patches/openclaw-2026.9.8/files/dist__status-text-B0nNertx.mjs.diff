@@ -1,0 +1,61 @@
+diff -ruN a/dist/status-text-B0nNertx.mjs b/dist/status-text-B0nNertx.mjs
+--- a/dist/status-text-B0nNertx.mjs	2026-11-13 19:09:04.909063512 +0800
++++ b/dist/status-text-B0nNertx.mjs	2026-11-13 19:09:04.909063512 +0800
+@@ -271,6 +271,16 @@
+ 		return "⚠️ Plugins: health unavailable";
+ 	}
+ }
++async function measureStatusReadout(params, stage, run) {
++  let beganMonoMs = null, outcome = "fulfilled";
++  try { if (typeof params.recordStatusStageTiming === "function") beganMonoMs = Number(process.hrtime.bigint()) / 1e6; } catch {}
++  try { return await run(); } catch (error) { outcome = "threw"; throw error; }
++  finally {
++    try {
++      if (typeof params.recordStatusStageTiming === "function") params.recordStatusStageTiming(stage, beganMonoMs, Number(process.hrtime.bigint()) / 1e6, outcome);
++    } catch {}
++  }
++}
+ async function buildStatusText(params) {
+ 	return (await buildStatusReplyParts(params)).text;
+ }
+@@ -392,6 +402,7 @@
+ 	}) : void 0;
+ 	const usageCredentialType = useCodexSyntheticUsage ? "token" : selectedUsageCredentialType;
+ 	const currentUsageProvider = resolveUsageProviderId(usageStatusProvider, { credentialType: usageCredentialType }) ?? resolveUsageProviderId(usageProvider, { credentialType: usageCredentialType });
++	const readProviderUsageLine = async () => {
+ 	let usageLine = null;
+ 	if (currentUsageProvider && shouldLoadUsageSummary({
+ 		provider: currentUsageProvider,
+@@ -418,7 +429,22 @@
+ 	} catch {
+ 		usageLine = null;
+ 	}
+-	usageLine = await appendSessionCostLine(usageLine, cfg, statusAgentId, sessionEntry, storePath);
++	return usageLine;
++	};
++	let usageLine;
++	if (params.parallelIndependentStatusReadouts === true) {
++		const readouts = await Promise.allSettled([
++			measureStatusReadout(params, "provider_usage", readProviderUsageLine),
++			measureStatusReadout(params, "session_cost", () => resolveSessionCostLine({ cfg, agentId: statusAgentId, ...sessionEntry ? { sessionEntry } : {}, ...storePath ? { storePath } : {} }))
++		]);
++		if (readouts[0].status === "rejected") throw readouts[0].reason;
++		if (readouts[1].status === "rejected") throw readouts[1].reason;
++		const providerUsageLine = readouts[0].value, sessionCostLine = readouts[1].value;
++		usageLine = sessionCostLine ? [providerUsageLine, sessionCostLine].filter(Boolean).join("\n") : providerUsageLine;
++	} else {
++		usageLine = await measureStatusReadout(params, "provider_usage", readProviderUsageLine);
++		usageLine = await measureStatusReadout(params, "session_cost", () => appendSessionCostLine(usageLine, cfg, statusAgentId, sessionEntry, storePath));
++	}
+ 	const { getFollowupQueueDepth, resolveQueueSettings } = await loadStatusQueueRuntime();
+ 	const queueSettings = resolveQueueSettings({
+ 		cfg,
+@@ -459,7 +485,7 @@
+ 		allowPluginNormalization: false
+ 	});
+ 	const configuredDefaultModelLabel = `${configuredDefaultRef.provider}/${configuredDefaultRef.model}`;
+-	const pluginHealthLine = Object.hasOwn(params, "pluginHealthLineOverride") ? params.pluginHealthLineOverride : await resolveRuntimePluginHealthLine();
++	const pluginHealthLine = Object.hasOwn(params, "pluginHealthLineOverride") ? params.pluginHealthLineOverride : await measureStatusReadout(params, "plugin_health", () => resolveRuntimePluginHealthLine());
+ 	const channelFeatureLine = resolveStatusChannelFeatureLine({
+ 		cfg,
+ 		statusChannel,

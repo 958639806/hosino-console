@@ -1,0 +1,154 @@
+diff -ruN a/dist/builtin-openclaw-DEib7rq9.mjs b/dist/builtin-openclaw-DEib7rq9.mjs
+--- a/dist/builtin-openclaw-DEib7rq9.mjs	2026-11-13 19:09:04.025018886 +0800
++++ b/dist/builtin-openclaw-DEib7rq9.mjs	2026-11-13 19:09:04.025018886 +0800
+@@ -1,3 +1,4 @@
++import { createQqPassiveToolTiming } from './qq-passive-tool-timing.mjs';
+ import { c as normalizeOptionalLowercaseString, g as readStringValue, l as normalizeOptionalString, n as localeLowercasePreservingWhitespace, o as normalizeLowercaseStringOrEmpty, t as hasNonEmptyString } from "./string-coerce-6kR-86XC.mjs";
+ import { D as resolveExpiresAtMsFromDurationMs, F as resolveTimerTimeoutMs, g as isFutureDateTimestampMs, h as finiteSecondsToTimerSafeMilliseconds, m as clampTimerTimeoutMs, o as asDateTimestampMs, s as asFiniteNumber, v as parseDateFirstTimestampMs, w as parseStrictPositiveInteger, y as parseDateStringTimestampMs } from "./number-coercion-Dq1l5muL.mjs";
+ import { r as consumeRootOptionToken } from "./cli-root-options-DGcy1qRg.mjs";
+@@ -290,7 +291,7 @@
+ import { n as applySkillEnvOverridesFromSnapshot, t as applySkillEnvOverrides } from "./env-overrides-MnRxXfUj.mjs";
+ import { M as observeAgentRunApprovalWait, N as resolveCodeModeSkills } from "./code-mode-state-COLJ8Um7.mjs";
+ import { a as buildBootstrapTruncationReportMeta, i as buildBootstrapPromptWarningNotice, n as buildBootstrapBudgetState, r as buildBootstrapInjectionStats } from "./bootstrap-budget-CqFoeR-L.mjs";
+-import { c as resolveBootstrapFilesForRun, i as makeBootstrapWarn, l as resolveContextInjectionMode, n as buildBootstrapContextForFiles, r as hasCompletedBootstrapTurn, t as FULL_BOOTSTRAP_COMPLETED_CUSTOM_TYPE } from "./bootstrap-files-CnxP5PZe.mjs";
++import { captureOwnerPrivateBootstrapRequester, c as resolveBootstrapFilesForRun, i as makeBootstrapWarn, l as resolveContextInjectionMode, n as buildBootstrapContextForFiles, r as hasCompletedBootstrapTurn, t as FULL_BOOTSTRAP_COMPLETED_CUSTOM_TYPE } from "./bootstrap-files-CnxP5PZe.mjs";
+ import { t as resolveAttemptWorkspaceSandbox } from "./workspace-sandbox-DOQexLIc.mjs";
+ import { C as isAnthropicFamilyCacheTtlEligible, b as isCodeModeDiagnosticEnabled, s as createCodexNativeWebSearchWrapper, w as isAnthropicModelRef, x as logCodeModeDiagnostic } from "./proxy-CX3DJ05g.mjs";
+ import { a as resolvePreparedExtraParams, n as resolveAgentTransportOverride, o as isGooglePromptCacheEligible, r as resolveExplicitSettingsTransport, s as resolveCacheRetention, t as applyExtraParamsToAgent } from "./extra-params-Bt7cAVur.mjs";
+@@ -1500,13 +1501,30 @@
+ 		workspaceDir: bootstrapWorkspaceDir,
+ 		warn: (message) => log$6.warn(message)
+ 	});
++	const bootstrapRequesterChatType = attempt.chatType ?? attempt.sessionEntry?.chatType;
++	const ownerPrivateBootstrapRequester = (() => {
++		try {
++			const assertBootstrapRequesterActive = attempt.admittedRunContext ? resolveAdmittedRunActiveAssertion(attempt.admittedRunContext, attempt.abortSignal) : undefined;
++			return captureOwnerPrivateBootstrapRequester({
++				readParams: () => attempt,
++				assertSourceCurrent: assertBootstrapRequesterActive ? () => { assertBootstrapRequesterActive(); readRunOperatorAuthority(attempt)?.assertCurrent(); } : undefined,
++				channel: normalizeMessageChannel(attempt.messageChannel ?? attempt.messageProvider),
++				chatType: bootstrapRequesterChatType,
++				workspaceDir: bootstrapWorkspaceDir,
++				agentId: params.setup.sessionAgentId
++			});
++		} catch { return; }
++	})();
+ 	const resolveWorkspaceBootstrapFiles = (workspaceDir) => resolveBootstrapFilesForRun({
++		ownerPrivateBootstrapRequester,
++		runId: attempt.runId,
++		messageChannel: normalizeMessageChannel(attempt.messageChannel ?? attempt.messageProvider),
+ 		workspaceDir,
+ 		config: attempt.config,
+ 		sessionKey: attempt.sessionKey,
+ 		sessionId: attempt.sessionId,
+ 		bootstrapUserProfileId: attempt.bootstrapUserProfileId,
+-		chatType: attempt.chatType,
++		chatType: bootstrapRequesterChatType,
+ 		agentId: params.setup.sessionAgentId,
+ 		warn: bootstrapWarn,
+ 		contextMode: attempt.bootstrapContextMode,
+@@ -1552,6 +1570,14 @@
+ 			return {
+ 				bootstrapFiles: layeredBootstrapFiles,
+ 				contextFiles: buildBootstrapContextForFiles(layeredBootstrapFiles, {
++					ownerPrivateBootstrapRequester,
++					runId: attempt.runId,
++					messageChannel: normalizeMessageChannel(attempt.messageChannel ?? attempt.messageProvider),
++					sessionKey: attempt.sessionKey,
++					sessionId: attempt.sessionId,
++					chatType: bootstrapRequesterChatType,
++					bootstrapUserProfileId: attempt.bootstrapUserProfileId,
++					workspaceDir: bootstrapWorkspaceDir,
+ 					config: attempt.config,
+ 					agentId: params.setup.sessionAgentId,
+ 					warn: bootstrapWarn
+@@ -2307,6 +2333,7 @@
+ 			parentToolCallId: evt.parentToolCallId,
+ 			...ctx.params.hasRepliedRef ? { hasRepliedRef: { value: ctx.params.hasRepliedRef.value } } : {}
+ 		});
++		try { ctx.qqPassiveToolTiming?.start(toolName, toolCallId); } catch {}
+ 		traceToolExecutionStart({
+ 			ctx,
+ 			toolName,
+@@ -2973,6 +3000,7 @@
+ 	const result = evt.result;
+ 	const toolSendReceiptResult = ctx.consumeToolSendReceipt?.(toolCallId);
+ 	const observerIsError = evt.isError || isToolResultError(result);
++	try { ctx.qqPassiveToolTiming?.result(toolName, toolCallId, !!observerIsError); } catch {}
+ 	const sanitizedResult = sanitizeToolResult(result);
+ 	const approvalUnavailable = isExecToolName(toolName) && readExecToolDetails(sanitizedResult)?.status === "approval-unavailable";
+ 	const isToolError = observerIsError && !approvalUnavailable;
+@@ -10777,6 +10805,7 @@
+ 				if (evt.type !== "message_update") ctx.flushAssistantStream();
+ 				return handler();
+ 			} catch (err) {
++				try { if (evt.type === "tool_execution_start" || evt.type === "tool_execution_end") ctx.qqPassiveToolTiming?.fault(evt.toolCallId, "handler_error"); } catch {}
+ 				ctx.log.debug(`${evt.type} handler failed: ${String(err)}`);
+ 				return;
+ 			}
+@@ -10784,6 +10813,7 @@
+ 		const result = ctx.state.pendingEventChain ? ctx.state.pendingEventChain.then(run) : run();
+ 		if (!isPromiseLike(result)) return;
+ 		const task = Promise.resolve(result).then(() => {}, (err) => {
++			try { if (evt.type === "tool_execution_start" || evt.type === "tool_execution_end") ctx.qqPassiveToolTiming?.fault(evt.toolCallId, "handler_error"); } catch {}
+ 			ctx.log.debug(`${evt.type} handler failed: ${String(err)}`);
+ 		}).finally(() => {
+ 			if (ctx.state.pendingEventChain === task) ctx.state.pendingEventChain = null;
+@@ -11889,6 +11919,7 @@
+ 		try {
+ 			completedResult = await toolParams.execute(onImplementationStart);
+ 		} catch (error) {
++			try { ctx.qqPassiveToolTiming?.fault(toolParams.toolCallId, "execution_throw"); } catch {}
+ 			const trustedNoStart = consumeTrustedToolNoStartError(error);
+ 			const result = buildToolLifecycleErrorResult(error);
+ 			if (trustedNoStart) markToolExecutionNotStarted(result);
+@@ -11942,6 +11973,8 @@
+ }
+ function subscribeEmbeddedAgentSession(params) {
+ 	const log = resolveEmbeddedAgentSessionLogger(params.messageChannel);
++	let qqPassiveToolTiming;
++	try { qqPassiveToolTiming = createQqPassiveToolTiming(params.qqLatencyTraceContext, log, params.runId); } catch {}
+ 	const useMarkdown = (params.toolResultFormat ?? "markdown") === "markdown";
+ 	const state = createEmbeddedAgentSubscribeState(params);
+ 	const { captureModelEvent, recordAuxiliaryUsage, getUsageTotals, getLastAssistantUsage, getCurrentAttemptAssistant, hasSuccessfulModelResponse } = createEmbeddedModelState(params, log);
+@@ -12130,6 +12163,7 @@
+ 		params,
+ 		state,
+ 		log,
++		qqPassiveToolTiming,
+ 		blockChunking,
+ 		blockChunker,
+ 		hookRunner: params.hookRunner,
+@@ -12167,6 +12201,7 @@
+ 	const unsubscribe = () => {
+ 		if (state.unsubscribed) return;
+ 		state.unsubscribed = true;
++		try { qqPassiveToolTiming?.close(params.qqToolTimingAbortSignal?.aborted === true); } catch {}
+ 		clearAssistantStream();
+ 		cleanupRunToolStartData(params.runId);
+ 		state.liveEditDiffStateById.clear();
+@@ -12946,6 +12981,8 @@
+ 		onPartialReply: attempt.onPartialReply,
+ 		onAssistantMessageStart: attempt.onAssistantMessageStart,
+ 		onExecutionPhase: attempt.onExecutionPhase,
++		qqLatencyTraceContext: attempt.qqLatencyTraceContext,
++		qqToolTimingAbortSignal: input.runAbortController.signal,
+ 		onAgentEvent: attempt.onAgentEvent,
+ 		terminalLifecyclePhase: attempt.deferTerminalLifecycle ? "finishing" : "end",
+ 		onToolStreamBoundary: attempt.onToolStreamBoundary,
+@@ -14895,6 +14932,7 @@
+ 	let modelResponseTerminal = false;
+ 	session.agent.streamFn = wrapStreamFnWithDiagnosticModelCallEvents(session.agent.streamFn, {
+ 		config: attempt.config,
++		qqLatencyTraceContext: attempt.qqLatencyTraceContext,
+ 		runId: attempt.runId,
+ 		agentId: sessionAgentId,
+ 		...attempt.sessionKey && { sessionKey: attempt.sessionKey },
+@@ -20088,6 +20126,7 @@
+ 		timeoutMs: attempt.timeoutMs,
+ 		runTimeoutOverrideMs: attempt.runTimeoutOverrideMs,
+ 		runId: attempt.runId,
++		qqLatencyTraceContext: attempt.qqLatencyTraceContext,
+ 		abortSignal: attempt.abortSignal,
+ 		onExecutionStarted: attempt.onExecutionStarted,
+ 		onExecutionPhase: attempt.onExecutionPhase,

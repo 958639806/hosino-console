@@ -1,0 +1,43 @@
+diff -ruN a/dist/subagent-announce-delivery-CoOIdkBH.mjs b/dist/subagent-announce-delivery-CoOIdkBH.mjs
+--- a/dist/subagent-announce-delivery-CoOIdkBH.mjs	2026-11-13 19:09:04.913063714 +0800
++++ b/dist/subagent-announce-delivery-CoOIdkBH.mjs	2026-11-13 19:09:04.913063714 +0800
+@@ -1401,6 +1401,23 @@
+ 		return recorder;
+ 	};
+ }
++// QQ-IMAGE-DIRECT-COMPLETION-PATCH v1: trusted producer metadata only.
++function buildQQImageCompletion(params, route, expectedMedia) {
++	if (params.sourceTool !== "image_generate" || route.channel !== "qqbot" || !params.preparedRequester?.binding) return;
++	const sk = params.preparedRequester.binding.sessionKey;
++	if (!/^agent:main:qqbot:group:(__HS_GROUP_NEW_OPENID__|__HS_GROUP_OLD_OPENID__)$/.test(sk)) return;
++	const events = params.internalEvents;
++	if (!Array.isArray(events) || events.length !== 1) return;
++	const event = events[0];
++	if (event.type !== "task_completion" || event.source !== "image_generation" || !["ok", "error"].includes(event.status) || !event.childSessionId || event.childSessionKey !== `image_generate:${event.childSessionId}`) return;
++	const urls = expectedMedia.expectedMediaUrls ?? [];
++	if (event.status === "ok" && urls.length === 0 || event.status === "error" && urls.length !== 0) return;
++	const error = event.status === "error" ? String(event.result ?? "") : "";
++	const failure = /quota|usage limit|额度|配额/i.test(error) ? "quota" : /426/.test(error) ? "client" : /not support|unsupported|不支持/i.test(error) ? "unsupported" : "other";
++	const header = event.status === "ok" ? /^Generated (\d+) images? with ([A-Za-z0-9][A-Za-z0-9._:/-]{0,119})\./.exec(String(event.result ?? "")) : null;
++	return { version: 1, taskId: event.childSessionId, status: event.status, failure, ...header ? { modelLabel: header[2] } : {} };
++}
++
+ async function deliverSubagentAnnouncement(params) {
+ 	const sourceOwnerChanged = () => params.isSourceSessionEffectsAllowed?.() === false || params.isSourceSessionAdmissionAllowed?.() === false;
+ 	if (sourceOwnerChanged()) return sourceOwnerChangedResult();
+@@ -1424,6 +1441,7 @@
+ 			requesterSessionOrigin
+ 		}) ? "message_tool_only" : "automatic";
+ 		const expectedMedia = collectExpectedMediaFromInternalEvents(params.internalEvents);
++		const qqImageCompletion = buildQQImageCompletion(params, queuedRoute.route, expectedMedia);
+ 		const queuePayload = {
+ 			kind: "agentTurn",
+ 			sessionKey: canonicalSessionKey,
+@@ -1439,6 +1457,7 @@
+ 			},
+ 			sourceReplyDeliveryMode,
+ 			...expectedMedia,
++			...qqImageCompletion ? { qqImageCompletion } : {},
+ 			idempotencyKey: `${params.directIdempotencyKey}:agent-loop`,
+ 			...params.preparedRequester ? { requesterBinding: params.preparedRequester.binding } : {}
+ 		};

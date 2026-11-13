@@ -1,0 +1,38 @@
+diff -ruN a/dist/state/openclaw-state.worker.js b/dist/state/openclaw-state.worker.js
+--- a/dist/state/openclaw-state.worker.js	2026-11-13 19:09:04.905063310 +0800
++++ b/dist/state/openclaw-state.worker.js	2026-11-13 19:09:04.909063512 +0800
+@@ -20,6 +20,8 @@
+ let capture;
+ const loadRuntime = createLazyRuntimeModule(() => import("../openclaw-state-worker-runtime-CckKB9al.mjs"));
+ let runtime;
++const loadPlacementTurnClaims = createLazyRuntimeModule(() => import("../placement-turn-claims.worker-leaf-20261105.mjs"));
++let placementTurnClaims;
+ function stateDatabaseInitializationEnvironment() {
+ 	const context = getSqliteWorkerStateContext();
+ 	return context.initializationEnvironment ?? context.environment;
+@@ -89,6 +91,17 @@
+ 				});
+ 			}
+ 			if (commandType === "plugins.metadata.read" || commandType === "database.inspectIdle" || commandType === "database.walMaintenance" || commandType === "stateLease.acquire" || commandType === "deviceIdentity.read" || commandType === "deviceIdentity.load" || commandType === "stateLease.verify" || commandType === "stateLease.renew" || commandType === "stateLease.release") return;
++			if (!runtime && typeof commandType === "string" && commandType.startsWith("placementTurns.")) {
++				if (placementTurnClaims?.isPlacementTurnClaimCommand({ type: commandType })) return;
++				return loadPlacementTurnClaims().then((loaded) => {
++					placementTurnClaims = loaded;
++					if (placementTurnClaims.isPlacementTurnClaimCommand({ type: commandType })) return;
++					return loadRuntime().then((loaded) => {
++						runtime = loaded;
++						return runtime.prepareSharedStateCommand(commandType);
++					});
++				});
++			}
+ 			if (runtime) return runtime.prepareSharedStateCommand(commandType);
+ 			return loadRuntime().then((loaded) => {
+ 				runtime = loaded;
+@@ -150,6 +163,7 @@
+ 					env: getSqliteWorkerStateContext().environment
+ 				}, open, nativeDatabase?.db.isOpen === true);
+ 			}
++			if (placementTurnClaims?.isPlacementTurnClaimCommand(command)) return placementTurnClaims.executePlacementTurnClaimCommand(command, open());
+ 			if (!runtime) throw new Error("Shared-state worker command runtime is not prepared");
+ 			return runtime.executeSharedStateCommand(command, context, open);
+ 		},

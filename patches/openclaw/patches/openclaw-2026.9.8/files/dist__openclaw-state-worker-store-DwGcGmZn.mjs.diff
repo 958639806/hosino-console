@@ -1,0 +1,56 @@
+diff -ruN a/dist/openclaw-state-worker-store-DwGcGmZn.mjs b/dist/openclaw-state-worker-store-DwGcGmZn.mjs
+--- a/dist/openclaw-state-worker-store-DwGcGmZn.mjs	2026-11-13 19:09:04.157025548 +0800
++++ b/dist/openclaw-state-worker-store-DwGcGmZn.mjs	2026-11-13 19:09:04.157025548 +0800
+@@ -1,3 +1,4 @@
++import { beginQqWorkerPrepareSpan, endQqWorkerPrepareSpan, bindQqWorkerPrepareObserver } from "./qq-host-latency-trace.mjs";
+ import { t as createDeferredCore } from "./deferred-D0La5CRk.mjs";
+ import { i as resolveGlobalSingleton } from "./global-singleton-BfHBYj6Y.mjs";
+ import { a as runInDetachedAsyncContext } from "./async-work-scope-ClifbwQr.mjs";
+@@ -564,11 +565,13 @@
+ 				const openingGuard = captureOpenClawStateWorkerOpeningGuard(context, assertCurrent);
+ 				const open = async () => {
+ 					try {
+-						return await openSharedStateSqliteWorkerStore({
++						const qqNativeOpenOptions = {
+ 							...source,
+ 							databasePath: admission.databasePath,
+ 							existingOnly
+-						}, context, openingGuard.assertCurrent, {
++						};
++						bindQqWorkerPrepareObserver(qqNativeOpenOptions, options);
++						return await openSharedStateSqliteWorkerStore(qqNativeOpenOptions, context, openingGuard.assertCurrent, {
+ 							maintenanceScope: context.maintenanceScope,
+ 							preparation,
+ 							retainCleanup: (cleanup) => {
+@@ -691,22 +694,30 @@
+ 	try {
+ 		context.admission.assertCurrent();
+ 		options?.assertCurrent?.();
++		const qqTerminalFailureSpan = beginQqWorkerPrepareSpan(options, "claim_terminal_failure");
+ 		const failure = await getOpenClawStateDatabaseTerminalFailureAsync(context);
++		endQqWorkerPrepareSpan(options, qqTerminalFailureSpan);
+ 		if (failure) throw failure;
+ 		context.admission.assertCurrent();
+ 		options?.assertCurrent?.();
++		const qqOwnerOpenSpan = beginQqWorkerPrepareSpan(options, "claim_owner_open");
+ 		const store = await getOpenClawStateWorkerOwner().open(context, options);
++		endQqWorkerPrepareSpan(options, qqOwnerOpenSpan);
+ 		context.admission.assertCurrent();
+ 		if (!store) {
+ 			if (options?.existingOnly) return;
+ 			throw new Error("Canonical shared-state worker did not open its database");
+ 		}
+ 		const releaseOperation = getOpenClawStateWorkerOwner().retainOperation(store);
++		const qqNativeOperationSpan = beginQqWorkerPrepareSpan(options, "claim_native_operation");
+ 		try {
+ 			context.admission.assertCurrent();
+ 			options?.assertCurrent?.();
+-			return await runWithOpenClawStateWorkerStore(store, context, operation, options?.assertCurrent, options?.createAdmission);
++			const qqObservedStateOperation = (scope) => operation(scope);
++			bindQqWorkerPrepareObserver(qqObservedStateOperation, options);
++			return await runWithOpenClawStateWorkerStore(store, context, qqObservedStateOperation, options?.assertCurrent, options?.createAdmission);
+ 		} finally {
++			endQqWorkerPrepareSpan(options, qqNativeOperationSpan);
+ 			releaseOperation();
+ 		}
+ 	} catch (error) {

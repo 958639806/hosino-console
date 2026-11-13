@@ -1,0 +1,29 @@
+diff -ruN a/dist/runtime-plugins-CsYRgcd7.mjs b/dist/runtime-plugins-CsYRgcd7.mjs
+--- a/dist/runtime-plugins-CsYRgcd7.mjs	2026-11-13 19:09:04.853060685 +0800
++++ b/dist/runtime-plugins-CsYRgcd7.mjs	2026-11-13 19:09:04.853060685 +0800
+@@ -195,6 +195,7 @@
+ //#endregion
+ //#region src/agents/runtime-plugins.ts
+ function resolveAgentRuntimePluginRegistryLoad(params) {
++	if (params.purpose !== void 0 && params.purpose !== "simple-completion" && params.purpose !== "model-catalog") throw new Error("Unsupported runtime plugin purpose");
+ 	const loadOptions = {
+ 		config: params.config,
+ 		activationSourceConfig: params.config && projectConfigOntoRuntimeSourceSnapshot(params.config),
+@@ -214,7 +215,7 @@
+ 	const workspaceDir = metadataSnapshot.workspaceDir ?? loadOptions.workspaceDir;
+ 	const requestPluginRegistry = getPluginRuntimeGatewayRequestScope()?.pluginRegistry;
+ 	const activePluginIds = listLoadedRuntimePluginIds();
+-	const startupPluginIds = params.purpose === "model-catalog" ? params.basePluginIds ?? [] : params.basePluginIds ?? (requestPluginRegistry ? listRuntimePluginIdsFromRegistry(requestPluginRegistry) : metadataSnapshot.pluginIds ?? (activePluginIds.length > 0 ? activePluginIds : void 0));
++	const startupPluginIds = params.purpose === "model-catalog" || params.purpose === "simple-completion" ? params.basePluginIds ?? [] : params.basePluginIds ?? (requestPluginRegistry ? listRuntimePluginIdsFromRegistry(requestPluginRegistry) : metadataSnapshot.pluginIds ?? (activePluginIds.length > 0 ? activePluginIds : void 0));
+ 	const plan = resolveAgentRuntimePluginLoadPlan({
+ 		config: params.config,
+ 		workspaceDir: workspaceDir ?? process.cwd(),
+@@ -240,7 +241,7 @@
+ }
+ function reusableAgentRuntimeRegistry(params, loadOptions) {
+ 	const pluginIds = loadOptions.onlyPluginIds;
+-	return params.reusableRegistry && pluginIds !== void 0 && (params.purpose !== "model-catalog" || listRuntimePluginIdsFromRegistry(params.reusableRegistry).every((pluginId) => pluginIds.includes(pluginId))) && registryContainsRuntimePluginIds(params.reusableRegistry, pluginIds) ? params.reusableRegistry : void 0;
++	return params.reusableRegistry && pluginIds !== void 0 && (params.purpose !== "model-catalog" && params.purpose !== "simple-completion" || listRuntimePluginIdsFromRegistry(params.reusableRegistry).every((pluginId) => pluginIds.includes(pluginId))) && registryContainsRuntimePluginIds(params.reusableRegistry, pluginIds) ? params.reusableRegistry : void 0;
+ }
+ function adoptAgentRuntimeRegistrations(pluginRegistry, params, config, channelSource) {
+ 	const activeRegistry = getActivePluginRegistry();

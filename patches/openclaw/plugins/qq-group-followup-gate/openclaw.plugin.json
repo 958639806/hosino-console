@@ -1,0 +1,249 @@
+{
+  "id": "qq-group-followup-gate",
+  "name": "QQ Group Follow-up Gate",
+  "description": "Full-receive QQ group helper: per-turn group hints (incl. restrained sticker/voice tag menu, persona line) + stay_silent tool + standby/NO_REPLY send filter + read-only post-restart warmup + group prompt-cache keepalive (heartbeat into the group session) + probabilistic lurk sticker",
+  "categories": [
+    "other"
+  ],
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "ttlMs": {
+        "type": "number",
+        "description": "Sticky follow-up window in ms"
+      },
+      "channels": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Channel ids to gate (default qqbot)"
+      },
+      "silentTool": {
+        "type": "boolean",
+        "description": "Register the stay_silent tool for QQ group sessions (default true)"
+      },
+      "silentToolExtraSessionPatterns": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Extra session-key regexes that also get stay_silent (testing only)"
+      },
+      "warmup": {
+        "type": "boolean",
+        "description": "Read-only post-restart warmup of recently active QQ group sessions (default true)"
+      },
+      "warmupDelayMs": {
+        "type": "number",
+        "description": "Delay after gateway start before the warmup runs (default 25000)"
+      },
+      "keepalive": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Group prompt-cache keepalive: invisible heartbeat turn in the group session when the group is quiet",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Enable keepalive (default false)"
+          },
+          "mode": {
+            "type": "string",
+            "enum": [
+              "live",
+              "log-only"
+            ],
+            "description": "live = run heartbeat beats; log-only = only log what would happen (default live)"
+          },
+          "agentId": {
+            "type": "string",
+            "description": "Agent id (default main)"
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            },
+            "description": "QQ group openids (32 hex) to keep warm"
+          },
+          "beatAfterMin": {
+            "type": "number",
+            "description": "Beat when the last cache use (real turn or beat) is this many minutes old (default 25)"
+          },
+          "quietMin": {
+            "type": "number",
+            "description": "Never beat if the group had a real message within this many minutes (default 20)"
+          },
+          "maxIdleMin": {
+            "type": "number",
+            "description": "Do not beat if the last cache use is older than this (cache presumed cold) (default 29)"
+          },
+          "maxQuietMin": {
+            "type": "number",
+            "description": "Stop beating after this many quiet minutes; 0 = unlimited (default 0)"
+          },
+          "checkEveryMs": {
+            "type": "number",
+            "description": "Scheduler tick (default 60000)"
+          },
+          "startupDelayMs": {
+            "type": "number",
+            "description": "Delay after gateway start before the scheduler starts (default 60000)"
+          },
+          "requireOwnerLastTurn": {
+            "type": "boolean",
+            "description": "Only beat when the last real turn was owner-class (heartbeat turns run as the owner) (default true)"
+          },
+          "hideFromTranscript": {
+            "type": "boolean",
+            "description": "Keep the beat's poll/NO_REPLY pair out of the OpenClaw transcript (default true)"
+          },
+          "minCachedRatio": {
+            "type": "number",
+            "description": "Circuit breaker: pause keepalive if a beat's cached-input ratio is below this (default 0.5)"
+          },
+          "breakerCooldownMin": {
+            "type": "number",
+            "description": "Circuit breaker pause in minutes (default 360)"
+          }
+        }
+      },
+      "lurkSticker": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "Probabilistic media-only 'lurking' sticker after a keepalive beat",
+        "properties": {
+          "enabled": {
+            "type": "boolean",
+            "description": "Enable (default false)"
+          },
+          "dryRun": {
+            "type": "boolean",
+            "description": "Log instead of sending (default false)"
+          },
+          "key": {
+            "type": "string",
+            "description": "Sticker key (file name before the first '-') (default 潜水)"
+          },
+          "probability": {
+            "type": "number",
+            "description": "Chance per fired beat, 0..1 (default 0.1)"
+          },
+          "minQuietMin": {
+            "type": "number",
+            "description": "Group must have been quiet at least this many minutes (default 25)"
+          },
+          "nightStart": {
+            "type": "string",
+            "description": "Night window start HH:MM, no stickers inside (default 00:00)"
+          },
+          "nightEnd": {
+            "type": "string",
+            "description": "Night window end HH:MM (default 08:00)"
+          },
+          "timeZone": {
+            "type": "string",
+            "description": "IANA time zone for the night window and the daily cap (default Asia/Singapore)"
+          },
+          "dailyCap": {
+            "type": "number",
+            "description": "Max lurk stickers per group per local day (default 3)"
+          },
+          "noConsecutive": {
+            "type": "boolean",
+            "description": "Never twice in a row: requires real group activity after the previous one (default true)"
+          },
+          "hideFromMenu": {
+            "type": "boolean",
+            "description": "Hide this key from the per-turn sticker tag menu (default true)"
+          },
+          "accountId": {
+            "type": "string",
+            "description": "qqbot account id (default 'default')"
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "string",
+              "pattern": "^\\s*[A-Fa-f0-9]{32}\\s*$"
+            },
+            "description": "Optional QQ group openids for proactive lurk stickers, intersected with keepalive.groups. Omitted keeps all configured keepalive groups; [] disables stickers in every group."
+          }
+        }
+      },
+      "controlledMediaJobs": {
+        "type": "object",
+        "additionalProperties": false,
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "execJobs": {
+            "type": "boolean",
+            "default": false
+          },
+          "groups": {
+            "type": "array",
+            "minItems": 1,
+            "items": {
+              "type": "string",
+              "pattern": "^[A-Fa-f0-9]{32}$"
+            }
+          },
+          "agentId": {
+            "type": "string"
+          },
+          "expectedScriptHashes": {
+            "type": "object",
+            "additionalProperties": {
+              "type": "string",
+              "pattern": "^[a-f0-9]{64}$"
+            }
+          },
+          "coreDist": {
+            "type": "string",
+            "minLength": 1
+          },
+          "scriptsRoot": {
+            "type": "string",
+            "minLength": 1
+          },
+          "runner": {
+            "type": "string",
+            "minLength": 1
+          },
+          "python": {
+            "type": "string",
+            "minLength": 1
+          },
+          "stateRoot": {
+            "type": "string",
+            "minLength": 1
+          },
+          "workRoot": {
+            "type": "string",
+            "minLength": 1
+          },
+          "artifactRoot": {
+            "type": "string",
+            "minLength": 1
+          }
+        },
+        "required": [
+          "enabled",
+          "groups",
+          "expectedScriptHashes"
+        ]
+      }
+    }
+  },
+  "contracts": {
+    "tools": [
+      "stay_silent"
+    ]
+  }
+}

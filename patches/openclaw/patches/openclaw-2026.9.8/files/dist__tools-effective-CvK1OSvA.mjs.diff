@@ -1,0 +1,24 @@
+diff -ruN a/dist/tools-effective-CvK1OSvA.mjs b/dist/tools-effective-CvK1OSvA.mjs
+--- a/dist/tools-effective-CvK1OSvA.mjs	2026-11-13 19:09:04.921064117 +0800
++++ b/dist/tools-effective-CvK1OSvA.mjs	2026-11-13 19:09:04.921064117 +0800
+@@ -114,8 +114,8 @@
+ 	resolveSessionMcpConfigSummary,
+ 	resolveSessionModelRef
+ };
+-const TOOLS_EFFECTIVE_FRESH_TTL_MS = 1e4;
+-const TOOLS_EFFECTIVE_STALE_TTL_MS = 12e4;
++const TOOLS_EFFECTIVE_FRESH_TTL_MS = 216e5; /* TOOLS-EFFECTIVE-CACHE-PATCH v1 (orig 1e4) */
++const TOOLS_EFFECTIVE_STALE_TTL_MS = 864e5; /* TOOLS-EFFECTIVE-CACHE-PATCH v1 (orig 12e4) */
+ const TOOLS_EFFECTIVE_SLOW_LOG_MS = 250;
+ const TOOLS_EFFECTIVE_CACHE_LIMIT = 128;
+ const MCP_CONFIG_SUMMARY_CACHE_LIMIT = 128;
+@@ -515,7 +515,8 @@
+ 		});
+ 		if (!trustedContext) return;
+ 		try {
+-			respond(true, await resolveReadOnlyToolsEffectiveInventory(trustedContext, dependencies), void 0);
++			/* TOOLS-EFFECTIVE-NONBLOCKING-PATCH v1: avoid main-thread runtime plugin cold load; agent tools unchanged. */
++                        respond(false, void 0, errorShape(ErrorCodes.UNAVAILABLE, "Tool inventory display temporarily unavailable to keep the gateway responsive."));
+ 		} catch (err) {
+ 			respond(false, void 0, errorShape(ErrorCodes.UNAVAILABLE, `tools.effective failed: ${String(err)}`));
+ 		}

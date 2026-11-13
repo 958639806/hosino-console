@@ -1,0 +1,11 @@
+diff -ruN a/dist/restart-recovery-state-DXIMXTjg.mjs b/dist/restart-recovery-state-DXIMXTjg.mjs
+--- a/dist/restart-recovery-state-DXIMXTjg.mjs	2026-11-13 19:09:04.845060282 +0800
++++ b/dist/restart-recovery-state-DXIMXTjg.mjs	2026-11-13 19:09:04.849060483 +0800
+@@ -264,6 +264,7 @@
+ 		restartRecoveryHarnessCompletion: void 0,
+ 		restartRecoveryRequesterAccountId: void 0,
+ 		restartRecoveryRequesterSenderId: void 0,
++		restartRecoveryQQRequesterAuthority: void 0,
+ 		restartRecoverySameChannelThreadRequired: void 0,
+ 		restartRecoverySourceIngress: void 0,
+ 		restartRecoverySourceReplyDeliveryMode: void 0,

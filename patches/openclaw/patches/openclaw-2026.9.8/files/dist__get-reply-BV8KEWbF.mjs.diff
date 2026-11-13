@@ -1,0 +1,162 @@
+diff -ruN a/dist/get-reply-BV8KEWbF.mjs b/dist/get-reply-BV8KEWbF.mjs
+--- a/dist/get-reply-BV8KEWbF.mjs	2026-11-13 19:09:04.077021510 +0800
++++ b/dist/get-reply-BV8KEWbF.mjs	2026-11-13 19:09:04.081021711 +0800
+@@ -1,3 +1,4 @@
++import { createQqHostLatencyTrace, qqHostLatencyTraceFromContext } from "./qq-host-latency-trace.mjs";
+ import { a as normalizeFastMode, c as normalizeOptionalLowercaseString, l as normalizeOptionalString, o as normalizeLowercaseStringOrEmpty } from "./string-coerce-6kR-86XC.mjs";
+ import { j as resolveIntegerOption, o as asDateTimestampMs, w as parseStrictPositiveInteger } from "./number-coercion-Dq1l5muL.mjs";
+ import { d as normalizeStringEntries, i as normalizeAtHashSlug, r as normalizeArrayBackedTrimmedStringList, y as uniqueStrings } from "./string-normalization-YMwDjufr.mjs";
+@@ -3541,6 +3542,7 @@
+ 			activeRunQueueAction,
+ 			activeSessionId: activeSessionId ?? resolveActiveQueueSessionId(),
+ 			queueMode: activeRunQueueMode,
++			queueDiagnostic: { key:sessionKey, channel:messageProvider, messageId:ctx.MessageSidFull ?? ctx.MessageSid },
+ 			interruptActiveRun: async () => {
+ 				if (activeRunInterruptTarget) return (await interruptReplyRunTarget(activeRunInterruptTarget, REPLY_RUN_IDLE_SETTLE_TIMEOUT_MS)).settled;
+ 				return storePath ? await interruptSessionWorkAdmissions({
+@@ -4344,9 +4346,36 @@
+ 		...userTurnTimestamp ? { timestamp: userTurnTimestamp } : {},
+ 		sender: persistChannelSender ? buildChannelUserTurnSender(sessionCtx) : void 0
+ 	} : void 0;
++	// QQ-MEM0-HOST-PREFETCH v1: authority captured once from host context, never from message metadata.
++	const memoryPrefetchSenderId = normalizeOptionalString(sessionCtx.SenderId);
++	const memoryPrefetchSourceTurnId = readChannelSourceTurnId(sessionCtx);
++	const hostMemoryPrefetchInput = messageProvider === "qqbot" && typeof sessionKey === "string" && sessionKey.length > 0 && memoryPrefetchSenderId && typeof command.senderIsOwner === "boolean" && memoryPrefetchSourceTurnId && memoryPrefetchSourceTurnId === sourceTurnId && !isHeartbeat && !isRoomEvent && ctx.InternalTurnSource === void 0 && sessionCtx.InternalTurnSource === void 0 && (!inputProvenance || inputProvenance.kind === "external_user") && !/:subagent:|:cron:/.test(sessionKey) ? Object.freeze({
++		sessionKey,
++		sourceTurnId: memoryPrefetchSourceTurnId,
++		requester: Object.freeze({ channel: messageProvider, accountId: normalizeAccountId(replyRoute.accountId), senderId: memoryPrefetchSenderId, senderIsOwner: command.senderIsOwner })
++	}) : void 0;
++
++	// Diagnostic-only: expose missing/borrowed-recorder producer evidence, never mint authority.
++	try {
++		const groupAlias = sessionKey === "agent:main:qqbot:group:__HS_GROUP_NEW_OPENID__" ? "new" : sessionKey === "agent:main:qqbot:group:__HS_GROUP_OLD_OPENID__" ? "old" : null;
++		if (groupAlias && messageProvider === "qqbot" && (!hostMemoryPrefetchInput || opts?.userTurnTranscriptRecorder) && typeof sourceTurnId === "string" && sourceTurnId && sourceTurnId.length <= 512) {
++			const digest = value => crypto.createHash("sha256").update(value).digest("hex");
++			console.info("[qq-mem0-host-producer] " + JSON.stringify({ schema: "qq-mem0-host-producer-v1", groupAlias,
++				sourceMessageHash: digest(sourceTurnId), sourceHashDomain: "persisted-user-idempotency-key-sha256",
++				...(typeof transportMessageId === "string" && transportMessageId && transportMessageId.length <= 512 ? { platformSourceHash: digest(transportMessageId), platformHashDomain: "transport-message-id-sha256" } : {}),
++				hostInputAvailable: Boolean(hostMemoryPrefetchInput), existingRecorder: Boolean(opts?.userTurnTranscriptRecorder),
++				senderAvailable: Boolean(memoryPrefetchSenderId), ownerBooleanAvailable: typeof command.senderIsOwner === "boolean",
++				memorySourceAvailable: Boolean(memoryPrefetchSourceTurnId), sourceIdsMatch: memoryPrefetchSourceTurnId === sourceTurnId,
++				heartbeat: isHeartbeat === true, roomEvent: isRoomEvent === true, internalTurnAbsent: ctx.InternalTurnSource === void 0 && sessionCtx.InternalTurnSource === void 0,
++				externalInput: !inputProvenance || inputProvenance.kind === "external_user", subagentOrCron: /:subagent:|:cron:/.test(sessionKey)
++			}));
++		}
++	} catch { /* Observation cannot affect recorder selection, guards, or persistence. */ }
++
+ 	const userTurnTranscriptRecorder = opts?.userTurnTranscriptRecorder ?? (userTurnInput ? createUserTurnTranscriptRecorder({
+ 		input: userTurnInput,
+ 		target: () => ({
++			...hostMemoryPrefetchInput ? { hostMemoryPrefetchInput } : {},
+ 			sessionId: preparedSessionState.sessionId,
+ 			sessionKey: sessionKey ?? preparedSessionState.sessionId,
+ 			sessionEntry: preparedSessionState.sessionEntry,
+@@ -4357,7 +4386,12 @@
+ 			config: cfg
+ 		}),
+ 		errorContext: "reply user turn transcript",
+-		beforeMessageWrite: runAgentHarnessBeforeMessageWriteHook,
++		// QQ-MEM0-HOST-PREFETCH v2: original host authority survives storage-target replacement.
++		beforeMessageWrite: (writeParams) => runAgentHarnessBeforeMessageWriteHook({
++			...writeParams,
++			// Explicit undefined also prevents an override target from lending caller authority.
++			hostMemoryPrefetchInput
++		}),
+ 		onMessagePersisted: isRoomEvent ? async () => await updateRoomEventAmbientTranscriptWatermark({
+ 			expectedSessionId: preparedSessionState.sessionId,
+ 			sessionCtx,
+@@ -4395,6 +4429,7 @@
+ 		currentInboundContext,
+ 		explicitSkillSelections: params.explicitSkillSelections,
+ 		...queuedFollowupAbortSignal ? { abortSignal: queuedFollowupAbortSignal } : {},
++		qqExplicitStopSource: opts?.qqExplicitStopSource,
+ 		deliveryCorrelations: opts?.queuedDeliveryCorrelations,
+ 		turnAdoptionLifecycle: opts?.turnAdoptionLifecycle,
+ 		...opts?.onFollowupQueueDisposition ? { onQueueDisposition: opts.onFollowupQueueDisposition } : {},
+@@ -4539,6 +4574,27 @@
+ 	const sourceReplyDeliveryRuntimeOptions = opts;
+ 	const channelOwnerAuthority = getCommandOwnerAuthority(sessionCtx);
+ 	if (command.senderIsOwner && channelOwnerAuthority) bindCommandOwnerAuthority(followupRun.run, channelOwnerAuthority);
++	else if (!channelOwnerAuthority) {
++		const qqSourceOwnerAuthority = captureQQDirectSourceOwnerAuthority({
++			existingAuthority: channelOwnerAuthority,
++			ownerAdmitted: command.senderIsOwner,
++			inboundAccessAuthorized: ctx.InboundAccessAuthorized,
++			senderIsSelf: ctx.SenderIsSelf,
++			chatType: replyRoute.chatType,
++			hostSource: hostMemoryPrefetchInput,
++			sessionKey,
++			sourceTurnId,
++			sourceMessageId,
++			commandSenderId: command.senderId,
++			sdkSenderId: sessionCtx.SenderId,
++			accountId: replyRoute.accountId,
++			target: replyRoute.to,
++			run: followupRun.run,
++			signal: opts?.abortSignal,
++			isConfiguredOwner: requester => isConfiguredCommandOwner(getRuntimeConfig(), requester)
++		});
++		if (qqSourceOwnerAuthority) bindCommandOwnerAuthority(followupRun.run, qqSourceOwnerAuthority);
++	}
+ 	if (sourceReplyDeliveryRuntimeOptions?.sourceReplyDeliveryModeOrigin) {
+ 		const sourceReplyDeliveryRuntime = createSourceReplyDeliveryRuntime({
+ 			origin: sourceReplyDeliveryRuntimeOptions.sourceReplyDeliveryModeOrigin,
+@@ -4614,6 +4670,31 @@
+ 	return createdCronCreatorAuthorityCapability ? runWithCronCreatorAuthorityCapability(createdCronCreatorAuthorityCapability, execute, opts?.abortSignal) : execute();
+ }
+ //#endregion
++// QQ-DIRECT-SOURCE-OWNER-CAPABILITY v1. A fresh SDK source may capture current configured owner checks.
++function captureQQDirectSourceOwnerAuthority(params) {
++	if (params.existingAuthority || params.ownerAdmitted !== true || params.inboundAccessAuthorized !== true || params.senderIsSelf === true || params.chatType !== "direct" || typeof params.hostSource !== "object" || params.hostSource === null || Array.isArray(params.hostSource) || typeof params.hostSource.requester !== "object" || params.hostSource.requester === null || Array.isArray(params.hostSource.requester) || !Object.isFrozen(params.hostSource) || !Object.isFrozen(params.hostSource.requester) || typeof params.isConfiguredOwner !== "function") return;
++	const source = params.hostSource;
++	const requester = source.requester;
++	const trim = value => typeof value === "string" ? value.trim() : "";
++	const actor = value => trim(value).replace(/^qqbot:/i, "").replace(/^(?:id|channel:qqbot):/i, "").toUpperCase();
++	const senderId = actor(requester.senderId);
++	const accountId = trim(requester.accountId);
++	const target = trim(params.target);
++	const peer = target.match(/^qqbot:(?:direct|c2c):([^:]+)$/i);
++	const sourceTurnId = trim(params.sourceTurnId);
++	const sourceMessageId = trim(params.sourceMessageId);
++	const sessionKey = trim(params.sessionKey);
++	const run = params.run;
++	if (requester.channel !== "qqbot" || requester.senderIsOwner !== true || !senderId || !accountId || !sourceTurnId || !sourceMessageId || !sessionKey || source.sessionKey !== sessionKey || source.sourceTurnId !== sourceTurnId || /:qqbot:group:|:cron:|:heartbeat:|:subagent:/i.test(sessionKey) || !peer || actor(peer[1]) !== senderId || actor(params.commandSenderId) !== senderId || actor(params.sdkSenderId) !== senderId || (trim(params.accountId) || "default") !== accountId || !run || run.senderIsOwner !== true || actor(run.senderId) !== senderId || String(run.messageProvider).toLowerCase() !== "qqbot" || (trim(run.agentAccountId) || "default") !== accountId || run.inputProvenance && run.inputProvenance.kind !== "external_user") return;
++	const owner = Object.freeze({ channel: "qqbot", accountId, senderId: trim(requester.senderId) });
++	const isCurrent = () => {
++		if (params.signal?.aborted || run.senderIsOwner !== true || actor(run.senderId) !== senderId || String(run.messageProvider).toLowerCase() !== "qqbot" || (trim(run.agentAccountId) || "default") !== accountId || run.inputProvenance && run.inputProvenance.kind !== "external_user") return false;
++		try { return params.isConfiguredOwner(owner) === true; }
++		catch { return false; }
++	};
++	return isCurrent() ? Object.freeze({ isCurrent }) : void 0;
++}
++// /QQ-DIRECT-SOURCE-OWNER-CAPABILITY v1
+ //#region src/auto-reply/reply/get-reply-run.ts
+ async function executePreparedReplyContext(context) {
+ 	const admission = await prepareReplyRunAdmission(context);
+@@ -6025,8 +6106,11 @@
+ 		isFastTestEnv,
+ 		configOverride
+ 	});
+-	const profilerEnabled = isReplyProfilerEnabled({ config: cfg });
++	const profilerEnabled = isReplyProfilerEnabled({ config: cfg }) || isQqPreparationProfileEnabled(ctx, opts);
++	const qqLatencyTrace = createQqHostLatencyTrace(ctx, opts, "resolver", replyResolverTimingLog, opts?.runId);
++	qqLatencyTrace?.point("resolver_enter");
+ 	const resolverTiming = createReplyTimingTracker({
++		qqLatencyTrace,
+ 		log: replyResolverTimingLog,
+ 		enabled: profilerEnabled
+ 	});
+@@ -6682,3 +6766,13 @@
+ }
+ //#endregion
+ export { prewarmReplyRunRuntimes as n, getReplyFromConfig as t };
++
++// QQ-PREPARATION-PROFILE-PATCH v1: diagnostics only, one authorized group.
++function isQqPreparationProfileEnabled(ctx, options) {
++	try {
++		if (process.env.OPENCLAW_QQ_PREPARATION_PROFILE !== "1" || options?.isHeartbeat === true || ctx?.InternalTurnSource != null) return false;
++		if (ctx?.SessionKey !== "agent:main:qqbot:group:__HS_GROUP_NEW_OPENID__") return false;
++		const channels = [ctx?.Provider, ctx?.Surface].filter((value) => value != null);
++		return channels.length > 0 && channels.every((value) => typeof value === "string" && value.trim().toLowerCase() === "qqbot");
++	} catch { return false; }
++}

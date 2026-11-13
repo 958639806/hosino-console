@@ -1,0 +1,212 @@
+diff -ruN a/dist/bootstrap-files-CnxP5PZe.mjs b/dist/bootstrap-files-CnxP5PZe.mjs
+--- a/dist/bootstrap-files-CnxP5PZe.mjs	2026-11-13 19:09:04.021018685 +0800
++++ b/dist/bootstrap-files-CnxP5PZe.mjs	2026-11-13 19:09:04.021018685 +0800
+@@ -1,3 +1,6 @@
++import { readNativeWorkspaceBootstrapDiagnosticSource } from "./native-workspace-bootstrap-diagnostics.mjs";
++import { n as sha256Hex } from "./node-crypto-BInnzoVt.mjs";
++import { t as createSubsystemLogger } from "./subsystem-CeqVSEVi.mjs";
+ import { l as normalizeOptionalString } from "./string-coerce-6kR-86XC.mjs";
+ import { o as resolveUserPath } from "./home-dir-CjKH62jd.mjs";
+ import "./utils-DUAwk2p5.mjs";
+@@ -18,6 +21,51 @@
+ import { i as getOrLoadBootstrapFiles } from "./bootstrap-cache-DzgX-eHd.mjs";
+ import { n as classifyActiveMemoryWorkspacePaths } from "./memory-runtime-OxiS29vI.mjs";
+ import path from "node:path";
++
++// OWNER-PRIVATE-BOOTSTRAP-GATE v3. Opaque host closures, never text/config guesses.
++const ownerPrivateBootstrapRequesters = new WeakMap();
++const ownerPrivateBootstrapFiles = new WeakSet();
++const BOOTSTRAP_REQUESTER_FIELDS = ["senderId", "senderIsOwner", "trigger", "sessionKey", "sessionId", "runId", "messageChannel", "messageProvider", "chatType", "abortSignal", "inputProvenance", "rootedExecution", "executionMode", "controlOperation", "workspaceDir", "bootstrapWorkspaceDir", "bootstrapUserProfileId", "agentId", "config"];
++function captureOwnerPrivateBootstrapRequester(input) {
++	try {
++	if (typeof input?.readParams !== "function" || typeof input.assertSourceCurrent !== "function") return;
++	const readParams = input.readParams;
++	const assertSourceCurrent = input.assertSourceCurrent;
++	const initial = readParams();
++	if (!initial || initial.senderIsOwner !== true || typeof initial.senderId !== "string" || !initial.senderId.trim() || initial.trigger !== "user" || input.channel !== "qqbot" || input.chatType !== "direct" || initial.rootedExecution || initial.controlOperation || initial.executionMode === "side-question" || /:group:|:channel:|:cron:|:heartbeat:|:subagent:/i.test(String(initial.sessionKey || ""))) return;
++	if (typeof initial.runId !== "string" || !initial.runId || typeof initial.sessionKey !== "string" || !initial.sessionKey || typeof initial.sessionId !== "string" || !initial.sessionId) return;
++	if (typeof input.workspaceDir !== "string" || !input.workspaceDir || typeof input.agentId !== "string" || !input.agentId) return;
++	if ((initial.chatType ?? initial.sessionEntry?.chatType) !== input.chatType) return;
++	const values = BOOTSTRAP_REQUESTER_FIELDS.map(field => initial[field]);
++	const sessionEntryChatType = initial.sessionEntry?.chatType;
++	const assertCurrent = () => {
++		const current = readParams();
++		if (!current || BOOTSTRAP_REQUESTER_FIELDS.some((field, index) => current[field] !== values[index]) || current.sessionEntry?.chatType !== sessionEntryChatType) throw new Error("BOOTSTRAP_REQUESTER_CHANGED");
++		current.abortSignal?.throwIfAborted();
++		assertSourceCurrent();
++		current.abortSignal?.throwIfAborted();
++	};
++	try { assertCurrent(); } catch { return; }
++	const capability = Object.freeze({});
++	ownerPrivateBootstrapRequesters.set(capability, Object.freeze({ assertCurrent, runId: initial.runId, sessionKey: initial.sessionKey, sessionId: initial.sessionId, chatType: input.chatType, agentId: input.agentId, workspaceDir: resolveUserPath(input.workspaceDir), bootstrapUserProfileId: initial.bootstrapUserProfileId }));
++	return capability;
++	} catch { return; }
++}
++function canInjectOwnerPrivateBootstrap(capability, target) {
++	const authority = capability && ownerPrivateBootstrapRequesters.get(capability);
++	if (!authority || !target || ["runId", "sessionKey", "sessionId", "chatType", "agentId", "bootstrapUserProfileId"].some(field => target[field] !== authority[field]) || typeof target.workspaceDir !== "string" || !target.workspaceDir) return false;
++	try { if (resolveUserPath(target.workspaceDir) !== authority.workspaceDir) return false; authority.assertCurrent(); return true; } catch { return false; }
++}
++function isOwnerPrivateBootstrapFile(file, workspaceDir, privateSources = []) {
++	if (!file || typeof file !== "object") return false;
++	if (ownerPrivateBootstrapFiles.has(file) || ["memory.md", "user.md"].includes(typeof file.name === "string" ? file.name.toLowerCase() : undefined) || file.personalUser === true) return true;
++	const sourcePath = getWorkspaceFileSourceRelativePath(file);
++	if (typeof sourcePath === "string" && ["memory.md", "user.md"].includes(path.posix.basename(path.posix.normalize(sourcePath.replaceAll("\\", "/"))).toLowerCase())) return true;
++	const filePath = normalizeOptionalString(file.path);
++	if (filePath && ["memory.md", "user.md"].includes(path.posix.basename(path.posix.normalize(filePath.replaceAll("\\", "/"))).toLowerCase())) return true;
++	return privateSources.some(source => workspaceFilesShareSourceIdentity(file, source));
++}
++
+ //#region src/agents/bootstrap-hooks.ts
+ /** Runs bootstrap hooks and returns the effective bootstrap file list. */
+ async function applyBootstrapHookOverrides(params) {
+@@ -117,7 +165,7 @@
+ 		warn(`${message} (sessionKey=${params.sessionLabel})`);
+ 	};
+ }
+-function sanitizeBootstrapFiles(files, workspaceDir, warn) {
++function sanitizeBootstrapFiles(files, workspaceDir, warn, privateSources = []) {
+ 	const workspaceRoot = resolveUserPath(workspaceDir);
+ 	const seenPaths = /* @__PURE__ */ new Set();
+ 	const sanitized = [];
+@@ -131,10 +179,12 @@
+ 		const dedupeKey = path.normalize(path.relative(workspaceRoot, resolvedPath));
+ 		if (seenPaths.has(dedupeKey)) continue;
+ 		seenPaths.add(dedupeKey);
+-		sanitized.push({
++		const sanitizedFile = {
+ 			...file,
+ 			path: resolvedPath
+-		});
++		};
++		if (isOwnerPrivateBootstrapFile(file, workspaceDir, privateSources)) ownerPrivateBootstrapFiles.add(sanitizedFile);
++		sanitized.push(sanitizedFile);
+ 	}
+ 	return sanitized;
+ }
+@@ -157,7 +207,8 @@
+ 	}
+ }
+ function filterBootstrapFilesAfterHooks(params) {
+-	const sessionFiltered = filterBootstrapFilesForSession(params.files, params.session);
++	const sessionFiles = filterBootstrapFilesForSession(params.files, params.session);
++	const sessionFiltered = canInjectOwnerPrivateBootstrap(params.ownerPrivateBootstrapRequester, params.requesterContext) ? sessionFiles : sessionFiles.filter(file => !isOwnerPrivateBootstrapFile(file, params.session?.workspaceDir, params.privateSources));
+ 	const protectedFiles = params.protectedFiles ?? [];
+ 	if (protectedFiles.length === 0) return sessionFiltered;
+ 	return sessionFiltered.filter((file) => !protectedFiles.some((protectedFile) => {
+@@ -168,8 +219,9 @@
+ 	}));
+ }
+ async function resolveIneligibleAutomaticMemoryFiles(params) {
+-	const candidates = params.files.filter((file) => !file.missing && (file.name === DEFAULT_MEMORY_FILENAME || file.name === "USER.md"));
+-	if (candidates.length === 0 || !params.config) return [];
++	const candidates = params.files.filter(file => !file.missing && isOwnerPrivateBootstrapFile(file, params.workspaceDir));
++	if (candidates.length === 0) return [];
++	if (!canInjectOwnerPrivateBootstrap(params.ownerPrivateBootstrapRequester, params.requesterContext) || !params.config) return candidates;
+ 	let agentId;
+ 	try {
+ 		agentId = params.agentId ?? resolveDefaultAgentId(params.config);
+@@ -192,16 +244,22 @@
+ 			})) } : {}
+ 		});
+ 		if (access && getAgentWorkspaceAccess(params.workspaceDir) !== access) throw new Error("Workspace access changed during memory classification");
++		if (!canInjectOwnerPrivateBootstrap(params.ownerPrivateBootstrapRequester, params.requesterContext)) return candidates;
+ 	} catch (error) {
+ 		params.warn?.(`excluding automatic memory context: ${String(error)}`);
+ 		return candidates;
+ 	}
+-	if (classificationResult.status === "unavailable") return [];
+-	if (classificationResult.status === "unsupported") {
++	if (classificationResult?.status === "unavailable") return candidates;
++	if (classificationResult?.status === "unsupported") {
+ 		params.warn?.("excluding automatic memory context: selected memory runtime does not support provenance classification");
+ 		return candidates;
+ 	}
+-	const origins = new Map(classificationResult.classifications.map((entry) => [entry.relativePath, entry.originClass]));
++	if (classificationResult?.status !== "classified" || !Array.isArray(classificationResult.classifications)) return candidates;
++	const origins = new Map();
++	for (const entry of classificationResult.classifications) {
++		if (!entry || typeof entry.relativePath !== "string" || typeof entry.originClass !== "string" || origins.has(entry.relativePath)) return candidates;
++		origins.set(entry.relativePath, entry.originClass);
++	}
+ 	return candidates.filter((_file, index) => !isMemoryOriginEligibleForAutomaticInjection(origins.get(relativePaths[index])));
+ }
+ /** Prepare the same bounded workspace facts without invoking run-owned bootstrap hooks. */
+@@ -230,9 +288,12 @@
+ 	const userIndex = sharedFiles.findIndex((file) => file.name === DEFAULT_USER_FILENAME);
+ 	const rawFiles = [...sharedFiles];
+ 	if (personalFile) rawFiles.splice(userIndex < 0 ? rawFiles.length : userIndex + 1, 0, personalFile);
++	const privateSources = rawFiles.filter(file => isOwnerPrivateBootstrapFile(file, params.workspaceDir));
+ 	const ineligibleAutomaticMemoryFiles = await resolveIneligibleAutomaticMemoryFiles({
+ 		files: rawFiles,
+ 		workspaceDir: params.workspaceDir,
++		ownerPrivateBootstrapRequester: params.ownerPrivateBootstrapRequester,
++		requesterContext: params,
+ 		config: params.config,
+ 		agentId: params.agentId,
+ 		warn: params.warn
+@@ -253,10 +314,13 @@
+ 	const filteredUpdated = filterCompletedWorkspaceBootstrapFile(filterBootstrapFilesAfterHooks({
+ 		files: typeof hooks === "object" ? [...hooked, ...hooks.projected] : hooked,
+ 		session,
+-		protectedFiles
++		protectedFiles,
++		privateSources,
++		requesterContext: params,
++		ownerPrivateBootstrapRequester: params.ownerPrivateBootstrapRequester
+ 	}), workspaceSetupCompleted, params.workspaceDir);
+ 	if (getAgentWorkspaceAccess(params.workspaceDir) !== access) throw new Error("Workspace access changed while preparing bootstrap context");
+-	return sanitizeBootstrapFiles(filteredUpdated, params.workspaceDir, params.warn);
++	return sanitizeBootstrapFiles(filteredUpdated, params.workspaceDir, params.warn, privateSources);
+ }
+ /** Resolves both raw bootstrap metadata and bounded context files for a run. */
+ async function resolveBootstrapContextForRun(params) {
+@@ -279,11 +343,46 @@
+ }
+ /** Builds bounded context files from already-resolved bootstrap file metadata. */
+ function buildBootstrapContextForFiles(bootstrapFiles, params) {
+-	return buildBootstrapContextFiles(bootstrapFiles, {
++	const privateAuthorized = canInjectOwnerPrivateBootstrap(params.ownerPrivateBootstrapRequester, params);
++	const files = privateAuthorized ? bootstrapFiles : bootstrapFiles.filter(file => !isOwnerPrivateBootstrapFile(file, params.workspaceDir));
++	const contextFiles = buildBootstrapContextFiles(files, {
+ 		maxChars: resolveBootstrapMaxChars(params.config, params.agentId),
+ 		totalMaxChars: resolveBootstrapTotalMaxChars(params.config, params.agentId),
+ 		warn: params.warn
+ 	});
++	observeOwnerPrivateBootstrapInjection(contextFiles, params, "final-context-builder");
++	return contextFiles;
+ }
++
+ //#endregion
+-export { resolveBootstrapContextForRun as a, resolveBootstrapFilesForRun as c, makeBootstrapWarn as i, resolveContextInjectionMode as l, buildBootstrapContextForFiles as n, resolveBootstrapContextWithProjectedHookFiles as o, hasCompletedBootstrapTurn as r, resolveBootstrapFilesForPreparation as s, FULL_BOOTSTRAP_COMPLETED_CUSTOM_TYPE as t };
++function observeOwnerPrivateBootstrapInjection(contextFiles, params, stage) {
++	if (!["final-context-builder", "native-workspace-return"].includes(stage)) return;
++	const diagnosticSource = readNativeWorkspaceBootstrapDiagnosticSource(params);
++	if (stage === "native-workspace-return" && !diagnosticSource) return;
++	const privateAuthorized = canInjectOwnerPrivateBootstrap(params.ownerPrivateBootstrapRequester, params);
++	try {
++		if (params.messageChannel === "qqbot" && typeof params.runId === "string" && params.runId && typeof params.sessionKey === "string" && params.sessionKey) {
++			const count = name => contextFiles.reduce((result, file) => {
++				if (typeof file.path === "string" && path.posix.basename(file.path.replaceAll("\\", "/")).toLowerCase() === name.toLowerCase() && typeof file.content === "string") { result.injected = true; result.chars += file.content.length; }
++				return result;
++			}, { injected: false, chars: 0 });
++			const memory = count(DEFAULT_MEMORY_FILENAME);
++			const user = count(DEFAULT_USER_FILENAME);
++			createSubsystemLogger("agents/bootstrap").info("[owner-private-bootstrap-injection] " + JSON.stringify({
++				schema: "owner-private-bootstrap-injection-v2",
++				stage,
++				sourceRunHash: sha256Hex("qq-claude-native-run-v1\0" + params.runId).slice(0, 24),
++				sourceMessageHash: diagnosticSource?.currentMessageId ? sha256Hex(diagnosticSource.currentMessageId).slice(0, 16) : null,
++				sessionHash: sha256Hex("owner-private-bootstrap-session-v1\0" + params.sessionKey).slice(0, 24),
++				privateAuthorized,
++				memoryInjected: memory.injected,
++				memoryChars: memory.chars,
++				userInjected: user.injected,
++				userChars: user.chars,
++				chatType: ["direct", "group", "channel"].includes(params.chatType) ? params.chatType : "unknown"
++			}));
++		}
++	} catch {}
++}
++
++export { observeOwnerPrivateBootstrapInjection, captureOwnerPrivateBootstrapRequester, resolveBootstrapContextForRun as a, resolveBootstrapFilesForRun as c, makeBootstrapWarn as i, resolveContextInjectionMode as l, buildBootstrapContextForFiles as n, resolveBootstrapContextWithProjectedHookFiles as o, hasCompletedBootstrapTurn as r, resolveBootstrapFilesForPreparation as s, FULL_BOOTSTRAP_COMPLETED_CUSTOM_TYPE as t };

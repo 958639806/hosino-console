@@ -1,0 +1,93 @@
+diff -ruN a/dist/session-entry-handle-BRPwkXaJ.mjs b/dist/session-entry-handle-BRPwkXaJ.mjs
+--- a/dist/session-entry-handle-BRPwkXaJ.mjs	2026-11-13 19:09:04.877061896 +0800
++++ b/dist/session-entry-handle-BRPwkXaJ.mjs	2026-11-13 19:09:04.877061896 +0800
+@@ -1,3 +1,5 @@
++import { beginQQReplyAdmissionActiveWait, endQQReplyAdmissionActiveWait } from './qq-reply-admission-trace.mjs';
++import { beginQqAdmissionSpan, endQqAdmissionSpan, noteQqAdmissionCount } from "./qq-host-latency-trace.mjs";
+ import { t as createDeferredCore } from "./deferred-D0La5CRk.mjs";
+ import { a as getGatewayContextResolver, t as bindGatewayContextResolver } from "./gateway-context-binding-VqB7gkMe.mjs";
+ import { a as getPluginRuntimeGatewayRequestScope, s as withPluginRuntimeGatewayContextResolver } from "./gateway-request-scope-Da9jAC9_.mjs";
+@@ -176,7 +178,9 @@
+ /** Waits for or claims the per-session reply run slot. */
+ async function admitReplyTurn(params) {
+ 	const activeAtAdmission = replyRunRegistry.get(params.sessionKey);
+-	const releaseForeground = params.kind === "visible" ? await beginForegroundSessionMaintenance(params.sessionKey) : void 0;
++	const qqForegroundSpan = beginQqAdmissionSpan(params.qqAdmissionTrace, "foreground_maintenance");
++	const releaseForeground = params.kind === "visible" ? await beginForegroundSessionMaintenance(params.sessionKey, params.qqAdmissionTrace) : void 0;
++	endQqAdmissionSpan(params.qqAdmissionTrace, qqForegroundSpan);
+ 	let foregroundTransferred = false;
+ 	let sessionId = activeAtAdmission?.result ? activeAtAdmission.sessionId : params.sessionId;
+ 	const resolveGatewayContext = params.adoptOperation ? getGatewayContextResolver(params.adoptOperation) : Object.hasOwn(params, "resolveGatewayContext") ? params.resolveGatewayContext : getPluginRuntimeGatewayRequestScope()?.resolveGatewayContext;
+@@ -261,7 +265,9 @@
+ 				let recoveryOwnerLease;
+ 				let interruptedBeforeOperation = false;
+ 				let recoveryClaimStarted = false;
++				const qqLifecycleSpan = beginQqAdmissionSpan(params.qqAdmissionTrace, "lifecycle_admission");
+ 				const admission = storePath ? await beginSessionWorkAdmission({
++					qqAdmissionTrace: params.qqAdmissionTrace,
+ 					scope: storePath,
+ 					resolveGatewayContext,
+ 					identities: [params.sessionKey],
+@@ -279,6 +285,7 @@
+ 							assertDatabaseOwnerCurrent();
+ 							if (!admitting || interruptedBeforeOperation || lifecycleGeneration !== getAgentEventLifecycleGeneration()) throw new SessionWorkStartChangedError("Session changed while waiting for state admission.");
+ 						};
++						const qqDatabaseSpan = beginQqAdmissionSpan(params.qqAdmissionTrace, "database_entry");
+ 						const current = await loadSessionEntryForAdmission({
+ 							agentId: params.agentId,
+ 							storePath,
+@@ -286,8 +293,10 @@
+ 							readConsistency: "latest"
+ 						}, {
+ 							signal,
+-							assertCurrent
++							assertCurrent,
++							qqAdmissionTrace: params.qqAdmissionTrace
+ 						});
++						endQqAdmissionSpan(params.qqAdmissionTrace, qqDatabaseSpan);
+ 						if (!admitting || interruptedBeforeOperation || params.upstreamAbortSignal?.aborted) {
+ 							await current.databaseClaim.release();
+ 							throw new SessionWorkStartChangedError("Session changed during state admission.");
+@@ -301,7 +310,9 @@
+ 						assertDatabaseOwnerCurrent(current.databaseClaim);
+ 						const previousDatabaseClaim = admittedDatabaseClaim;
+ 						admittedDatabaseClaim = current.databaseClaim;
++						const qqClaimReleaseSpan = beginQqAdmissionSpan(params.qqAdmissionTrace, "database_claim_release");
+ 						await previousDatabaseClaim?.release();
++						endQqAdmissionSpan(params.qqAdmissionTrace, qqClaimReleaseSpan);
+ 						signal.throwIfAborted();
+ 						assertCurrent();
+ 						const currentEntry = current.entry;
+@@ -339,6 +350,7 @@
+ 						sessionId = currentEntry?.sessionId ?? sessionId;
+ 					}
+ 				}) : void 0;
++				endQqAdmissionSpan(params.qqAdmissionTrace, qqLifecycleSpan);
+ 				try {
+ 					if (isReplyRunSuccessorAdmissionBlocked(params.sessionKey)) throw new ReplyRunSuccessorAdmissionBlockedError(params.sessionKey);
+ 					const mayWaitForRecoveryOwner = storePath && !params.resetTriggered && params.allowRestartTombstoneParentFork !== true;
+@@ -548,7 +560,14 @@
+ 				};
+ 				const activeWaitTimeoutMs = params.kind === "visible" ? resolveVisibleActiveWaitMs(activeOperation) : waitTimeoutMs;
+ 				const activeDatabaseIdentity = activeOperation ? lifecycleAdmissionByOperation.get(activeOperation)?.databaseIdentity : void 0;
+-				if (!await replyRunRegistry.waitForIdle(params.sessionKey, activeWaitTimeoutMs, { signal: params.upstreamAbortSignal })) {
++				const qqActiveWaitEdge = beginQQReplyAdmissionActiveWait(params.qqReplyAdmissionTicket, activeOperation);
++				let activeWaitEnded;
++				try {
++					activeWaitEnded = await replyRunRegistry.waitForIdle(params.sessionKey, activeWaitTimeoutMs, { signal: params.upstreamAbortSignal });
++				} finally {
++					endQQReplyAdmissionActiveWait(qqActiveWaitEdge, activeWaitEnded === true ? "ready" : activeWaitEnded === false ? "not-ready" : "error");
++				}
++				if (!activeWaitEnded) {
+ 					if (params.kind === "visible" && !isAbortSignalAborted(params.upstreamAbortSignal)) {
+ 						const latestActiveOperation = replyRunRegistry.get(params.sessionKey);
+ 						expireVisibleStaleOperation(latestActiveOperation ?? activeOperation);
+@@ -593,7 +612,7 @@
+ 		config: params.config,
+ 		env: params.env
+ 	});
+-	const timing = createStageTimingTracker();
++	const timing = createStageTimingTracker(void 0, params.qqLatencyTrace?.onStage);
+ 	let didLog = false;
+ 	const totalWarnMs = params.totalWarnMs ?? (profilerEnabled ? 1e3 : 1e4);
+ 	const stageWarnMs = params.stageWarnMs ?? (profilerEnabled ? 500 : 5e3);

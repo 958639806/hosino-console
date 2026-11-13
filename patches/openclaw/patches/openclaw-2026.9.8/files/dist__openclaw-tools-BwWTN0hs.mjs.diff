@@ -1,0 +1,491 @@
+diff -ruN a/dist/openclaw-tools-BwWTN0hs.mjs b/dist/openclaw-tools-BwWTN0hs.mjs
+--- a/dist/openclaw-tools-BwWTN0hs.mjs	2026-11-13 19:09:04.161025751 +0800
++++ b/dist/openclaw-tools-BwWTN0hs.mjs	2026-11-13 19:09:04.161025751 +0800
+@@ -1,3 +1,4 @@
++import { n as normalizeConversationPeerId, t as buildConversationRef } from "./conversation-ref-C2GC3TG4.mjs";
+ import { a as normalizeFastMode, c as normalizeOptionalLowercaseString, g as readStringValue, l as normalizeOptionalString, o as normalizeLowercaseStringOrEmpty, u as normalizeOptionalStringifiedId } from "./string-coerce-6kR-86XC.mjs";
+ import { d as asPositiveSafeInteger, j as resolveIntegerOption, s as asFiniteNumber, u as asPositiveFiniteNumber } from "./number-coercion-Dq1l5muL.mjs";
+ import { a as runInDetachedAsyncContext, c as trackAsyncWork, o as runOutsideAsyncWorkScope, t as AsyncWorkScope } from "./async-work-scope-ClifbwQr.mjs";
+@@ -2963,6 +2964,24 @@
+ function requireOwner(options) {
+ 	if (options.senderIsOwner === false) throw new ToolAuthorizationError("Conversation tools require owner access");
+ }
++// QQ-CONVERSATION-SOURCE-COMPLETION v1: classify only a trusted current direct source.
++function resolveQQConversationSourceCompletion(action, options, requestedRef, result) {
++	if (action !== "send" || options.sourceReplyDeliveryMode !== "message_tool_only" || normalizeMessageChannel(options.agentChannel) !== "qqbot" || options.currentChatType !== "direct") return;
++	if (!result || typeof result !== "object" || Array.isArray(result) || result.status !== "sent" || result.channel !== "qqbot" || result.isError === true || result.error) return;
++	if (typeof options.agentAccountId !== "string" || !options.agentAccountId.trim()) return;
++	if ([options.currentThreadTs, options.agentThreadId].some((value) => value != null && (typeof value !== "string" || value.trim() !== ""))) return;
++	const targets = [options.currentMessagingTarget, options.agentTo, options.currentChannelId];
++	if (targets.some((value) => value != null && typeof value !== "string")) return;
++	const currentTargets = targets.filter((value) => typeof value === "string" && value.trim()).map((value) => value.trim());
++	if (!currentTargets.length || currentTargets.some((value) => !/^(?:qqbot:)?(?:c2c:)?[0-9a-f]{32}$/i.test(value))) return;
++	const peerIds = currentTargets.map((value) => normalizeConversationPeerId("qqbot", value));
++	if (peerIds.some((value) => value !== peerIds[0])) return;
++	const expectedRef = buildConversationRef({ channel: "qqbot", accountId: normalizeAccountId(options.agentAccountId), kind: "direct", peerId: peerIds[0] });
++	if (requestedRef !== expectedRef || result.conversationRef !== expectedRef) return;
++	const messageId = typeof result.messageId === "string" ? result.messageId.trim() : "";
++	if (!messageId || messageId.length > 4096 || /\s/.test(messageId) || ["unknown", "skipped", "suppressed", "queued", "pending", "dry-run", "dry_run", "not-sent"].includes(messageId.toLowerCase())) return;
++	return { status: "settled", partialDelivery: false, createdThreadIds: [], primaryPlatformMessageId: messageId, sourceReplyDelivered: true };
++}
+ function conversationMessageExecutor(action, options, deps) {
+ 	return async (toolCallId, args, signal) => {
+ 		requireOwner(options);
+@@ -3004,7 +3023,10 @@
+ 				}, { timeoutMs: 5e3 });
+ 			};
+ 		}
+-		return jsonResult(await deps.callGateway(request));
++		const result = await deps.callGateway(request);
++		const response = jsonResult(result);
++		const sourceCompletion = resolveQQConversationSourceCompletion(action, options, conversationRef, result);
++		return sourceCompletion ? attachEmbeddedMessageDeliveryFact(response, sourceCompletion) : response;
+ 	};
+ }
+ function createConversationsListTool(options = {}, deps = defaultDeps) {
+@@ -8067,6 +8089,38 @@
+ //#region src/agents/tools/message-tool-execution.ts
+ const POLL_VOTE_ECHO_TTL_MS = 3e4;
+ const recentPollVoteBySession = /* @__PURE__ */ new Map();
++// QQ-MEDIA-CURRENT-SOURCE-ROUTE v1. A delivery fact, independent of final reply.
++function markQQCurrentSourceRouteDelivery(fact, source) {
++  if (source.action !== "send" || source.currentSourceReply !== true || source.dryRun === true || fact?.status !== "settled" || fact.partialDelivery !== false || typeof fact.primaryPlatformMessageId !== "string" || !fact.primaryPlatformMessageId.trim()) return;
++  if (String(source.channel || "").trim().toLowerCase() !== "qqbot" || [source.sessionKey, source.runId, source.accountId].some(value => typeof value !== "string" || !value.trim())) return;
++  fact.sourceRouteDelivered = true;
++  fact.currentSourceRouteFact = {
++    schema: "qq-current-source-route-delivery-v1",
++    bindingSha256: createHash("sha256").update(JSON.stringify([source.sessionKey, source.runId, "qqbot", source.accountId])).digest("hex"),
++    // Temporary bounded contract diagnostics: no route, identity or text values.
++    sessionHash: createHash("sha256").update("qq-media-contract-diag-v2\0" + source.sessionKey).digest("hex").slice(0, 16),
++    runHash: createHash("sha256").update("qq-media-contract-diag-v2\0" + source.runId).digest("hex").slice(0, 16),
++    accountHash: createHash("sha256").update("qq-media-contract-diag-v2\0" + source.accountId).digest("hex").slice(0, 16),
++  };
++  /* HOSINO-C2C-SKIP-AUTO-AFTER-FINAL v1: remember only qqbot c2c current-source finals. Group targets are ignored. */
++  try {
++    if (source.final !== false && process.env.OPENCLAW_QQ_C2C_SKIP_AUTO_AFTER_FINAL !== "0") {
++      const to = String(source.to || "").trim();
++      if (/(^|:)c2c:/i.test(to) && !/(^|:)group:/i.test(to)) {
++        const KEY = Symbol.for("hosino.qq.c2cSourceFinal.v1");
++        if (!globalThis[KEY]) Object.defineProperty(globalThis, KEY, { value: { map: new Map() }, enumerable: false, configurable: true });
++        const slot = globalThis[KEY];
++        const now = Date.now();
++        for (const [k, rec] of slot.map) if (!rec || rec.expiresAt <= now) slot.map.delete(k);
++        if (slot.map.size >= 256) slot.map.clear();
++        const rec = { expiresAt: now + 5 * 60 * 1000 };
++        slot.map.set(`run:${source.sessionKey}\0${source.runId}\0${source.accountId}`, rec);
++        slot.map.set(`to:${source.sessionKey}\0${source.accountId}\0${to.toLowerCase()}`, rec);
++      }
++    }
++  } catch {}
++}
++
+ function createMessageTool(options) {
+ 	const loadConfigForTool = options?.getRuntimeConfig ?? getRuntimeConfig;
+ 	const getScopedSecretTargetsForTool = options?.getScopedChannelsCommandSecretTargets ?? getScopedChannelsCommandSecretTargets;
+@@ -8416,6 +8470,7 @@
+ 				})) assertActionCurrent();
+ 				const messageDelivery = projectEmbeddedMessageDeliveryFact(result, currentSourceReply);
+ 				groupThread.record(result, sourceReply, currentSourceReply, requestedSourceReplyFinal);
++				markQQCurrentSourceRouteDelivery(messageDelivery, { action, currentSourceReply, dryRun: result.dryRun, sessionKey: options?.agentSessionKey, runId: options?.runId, channel: inferredCurrentChannel.currentChannelProvider, accountId: agentAccountId, to: result?.to, final: requestedSourceReplyFinal });
+ 				if (messageDelivery?.status === "settled" && !messageDelivery.partialDelivery && requestedSourceReplyFinal !== false && !result.dryRun && currentSourceReply) messageDelivery.sourceReplyDelivered = true;
+ 				if (action === "poll-vote" && pollVoteEchoRoute && pollEchoSessionKey && sourceReplySinkDeliveryMode === "message_tool_only") {
+ 					const details = toolResult?.details;
+@@ -11496,6 +11551,49 @@
+ 		})
+ 	};
+ }
++// Passive per-call metadata only; it grants no execution or session authority.
++const QQ_SESSION_STATUS_GROUPS = new Map([
++  ["agent:main:qqbot:group:__HS_GROUP_OLD_OPENID__", "old"],
++  ["agent:main:qqbot:group:__HS_GROUP_NEW_OPENID__", "new"]
++]);
++const QQ_SESSION_STATUS_STAGES = new Set(["thinking_catalog", "status_runtime_import", "status_body", "provider_usage", "session_cost", "plugin_health"]);
++let qqSessionStatusOrdinal = 0;
++function createQqSessionStatusTiming(toolCallId, sessionKey) {
++  try {
++    const groupAlias = QQ_SESSION_STATUS_GROUPS.get(sessionKey);
++    if (!groupAlias || typeof toolCallId !== "string" || !toolCallId || toolCallId.length > 512 || /[\x00-\x1f]/.test(toolCallId) || qqSessionStatusOrdinal >= Number.MAX_SAFE_INTEGER) return null;
++    const toolCallHash = createHash("sha256").update(toolCallId).digest("hex");
++    toolCallId = sessionKey = undefined;
++    const invocationOrdinal = ++qqSessionStatusOrdinal;
++    const spans = [];
++    let dropped = 0, closed = false;
++    const now = () => { try { return Number(process.hrtime.bigint()) / 1e6; } catch { return null; } };
++    const record = (stage, beganMonoMs, endedMonoMs, outcome) => {
++      try {
++        if (closed || !QQ_SESSION_STATUS_STAGES.has(stage) || !["fulfilled", "threw"].includes(outcome)) return;
++        if (spans.length >= 12) { dropped++; return; }
++        const valid = typeof beganMonoMs === "number" && Number.isFinite(beganMonoMs) && typeof endedMonoMs === "number" && Number.isFinite(endedMonoMs) && endedMonoMs >= beganMonoMs;
++        spans.push({ stage, beganMonoMs: valid ? beganMonoMs : null, endedMonoMs: valid ? endedMonoMs : null, durationMs: valid ? Math.round((endedMonoMs - beganMonoMs) * 1000) / 1000 : null, outcome });
++      } catch {}
++    };
++    return Object.freeze({
++      record,
++      async measure(stage, run) {
++        const began = now(); let outcome = "fulfilled";
++        try { return await run(); } catch (error) { outcome = "threw"; throw error; }
++        finally { record(stage, began, now(), outcome); }
++      },
++      close() {
++        try {
++          if (closed) return; closed = true;
++          console.info("[qq-session-status-timing] " + JSON.stringify({ schema: "qq-session-status-timing-v1", groupAlias, toolCallHash, invocationOrdinal,
++            bindingKind: "approved-scoped-session-and-host-tool-call-sha256-only", requiresExplicitSdkCoreBridge: true, sourceMatchedNotAsserted: true,
++            clockKind: "process.hrtime.bigint-monotonic-ms", spansMayOverlap: true, spans, droppedSpanCount: dropped, missingFieldsAreUnknown: true }));
++        } catch {}
++      }
++    });
++  } catch { return null; }
++}
+ const loadCommandsStatusRuntime = createLazyPromise(() => import("./status-text-CdIGMRcA.mjs"));
+ const INTERNAL_SESSION_KEY_ORIGIN_PREFIXES = /* @__PURE__ */ new Set([
+ 	"main",
+@@ -11857,15 +11955,19 @@
+ 					const providerForCard = statusSessionEntry.providerOverride?.trim() ?? defaultProviderForCard;
+ 					const primaryModelLabel = providerForCard && defaultModelForCard ? `${providerForCard}/${defaultModelForCard}` : defaultModelForCard;
+ 					const isGroup = statusSessionEntry.chatType === "group" || statusSessionEntry.chatType === "channel" || scopedResolved.key.includes(":group:") || scopedResolved.key.includes(":channel:");
+-					const thinkingCatalog = await loadPublishedPreparedModelCatalog({
++					const qqStatusTiming = createQqSessionStatusTiming(_toolCallId, scopedResolved.key);
++					const measureStatus = qqStatusTiming?.measure ?? ((_stage, run) => run());
++					let fullStatusText;
++					try {
++					const thinkingCatalog = await measureStatus("thinking_catalog", () => loadPublishedPreparedModelCatalog({
+ 						config: cfg,
+ 						agentId,
+ 						agentDir: selectedAgentDir,
+ 						readOnly: true,
+ 						...statusSessionEntry.spawnedWorkspaceDir ? { workspaceDir: statusSessionEntry.spawnedWorkspaceDir } : {}
+-					});
+-					const { buildStatusText } = await loadCommandsStatusRuntime();
+-					const fullStatusText = await buildStatusText({
++					}));
++					const { buildStatusText } = await measureStatus("status_runtime_import", () => loadCommandsStatusRuntime());
++					fullStatusText = await measureStatus("status_body", () => buildStatusText({
+ 						cfg,
+ 						agentId,
+ 						sessionEntry: statusSessionEntry,
+@@ -11895,8 +11997,10 @@
+ 						defaultGroupActivation: () => "mention",
+ 						primaryModelLabelOverride: primaryModelLabel,
+ 						...providerForCard ? {} : { modelAuthOverride: void 0 },
+-						includeTranscriptUsage: true
+-					});
++						includeTranscriptUsage: true,
++						...(qqStatusTiming ? { parallelIndependentStatusReadouts: true, recordStatusStageTiming: qqStatusTiming.record } : {})
++					}));
++					} finally { qqStatusTiming?.close(); }
+ 					const resultOverrideProvider = statusSessionEntry.providerOverride?.trim();
+ 					const resultOverrideModel = statusSessionEntry.modelOverride?.trim();
+ 					const activeRouteRunSessionKey = opts?.runSessionKey?.trim();
+@@ -17025,6 +17129,100 @@
+ 		...warning ? { warning } : {}
+ 	};
+ }
++// QQ-WEB-FETCH-STAGE-DIAGNOSTICS v1: numeric observations; no authority or request changes.
++const QQ_WEB_FETCH_TIMINGS = new WeakSet();
++const QQ_WEB_FETCH_TIMING_STAGES = new Set(["guard_load", "guarded_request_headers", "body_read", "extractors", "fallback_resolve", "fallback_execute", "basic_extract", "build_result", "release"]);
++const QQ_WEB_FETCH_TIMING_DETAILS = new Set(["fallback_runtime_load", "fallback_definition_resolve"]);
++let qqWebFetchTimingOrdinal = 0, qqWebFetchTimingWindowStart = null, qqWebFetchTimingWindowCount = 0, qqWebFetchTimingDropped = 0;
++function qqWebFetchTimingNow() {
++	try { const n = Number(process.hrtime.bigint()) / 1e6; return Number.isFinite(n) && n >= 0 ? n : null; } catch { return null; }
++}
++function beginWebFetchTiming(toolCallId) {
++	try {
++		if (process.env.OPENCLAW_QQ_PREPARATION_PROFILE !== "1" || typeof toolCallId !== "string" || toolCallId.length < 1 || toolCallId.length > 512 || /[\x00-\x1f]/.test(toolCallId) || qqWebFetchTimingOrdinal >= Number.MAX_SAFE_INTEGER) return null;
++		const beganMonoMs = qqWebFetchTimingNow(); if (beganMonoMs === null) return null;
++		const state = { toolCallHash: createHash("sha256").update(toolCallId).digest("hex"), invocationOrdinal: ++qqWebFetchTimingOrdinal, beganMonoMs, spans: [], overflow: 0, clockErrors: 0, finished: false, cacheHit: null, resultStatus: null, bodyBytes: null, resultExtractor: null, providerResolution: {}, providerResolutionEventCount: 0, providerResolutionOverflow: 0 };
++		QQ_WEB_FETCH_TIMINGS.add(state); return state;
++	} catch { return null; }
++}
++function beginWebFetchStage(state, stage) {
++	try {
++		if (!state || !QQ_WEB_FETCH_TIMINGS.has(state) || state.finished || !QQ_WEB_FETCH_TIMING_STAGES.has(stage) && !QQ_WEB_FETCH_TIMING_DETAILS.has(stage)) return null;
++		if (state.spans.length >= 32) { state.overflow = Math.min(65535, state.overflow + 1); return null; }
++		const beganMonoMs = qqWebFetchTimingNow();
++		if (beganMonoMs === null) { state.clockErrors = Math.min(65535, state.clockErrors + 1); return null; }
++		const span = { stage, beganMonoMs, endedMonoMs: null, complete: false }; state.spans.push(span); return span;
++	} catch { return null; }
++}
++function endWebFetchStage(state, span) {
++	try {
++		if (!state || !QQ_WEB_FETCH_TIMINGS.has(state) || state.finished || !span || !state.spans.includes(span) || span.complete) return;
++		span.complete = true; const now = qqWebFetchTimingNow();
++		if (now === null || now < span.beganMonoMs) state.clockErrors = Math.min(65535, state.clockErrors + 1);
++		else span.endedMonoMs = now;
++	} catch {}
++}
++function noteWebFetchTiming(state, key, value) {
++	try {
++		if (!state || !QQ_WEB_FETCH_TIMINGS.has(state) || state.finished) return;
++		if (key === "cacheHit" && typeof value === "boolean") state.cacheHit = value;
++		else if (key === "bodyBytes" && Number.isInteger(value) && value >= 0 && value <= Number.MAX_SAFE_INTEGER) state.bodyBytes = value;
++		else if (key === "resultStatus" && Number.isInteger(value) && value >= 100 && value <= 599) state.resultStatus = value;
++		else if (key === "resultExtractor") state.resultExtractor = ["raw", "raw-html", "cf-markdown", "json", "readability", "firecrawl", "jina", "tavily", "parallel", "exa"].includes(value) ? value : typeof value === "string" ? "other" : null;
++	} catch {}
++}
++function createWebFetchProviderResolutionObserver(state) {
++	try {
++		if (!state || !QQ_WEB_FETCH_TIMINGS.has(state) || state.finished) return;
++		const enums = {
++			directoryCacheOutcome: ["hit", "miss", "not_checked"],
++			candidateScopeKind: ["omitted", "empty", "nonempty"],
++			compatibleOutcome: ["hit", "miss"],
++			selectedPath: ["compatible", "load_in_flight", "empty_scope", "bundled_artifact", "full_loader", "setup_artifact", "setup_loader"],
++			loaderCacheOutcome: ["hit", "miss", "disabled"]
++		};
++		const booleans = new Set(["inFlight", "loaderCacheEnabled", "preparedManifestRegistry"]);
++		const counts = new Set(["candidateCount", "compatibleProviderCount", "directoryProviderCount"]);
++		const durations = new Set(["directoryMs", "contextMs", "compatibilityMs", "inFlightCheckMs", "bundledArtifactMs", "loaderMs", "loaderContextMs", "loaderCacheLookupMs", "loaderCachedFinalizeMs", "providerSelectionMs", "providerCreateToolMs"]);
++		return (key, value) => {
++			try {
++				if (state.finished || !QQ_WEB_FETCH_TIMINGS.has(state)) return;
++				let accepted;
++				if (typeof key !== "string") return;
++				if (Object.hasOwn(enums, key) && typeof value === "string" && enums[key].includes(value)) accepted = value;
++				else if (booleans.has(key) && typeof value === "boolean") accepted = value;
++				else if (counts.has(key) && Number.isSafeInteger(value) && value >= 0 && value <= 65535) accepted = value;
++				else if (durations.has(key) && Number.isFinite(value) && value >= 0) accepted = Math.round(value * 1000) / 1000;
++				else return;
++				if (state.providerResolutionEventCount >= 96) { state.providerResolutionOverflow = Math.min(65535, state.providerResolutionOverflow + 1); return; }
++				state.providerResolutionEventCount++;
++				state.providerResolution[key] = accepted;
++			} catch {}
++		};
++	} catch { return; }
++}
++function finishWebFetchTiming(state, succeeded, signal) {
++	try {
++		if (!state || !QQ_WEB_FETCH_TIMINGS.has(state) || state.finished) return;
++		state.finished = true; const endedMonoMs = qqWebFetchTimingNow();
++		if (endedMonoMs === null || endedMonoMs < state.beganMonoMs) state.clockErrors = Math.min(65535, state.clockErrors + 1);
++		if (endedMonoMs === null) return;
++		if (qqWebFetchTimingWindowStart === null || endedMonoMs - qqWebFetchTimingWindowStart >= 60000) { qqWebFetchTimingWindowStart = endedMonoMs; qqWebFetchTimingWindowCount = 0; }
++		if (endedMonoMs < qqWebFetchTimingWindowStart || qqWebFetchTimingWindowCount >= 128) { qqWebFetchTimingDropped = Math.min(65535, qqWebFetchTimingDropped + 1); return; }
++		qqWebFetchTimingWindowCount++;
++		const round = n => Number.isFinite(n) && n >= 0 ? Math.round(n * 1000) / 1000 : null;
++		const summarizeStages = stages => [...stages].flatMap(stage => {
++			const spans = state.spans.filter(span => span.stage === stage); if (!spans.length) return [];
++			const complete = spans.every(span => span.complete && span.endedMonoMs !== null && span.endedMonoMs >= span.beganMonoMs);
++			return [{ stage, ms: complete ? round(spans.reduce((sum, span) => sum + span.endedMonoMs - span.beganMonoMs, 0)) : null, count: spans.length, complete }];
++		});
++		const phases = summarizeStages(QQ_WEB_FETCH_TIMING_STAGES), fallbackResolveBreakdown = summarizeStages(QQ_WEB_FETCH_TIMING_DETAILS);
++		let outcome = succeeded === true ? "ok" : "error"; try { if (succeeded !== true && signal?.aborted === true) outcome = "aborted"; } catch { outcome = "unknown"; }
++		const row = { schema: "web-fetch-stage-v1", clockKind: "process.hrtime.bigint-monotonic-ms", bindingKind: "actual-host-tool-call-sha256-only", toolCallHash: state.toolCallHash, invocationOrdinal: state.invocationOrdinal, beganMonoMs: round(state.beganMonoMs), endedMonoMs: round(endedMonoMs), totalMs: round(endedMonoMs - state.beganMonoMs), outcome, cacheHit: state.cacheHit, resultStatus: state.resultStatus, bodyBytes: state.bodyBytes, resultExtractor: state.resultExtractor, phases, fallbackResolveBreakdown, providerResolution: state.providerResolution, providerResolutionEventCount: state.providerResolutionEventCount, providerResolutionOverflowCount: state.providerResolutionOverflow, providerResolutionMissingFieldsAreUnknown: true, providerResolutionDurationsAreNested: true, fallbackBreakdownIncludedInFallbackResolve: true, timingComplete: state.clockErrors === 0 && state.overflow === 0 && phases.every(phase => phase.complete) && fallbackResolveBreakdown.every(phase => phase.complete), clockErrorCount: state.clockErrors, phaseOverflowCount: state.overflow, phaseLimit: 32, missingPhasesAreNotZero: true, phaseDurationsAreSpanSums: true, totalIncludesPhases: true, sourceAndGroupNotAttributed: true, droppedSummaryCount: qqWebFetchTimingDropped, summaryWindowMs: 60000, summaryBudgetRemaining: 128 - qqWebFetchTimingWindowCount };
++		try { console.info("[web-fetch-stage] " + JSON.stringify(row)); } catch {}
++	} catch {}
++}
++// END QQ-WEB-FETCH-STAGE-DIAGNOSTICS v1.
+ async function runWebFetch(params) {
+ 	throwIfFetchAborted(params.signal);
+ 	const ssrfPolicy = params.ssrfPolicy;
+@@ -17046,6 +17244,7 @@
+ 	].filter(Boolean);
+ 	const cacheKey = normalizeCacheKey([`fetch:${parsedUrl.href}:${params.extractMode}:${params.maxChars}`, ...cacheDiscriminators].join(":"));
+ 	const cached = readCache(FETCH_CACHE, cacheKey, params.cacheTtlMs);
++	noteWebFetchTiming(params.webFetchStageTiming, "cacheHit", Boolean(cached));
+ 	if (cached) return {
+ 		...cached.value,
+ 		cached: true
+@@ -17059,10 +17258,14 @@
+ 	const start = Date.now();
+ 	async function fetchProviderPayload(urlToFetch) {
+ 		const tookMs = Date.now() - start;
+-		const providerFallback = await params.resolveProviderFallback();
++		let providerFallback;
++		const resolveStage = beginWebFetchStage(params.webFetchStageTiming, "fallback_resolve");
++		try { providerFallback = await params.resolveProviderFallback(); }
++		finally { endWebFetchStage(params.webFetchStageTiming, resolveStage); }
+ 		throwIfFetchAborted(params.signal);
+ 		if (!providerFallback) return null;
+ 		let rawPayload;
++		const executeStage = beginWebFetchStage(params.webFetchStageTiming, "fallback_execute");
+ 		try {
+ 			rawPayload = await providerFallback.definition.execute({
+ 				url: urlToFetch,
+@@ -17072,23 +17275,29 @@
+ 		} catch (error) {
+ 			throwIfFetchAborted(params.signal);
+ 			throw error;
+-		}
++		} finally { endWebFetchStage(params.webFetchStageTiming, executeStage); }
+ 		throwIfFetchAborted(params.signal);
+-		return await buildWebFetchPayload({
++		const buildStage = beginWebFetchStage(params.webFetchStageTiming, "build_result");
++		try { return await buildWebFetchPayload({
+ 			providerId: providerFallback.provider.id,
+ 			payload: rawPayload,
+ 			requestedUrl: params.url,
+ 			extractMode: params.extractMode,
+ 			maxChars: params.maxChars,
+ 			tookMs
+-		});
++		}); } finally { endWebFetchStage(params.webFetchStageTiming, buildStage); }
+ 	}
+ 	let res;
+ 	let release;
+ 	let finalUrl = params.url;
+ 	try {
+-		const { fetchWithWebToolsNetworkGuard } = await loadWebGuardedFetch();
+-		const result = await fetchWithWebToolsNetworkGuard({
++		let fetchWithWebToolsNetworkGuard;
++		const loadStage = beginWebFetchStage(params.webFetchStageTiming, "guard_load");
++		try { ({ fetchWithWebToolsNetworkGuard } = await loadWebGuardedFetch()); }
++		finally { endWebFetchStage(params.webFetchStageTiming, loadStage); }
++		let result;
++		const requestStage = beginWebFetchStage(params.webFetchStageTiming, "guarded_request_headers");
++		try { result = await fetchWithWebToolsNetworkGuard({
+ 			url: params.url,
+ 			maxRedirects: params.maxRedirects,
+ 			timeoutSeconds: params.timeoutSeconds,
+@@ -17103,7 +17312,7 @@
+ 				"Accept-Language": "en-US,en;q=0.9",
+ 				...params.headers
+ 			} }
+-		});
++		}); } finally { endWebFetchStage(params.webFetchStageTiming, requestStage); }
+ 		res = result.response;
+ 		finalUrl = result.finalUrl;
+ 		release = result.release;
+@@ -17130,7 +17339,11 @@
+ 			throw new Error(`Web fetch failed (${res.status}): ${wrappedDetail.text}`);
+ 		}
+ 		const normalizedContentType = normalizeContentType(res.headers.get("content-type") ?? "application/octet-stream") ?? "application/octet-stream";
+-		const bodyResult = await readResponseText(res, { maxBytes: params.maxResponseBytes });
++		let bodyResult;
++		const bodyStage = beginWebFetchStage(params.webFetchStageTiming, "body_read");
++		try { bodyResult = await readResponseText(res, { maxBytes: params.maxResponseBytes }); }
++		finally { endWebFetchStage(params.webFetchStageTiming, bodyStage); }
++		noteWebFetchTiming(params.webFetchStageTiming, "bodyBytes", bodyResult.bytesRead);
+ 		throwIfFetchAborted(params.signal);
+ 		const body = bodyResult.text;
+ 		const responseTruncatedWarning = bodyResult.truncated ? `Response body incomplete after ${bodyResult.bytesRead} bytes.` : void 0;
+@@ -17142,12 +17355,14 @@
+ 			if (params.extractMode === "text") text = markdownToText(body);
+ 		} else if (["text/html", "application/xhtml+xml"].includes(normalizedContentType)) {
+ 			if (params.readabilityEnabled) {
+-				const readable = await extractReadableContent({
++				let readable;
++				const extractorStage = beginWebFetchStage(params.webFetchStageTiming, "extractors");
++				try { readable = await extractReadableContent({
+ 					html: body,
+ 					url: finalUrl,
+ 					extractMode: params.extractMode,
+ 					config: params.config
+-				});
++				}); } finally { endWebFetchStage(params.webFetchStageTiming, extractorStage); }
+ 				if (readable?.text) {
+ 					text = readable.text;
+ 					title = readable.title;
+@@ -17160,10 +17375,12 @@
+ 						throwIfFetchAborted(params.signal);
+ 					}
+ 					if (payload) return payload;
+-					const basic = await extractBasicHtmlContent({
++					let basic;
++					const basicStage = beginWebFetchStage(params.webFetchStageTiming, "basic_extract");
++					try { basic = await extractBasicHtmlContent({
+ 						html: body,
+ 						extractMode: params.extractMode
+-					});
++					}); } finally { endWebFetchStage(params.webFetchStageTiming, basicStage); }
+ 					if (basic?.text) {
+ 						text = basic.text;
+ 						title = basic.title;
+@@ -17185,7 +17402,8 @@
+ 			text = body;
+ 			extractor = "raw";
+ 		}
+-		return await buildWebFetchPayload({
++		const buildStage = beginWebFetchStage(params.webFetchStageTiming, "build_result");
++		try { return await buildWebFetchPayload({
+ 			payload: {
+ 				finalUrl,
+ 				status: res.status,
+@@ -17200,10 +17418,11 @@
+ 			extractMode: params.extractMode,
+ 			maxChars: params.maxChars,
+ 			tookMs: Date.now() - start
+-		});
++		}); } finally { endWebFetchStage(params.webFetchStageTiming, buildStage); }
+ 	} finally {
+ 		if (!res.bodyUsed) res.body?.cancel().catch(() => void 0);
+-		await release();
++		const releaseStage = beginWebFetchStage(params.webFetchStageTiming, "release");
++		try { await release(); } finally { endWebFetchStage(params.webFetchStageTiming, releaseStage); }
+ 	}
+ }
+ function createWebFetchTool(options) {
+@@ -17216,6 +17435,9 @@
+ 		parameters: WebFetchSchema,
+ 		outputSchema: WebFetchOutputSchema,
+ 		execute: async (_toolCallId, args, signal, onUpdate) => {
++			const webFetchStageTiming = beginWebFetchTiming(_toolCallId);
++			let webFetchStageSucceeded = false;
++			try {
+ 			const { config, preferRuntimeProviders, providerSelectionId, runtimeMetadata: runtimeWebFetch } = resolveWebToolRuntimeContext({
+ 				kind: "fetch",
+ 				config: options?.config,
+@@ -17230,13 +17452,18 @@
+ 			const userAgent = typeof executionFetch?.userAgent === "string" && executionFetch.userAgent || DEFAULT_FETCH_USER_AGENT;
+ 			const maxResponseBytes = resolveFetchMaxResponseBytes(executionFetch);
+ 			const resolveProviderFallback = createLazyPromise(async () => {
+-				const { resolveWebFetchDefinition } = await loadWebFetchRuntime();
+-				return resolveWebFetchDefinition({
++				let resolveWebFetchDefinition;
++				const runtimeLoadStage = beginWebFetchStage(webFetchStageTiming, "fallback_runtime_load");
++				try { ({ resolveWebFetchDefinition } = await loadWebFetchRuntime()); }
++				finally { endWebFetchStage(webFetchStageTiming, runtimeLoadStage); }
++				const definitionStage = beginWebFetchStage(webFetchStageTiming, "fallback_definition_resolve");
++				try { return resolveWebFetchDefinition({
+ 					config,
+ 					sandboxed: options?.sandboxed,
+ 					runtimeWebFetch,
+-					preferRuntimeProviders
+-				});
++					preferRuntimeProviders,
++					__qqWebFetchResolutionObserver: createWebFetchProviderResolutionObserver(webFetchStageTiming)
++				}); } finally { endWebFetchStage(webFetchStageTiming, definitionStage); }
+ 			});
+ 			const params = args;
+ 			const url = sanitizeWebFetchUrl(readToolStringParam(params, "url", {
+@@ -17275,12 +17502,19 @@
+ 					...providerCacheKey ? { providerCacheKey } : {},
+ 					lookupFn: options?.lookupFn,
+ 					signal,
+-					resolveProviderFallback
++					resolveProviderFallback,
++					webFetchStageTiming
+ 				});
+-				return jsonResult(result);
++				noteWebFetchTiming(webFetchStageTiming, "resultStatus", result.status);
++				noteWebFetchTiming(webFetchStageTiming, "resultExtractor", result.extractor);
++				const response = jsonResult(result);
++				webFetchStageSucceeded = true;
++				return response;
+ 			} finally {
+ 				clearProgressTimer();
+ 			}
++			} catch (error) { webFetchStageSucceeded = false; throw error; }
++			finally { finishWebFetchTiming(webFetchStageTiming, webFetchStageSucceeded, signal); }
+ 		}
+ 	}, (_params, result) => formatWebFetchTerminalPresentation(result));
+ }
+@@ -17782,7 +18016,17 @@
+ 			agentSessionId: options?.sessionId,
+ 			agentSessionKey: options?.agentSessionKey,
+ 			config: resolvedConfig,
+-			senderIsOwner: options?.senderIsOwner
++			senderIsOwner: options?.senderIsOwner,
++			// Host transport context; never infer the current source from a model session key.
++			agentChannel: options?.agentChannel,
++			currentChatType: options?.currentChatType,
++			agentAccountId: options?.agentAccountId,
++			agentTo: options?.agentTo,
++			currentMessagingTarget: options?.currentMessagingTarget,
++			currentChannelId: options?.currentChannelId,
++			currentThreadTs: options?.currentThreadTs,
++			agentThreadId: options?.agentThreadId,
++			sourceReplyDeliveryMode: options?.sourceReplyDeliveryMode
+ 		})), createSessionsSendTool({
+ 			requesterTurnRunId: options?.runId,
+ 			agentId: sessionAgentId,

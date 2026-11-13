@@ -1,0 +1,64 @@
+diff -ruN a/dist/session-accessor.sqlite-entry-C87Sde4p.mjs b/dist/session-accessor.sqlite-entry-C87Sde4p.mjs
+--- a/dist/session-accessor.sqlite-entry-C87Sde4p.mjs	2026-11-13 19:09:04.865061291 +0800
++++ b/dist/session-accessor.sqlite-entry-C87Sde4p.mjs	2026-11-13 19:09:04.869061493 +0800
+@@ -1,3 +1,4 @@
++import { beginQqAdmissionSpan, endQqAdmissionSpan, noteQqAdmissionCount, createQqWorkerPrepareObserver, closeQqWorkerPrepareObserver } from "./qq-host-latency-trace.mjs";
+ import { y as uniqueStrings } from "./string-normalization-YMwDjufr.mjs";
+ import { t as resolveIdentityPathViaExistingAncestorSync } from "./boundary-path-CAv_plX7.mjs";
+ import { r as resolveStateDir } from "./state-dir-CfAW6S2K.mjs";
+@@ -696,6 +697,7 @@
+ 	const candidates = captureSessionStoreReadCandidates(storePath);
+ 	let claim;
+ 	try {
++		const qqDiscoverySpan = beginQqAdmissionSpan(preparation.qqAdmissionTrace, "store_target_discovery");
+ 		const result = await withSessionStoreTarget({
+ 			agentId,
+ 			defaultAgentId: scope.defaultAgentId,
+@@ -703,6 +705,7 @@
+ 			env,
+ 			candidates
+ 		}, async (target, owner) => {
++			endQqAdmissionSpan(preparation.qqAdmissionTrace, qqDiscoverySpan);
+ 			const options = {
+ 				...target.database,
+ 				path: target.sourcePath,
+@@ -713,8 +716,12 @@
+ 				const current = readDatabasePathIdentitySync(options.path);
+ 				if (current.key !== observed.key || current.canonicalPath !== observed.canonicalPath || current.birthtime !== observed.birthtime) throw new Error("Session database changed while waiting for admission");
+ 			};
++			const qqWorkerQueueSpan = beginQqAdmissionSpan(preparation.qqAdmissionTrace, "worker_write_queue");
+ 			return await runOpenClawAgentWorkerWrite(options, async () => {
++				endQqAdmissionSpan(preparation.qqAdmissionTrace, qqWorkerQueueSpan);
++				const qqOwnerRefreshSpan = beginQqAdmissionSpan(preparation.qqAdmissionTrace, "owner_refresh");
+ 				await owner.refreshBeforeDispatch(assertOriginalTarget);
++				endQqAdmissionSpan(preparation.qqAdmissionTrace, qqOwnerRefreshSpan);
+ 				owner.assertCurrent();
+ 				assertOriginalTarget();
+ 				const execution = captureOpenClawAgentDatabaseExecution(options, observed.key.startsWith("file:") ? { expectedIdentity: {
+@@ -744,12 +751,25 @@
+ 				};
+ 				let transferred = false;
+ 				try {
+-					await execution.prepare(source, preparation.signal);
++					const qqPrepareSpan = beginQqAdmissionSpan(preparation.qqAdmissionTrace, "worker_prepare");
++					const qqWorkerPrepareObserver = createQqWorkerPrepareObserver(preparation.qqAdmissionTrace, qqPrepareSpan);
++					let qqWorkerPrepareOutcome = "error";
++					try {
++						await execution.prepare(source, preparation.signal, qqWorkerPrepareObserver);
++						qqWorkerPrepareOutcome = "ok";
++					} finally {
++						closeQqWorkerPrepareObserver(qqWorkerPrepareObserver, qqWorkerPrepareOutcome);
++					}
++					endQqAdmissionSpan(preparation.qqAdmissionTrace, qqPrepareSpan);
++					const qqExecuteSpan = beginQqAdmissionSpan(preparation.qqAdmissionTrace, "worker_execute");
+ 					const entry = await execution.runExisting(source, (worker) => worker.execute({
+ 						type: "session.entry.read",
+ 						input: { sessionKey: resolveSqliteSessionKey(scope.sessionKey, target.logicalAgentId) }
+ 					}, { signal: preparation.signal }));
++					endQqAdmissionSpan(preparation.qqAdmissionTrace, qqExecuteSpan);
++					const qqTargetRevalidateSpan = beginQqAdmissionSpan(preparation.qqAdmissionTrace, "owner_revalidate");
+ 					await owner.revalidateTarget();
++					endQqAdmissionSpan(preparation.qqAdmissionTrace, qqTargetRevalidateSpan);
+ 					assertSourceCurrent();
+ 					const generation = execution.captureGenerationClaim();
+ 					let release;

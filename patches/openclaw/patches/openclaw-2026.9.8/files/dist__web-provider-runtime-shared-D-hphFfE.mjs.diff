@@ -1,0 +1,124 @@
+diff -ruN a/dist/web-provider-runtime-shared-D-hphFfE.mjs b/dist/web-provider-runtime-shared-D-hphFfE.mjs
+--- a/dist/web-provider-runtime-shared-D-hphFfE.mjs	2026-11-13 19:09:04.937064925 +0800
++++ b/dist/web-provider-runtime-shared-D-hphFfE.mjs	2026-11-13 19:09:04.937064925 +0800
+@@ -7,6 +7,23 @@
+ import { n as withActivatedPluginIds } from "./activation-context-DDaSQyA-.mjs";
+ import "./loader-CLZgaF-g.mjs";
+ //#region src/plugins/web-provider-runtime-shared.ts
++// QQ-WEB-PROVIDER-RESOLUTION-OBSERVER v1: private synchronous numeric observations only.
++function qqWebProviderResolutionObserver(options) {
++	try {
++		const value = Object.getOwnPropertyDescriptor(options ?? {}, "__qqWebFetchResolutionObserver")?.value;
++		return typeof value === "function" ? value : void 0;
++	} catch { return; }
++}
++function qqWebProviderResolutionNote(observer, key, value) {
++	try { if (observer) observer(key, value); } catch {}
++}
++function qqWebProviderResolutionNow(observer) {
++	try { const value = observer ? Number(process.hrtime.bigint()) / 1e6 : null; return Number.isFinite(value) && value >= 0 ? value : null; } catch { return null; }
++}
++function qqWebProviderResolutionEnd(observer, key, began) {
++	try { const ended = qqWebProviderResolutionNow(observer); if (began !== null && ended !== null && ended >= began) qqWebProviderResolutionNote(observer, key, ended - began); } catch {}
++}
++// END QQ-WEB-PROVIDER-RESOLUTION-OBSERVER v1.
+ function resolveWebProviderRuntimeContext(params, deps) {
+ 	const env = params.env ?? process.env;
+ 	const workspaceDir = params.workspaceDir ?? getActivePluginRegistryWorkspaceDir();
+@@ -57,6 +74,7 @@
+ }
+ /** Resolves plugin web providers from setup, active runtime, or a scoped load. */
+ function resolvePluginWebProviders(params, deps) {
++	const observer = qqWebProviderResolutionObserver(params);
+ 	const env = params.env ?? process.env;
+ 	const workspaceDir = params.workspaceDir ?? getActivePluginRegistryWorkspaceDir();
+ 	if (params.mode === "setup") {
+@@ -78,8 +96,9 @@
+ 				onlyPluginIds: pluginIds,
+ 				...params.manifestRecords ? { manifestRecords: params.manifestRecords } : {}
+ 			});
+-			if (bundledArtifactProviders) return bundledArtifactProviders;
++			if (bundledArtifactProviders) { qqWebProviderResolutionNote(observer, "selectedPath", "setup_artifact"); return bundledArtifactProviders; }
+ 		}
++		qqWebProviderResolutionNote(observer, "selectedPath", "setup_loader");
+ 		const registry = loadOpenClawPlugins(buildPluginRuntimeLoadOptions({
+ 			config: withActivatedPluginIds({
+ 				config: params.config,
+@@ -104,35 +123,65 @@
+ 			onlyPluginIds: pluginIds
+ 		});
+ 	}
+-	const context = resolveWebProviderRuntimeContext(params, deps);
+-	const loadOptions = resolveWebProviderLoadOptions(context, params);
+-	const compatible = getLoadedRuntimePluginRegistry({
++	const contextBegan = qqWebProviderResolutionNow(observer);
++	let context, loadOptions;
++	try {
++		context = resolveWebProviderRuntimeContext(params, deps);
++		loadOptions = resolveWebProviderLoadOptions(context, params);
++	} finally { qqWebProviderResolutionEnd(observer, "contextMs", contextBegan); }
++	qqWebProviderResolutionNote(observer, "preparedManifestRegistry", context.preparedManifestRegistry !== void 0);
++	if (observer) { try { Object.defineProperty(loadOptions, "__qqWebFetchResolutionObserver", { value: observer }); } catch {} }
++	const compatibilityBegan = qqWebProviderResolutionNow(observer);
++	let compatible;
++	try { compatible = getLoadedRuntimePluginRegistry({
+ 		env: context.env,
+ 		loadOptions,
+ 		workspaceDir: context.workspaceDir,
+ 		requiredPluginIds: context.loadPluginIds
+-	});
+-	const hasExplicitEmptyScope = context.onlyPluginIds !== void 0 && context.onlyPluginIds.length === 0;
++	}); } finally { qqWebProviderResolutionEnd(observer, "compatibilityMs", compatibilityBegan); }
++	qqWebProviderResolutionNote(observer, "compatibleOutcome", compatible ? "hit" : "miss");
++	const scopedPluginCount = context.onlyPluginIds !== void 0 ? context.onlyPluginIds.length : void 0;
++	const hasExplicitEmptyScope = scopedPluginCount !== void 0 && scopedPluginCount === 0;
++	if (observer) {
++		if (context.loadPluginIds === void 0) qqWebProviderResolutionNote(observer, "candidateScopeKind", "omitted");
++		else if (context.onlyPluginIds === context.loadPluginIds && scopedPluginCount !== void 0) {
++			qqWebProviderResolutionNote(observer, "candidateScopeKind", scopedPluginCount === 0 ? "empty" : "nonempty");
++			qqWebProviderResolutionNote(observer, "candidateCount", scopedPluginCount);
++		}
++	}
+ 	if (compatible) {
+ 		const providers = deps.mapRegistryProviders({
+ 			registry: compatible,
+ 			onlyPluginIds: context.onlyPluginIds
+ 		});
+-		if (providers.length > 0 || hasExplicitEmptyScope) return providers;
++		const compatibleProviderCount = providers.length;
++		qqWebProviderResolutionNote(observer, "compatibleProviderCount", compatibleProviderCount);
++		if (compatibleProviderCount > 0 || hasExplicitEmptyScope) { qqWebProviderResolutionNote(observer, "selectedPath", "compatible"); return providers; }
+ 	}
+-	if (isPluginRegistryLoadInFlight(loadOptions)) return [];
+-	if (hasExplicitEmptyScope) return [];
++	const inFlightBegan = qqWebProviderResolutionNow(observer);
++	let inFlight;
++	try { inFlight = isPluginRegistryLoadInFlight(loadOptions); }
++	finally { qqWebProviderResolutionEnd(observer, "inFlightCheckMs", inFlightBegan); }
++	qqWebProviderResolutionNote(observer, "inFlight", inFlight);
++	if (inFlight) { qqWebProviderResolutionNote(observer, "selectedPath", "load_in_flight"); return []; }
++	if (hasExplicitEmptyScope) { qqWebProviderResolutionNote(observer, "selectedPath", "empty_scope"); return []; }
+ 	if (params.activate !== true && context.loadPluginIds && deps.resolveBundledRuntimeArtifactProviders) {
+-		const bundledArtifactProviders = deps.resolveBundledRuntimeArtifactProviders({
++		const bundledBegan = qqWebProviderResolutionNow(observer);
++		let bundledArtifactProviders;
++		try { bundledArtifactProviders = deps.resolveBundledRuntimeArtifactProviders({
+ 			config: context.config,
+ 			workspaceDir: context.workspaceDir,
+ 			env: context.env,
+ 			onlyPluginIds: context.loadPluginIds,
+ 			...context.manifestRecords ? { manifestRecords: context.manifestRecords } : {}
+-		});
+-		if (bundledArtifactProviders) return bundledArtifactProviders;
++		}); } finally { qqWebProviderResolutionEnd(observer, "bundledArtifactMs", bundledBegan); }
++		if (bundledArtifactProviders) { qqWebProviderResolutionNote(observer, "selectedPath", "bundled_artifact"); return bundledArtifactProviders; }
+ 	}
+-	const registry = loadOpenClawPlugins(loadOptions);
++	qqWebProviderResolutionNote(observer, "selectedPath", "full_loader");
++	const loaderBegan = qqWebProviderResolutionNow(observer);
++	let registry;
++	try { registry = loadOpenClawPlugins(loadOptions); }
++	finally { qqWebProviderResolutionEnd(observer, "loaderMs", loaderBegan); }
+ 	return deps.mapRegistryProviders({
+ 		registry,
+ 		onlyPluginIds: context.onlyPluginIds

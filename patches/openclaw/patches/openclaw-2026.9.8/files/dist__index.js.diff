@@ -1,0 +1,41 @@
+diff -ruN a/dist/index.js b/dist/index.js
+--- a/dist/index.js	2026-11-13 19:09:04.101022721 +0800
++++ b/dist/index.js	2026-11-13 19:09:04.105022923 +0800
+@@ -17,6 +17,37 @@
+ 		throw new Error(`OpenClaw package lifecycle is incomplete. Reinstall with package scripts enabled, then retry. ${error instanceof Error ? error.message : String(error)}`, { cause: error });
+ 	}
+ }
++// QQ-WORKER-ONLY-COMPILE-CACHE v2: retain legacy CLI/argv; do not enable main cache.
++if (isMain && !handledAdmission && process.argv[2] === "gateway") {
++	let workerOnlyPolicyInitialized = false;
++	try {
++		if (process.env.NODE_DISABLE_COMPILE_CACHE === void 0 &&
++			!existsSync(new URL(".git", packageRootUrl)) &&
++			!existsSync(new URL("src/entry.ts", packageRootUrl))) {
++			const { r: resolveOpenClawCompileCacheDirectory, u: initializeOwnedWorkerCompileCache } = await import("./node-compile-cache-env-ClGKcLRy.mjs");
++			const directory = resolveOpenClawCompileCacheDirectory({ installRoot: fileURLToPath(packageRootUrl) });
++			if (directory) workerOnlyPolicyInitialized = initializeOwnedWorkerCompileCache(directory) === true;
++		}
++	} catch { /* Optional worker bytecode caching must not prevent legacy startup. */ }
++	try {
++		const { getCompileCacheDir } = await import("node:module");
++		const hasCacheApi = typeof getCompileCacheDir === "function";
++		const actualDirectory = hasCacheApi ? getCompileCacheDir() : void 0;
++		const ownerDescriptor = Object.getOwnPropertyDescriptor(globalThis, Symbol.for("openclaw.nodeCompileCacheBase"));
++		const owner = ownerDescriptor && Object.hasOwn(ownerDescriptor, "value") ? ownerDescriptor.value : void 0;
++		const baseDescriptor = owner !== null && (typeof owner === "object" || typeof owner === "function") ? Object.getOwnPropertyDescriptor(owner, "baseDirectory") : void 0;
++		const base = baseDescriptor && Object.hasOwn(baseDescriptor, "value") ? baseDescriptor.value : void 0;
++		const workerBaseAvailable = typeof base === "string" && base.length > 0;
++		const disabled = process.env.NODE_DISABLE_COMPILE_CACHE !== void 0;
++		process.stderr.write("[qq-startup-compile-cache] " + JSON.stringify({
++			schema: 2,
++			mainCacheEnabled: typeof actualDirectory === "string" && actualDirectory.length > 0,
++			workerBaseAvailable,
++			workerOnly: workerOnlyPolicyInitialized && hasCacheApi && actualDirectory === void 0 && workerBaseAvailable && !disabled,
++			disabled
++		}) + "\n");
++	} catch { /* Optional metadata must not change original startup success or errors. */ }
++}
+ const [{ formatCliFailureLines, formatCliJsonFailure, isExpectedCliError }, { isJsonOutputModeActive }, { runCliWithExitFinalization }, { withCliProcessScope }, { installDistEsmResolveFastPath }, { tryHandleRootVersionFastPath }, { formatUncaughtError }, { runFatalErrorHooks }, { installUnhandledRejectionHandler, isBenignUncaughtExceptionError, isUncaughtExceptionHandled }] = await Promise.all([
+ 	import("./failure-output-CyDWgJbC.mjs"),
+ 	import("./json-output-mode-CObM-WjA.mjs"),

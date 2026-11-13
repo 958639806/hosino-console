@@ -1,0 +1,58 @@
+diff -ruN a/dist/placement-turn-claims.worker-leaf-20261105.mjs b/dist/placement-turn-claims.worker-leaf-20261105.mjs
+--- a/dist/placement-turn-claims.worker-leaf-20261105.mjs	1970-01-01 07:30:00.000000000 +0730
++++ b/dist/placement-turn-claims.worker-leaf-20261105.mjs	2026-11-13 19:09:04.805058262 +0800
+@@ -0,0 +1,54 @@
++import { l as runOpenClawStateWriteTransaction } from "./openclaw-state-db-DM-mSY0m.mjs";
++import { i as requestSqliteWorkerOperationAdmission, r as deferSqliteWorkerCommitReceipt } from "./sqlite-worker-operation-admission-BB758RIN.mjs";
++import { n as createPlacementTurnClaimOps } from "./placement-turn-claims-29eNxuPh.mjs";
++import { n as createPlacementWorkspaceResultOps } from "./placement-workspace-result-fPBcZ3tM.mjs";
++import { i as getRequired } from "./placement-row-codec-VEfceuUb.mjs";
++//#region src/gateway/worker-environments/placement-turn-claims.worker-contract.ts
++function isPlacementTurnClaimCommand(command) {
++	return command.type === "placementTurns.claim" || command.type === "placementTurns.release" || command.type === "placementTurns.releaseIfOwned" || command.type === "placementTurns.recoverWorkspace" || command.type === "placementTurns.handoffRuntimeRefreshResult";
++}
++//#endregion
++//#region src/gateway/worker-environments/placement-turn-claims.worker.ts
++function executePlacementTurnClaimCommand(command, database) {
++	return runOpenClawStateWriteTransaction(({ db }) => {
++		requestSqliteWorkerOperationAdmission({
++			stage: "transaction",
++			facts: void 0
++		});
++		const runtime = {
++			path: database.path,
++			instanceId: command.type === "placementTurns.recoverWorkspace" || command.type === "placementTurns.handoffRuntimeRefreshResult" ? command.input.gatewayInstanceId : "",
++			now: () => command.input.nowMs ?? Date.now(),
++			read: () => db,
++			write: (operation) => operation(db)
++		};
++		const claims = createPlacementTurnClaimOps(runtime);
++		let receipt;
++		if (command.type === "placementTurns.claim") {
++			const claim = claims.claimTurn(command.input.claim);
++			receipt = {
++				claim,
++				placement: getRequired(db, claim.sessionId)
++			};
++		} else if (command.type === "placementTurns.recoverWorkspace") {
++			const results = createPlacementWorkspaceResultOps(runtime);
++			results.markWorkspaceResultPending(command.input.claim);
++			results.handoffWorkspaceResultRecovery(command.input.claim);
++			receipt = { placement: getRequired(db, command.input.claim.sessionId) };
++		} else if (command.type === "placementTurns.handoffRuntimeRefreshResult") {
++			const placement = getRequired(db, command.input.claim.sessionId);
++			if (placement.state !== "active" || placement.generation !== command.input.expectedGeneration || command.input.claim.owner.kind !== "worker") throw new Error("Worker runtime refresh lost its workspace result owner");
++			createPlacementWorkspaceResultOps(runtime).handoffWorkspaceResultRecovery(command.input.claim);
++			receipt = { placement };
++		} else if (command.type === "placementTurns.releaseIfOwned" && !claims.validateTurnClaim(command.input.claim)) receipt = {};
++		else receipt = { placement: claims.releaseTurn(command.input.claim) };
++		requestSqliteWorkerOperationAdmission({
++			stage: "commit",
++			facts: receipt
++		});
++		deferSqliteWorkerCommitReceipt(db, receipt);
++		return receipt;
++	}, { database }, { operationLabel: command.type });
++}
++//#endregion
++export { isPlacementTurnClaimCommand, executePlacementTurnClaimCommand };

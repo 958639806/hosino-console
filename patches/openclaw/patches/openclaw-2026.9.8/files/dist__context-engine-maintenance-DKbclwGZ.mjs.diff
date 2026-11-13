@@ -1,0 +1,77 @@
+diff -ruN a/dist/context-engine-maintenance-DKbclwGZ.mjs b/dist/context-engine-maintenance-DKbclwGZ.mjs
+--- a/dist/context-engine-maintenance-DKbclwGZ.mjs	2026-11-13 19:09:04.045019895 +0800
++++ b/dist/context-engine-maintenance-DKbclwGZ.mjs	2026-11-13 19:09:04.049020097 +0800
+@@ -1,3 +1,5 @@
++import { bindQQClaudeLegacyRecallPromptFinalizer } from "./qq-claude-memory-prefetch-bridge.mjs";
++import { readQQClaudeMemoryRecallInput } from "./qq-claude-memory-prefetch-bridge.mjs";
+ import { l as normalizeOptionalString } from "./string-coerce-6kR-86XC.mjs";
+ import { s as asFiniteNumber } from "./number-coercion-Dq1l5muL.mjs";
+ import { t as createDeferredCore } from "./deferred-D0La5CRk.mjs";
+@@ -333,6 +335,7 @@
+ async function resolvePromptBuildHookResult(params) {
+ 	const runId = params.hookCtx.runId;
+ 	const cachedInjections = runId ? promptBuildDrainCache.get(runId) : void 0;
++	params.qqPromptBuildTrace?.mark("prompt_injections_begin");
+ 	const queuedContext = cachedInjections ? {
+ 		queuedInjections: cachedInjections,
+ 		...buildPluginAgentTurnPrepareContext({ queuedInjections: cachedInjections })
+@@ -342,6 +345,8 @@
+ 		agentId: params.hookCtx.agentId
+ 	});
+ 	if (runId && !cachedInjections) rememberDrainedInjections(runId, queuedContext.queuedInjections);
++	params.qqPromptBuildTrace?.mark("prompt_injections_ready");
++	params.qqPromptBuildTrace?.mark("prompt_turn_prepare_begin");
+ 	const turnPrepareResult = params.hookRunner?.runAgentTurnPrepare && params.hookRunner.hasHooks("agent_turn_prepare") ? await params.hookRunner.runAgentTurnPrepare({
+ 		prompt: params.prompt,
+ 		messages: params.messages,
+@@ -349,6 +354,8 @@
+ 	}, params.hookCtx).catch((hookErr) => {
+ 		log.warn(`agent_turn_prepare hook failed: ${String(hookErr)}`);
+ 	}) : void 0;
++	params.qqPromptBuildTrace?.mark("prompt_turn_prepare_ready");
++	params.qqPromptBuildTrace?.mark("prompt_heartbeat_contribution_begin");
+ 	const heartbeatContribution = params.hookCtx.trigger === "heartbeat" && params.hookRunner?.runHeartbeatPromptContribution && params.hookRunner.hasHooks("heartbeat_prompt_contribution") ? await params.hookRunner.runHeartbeatPromptContribution({
+ 		sessionKey: params.hookCtx.sessionKey,
+ 		agentId: params.hookCtx.agentId,
+@@ -356,13 +363,17 @@
+ 	}, params.hookCtx).catch((hookErr) => {
+ 		log.warn(`heartbeat_prompt_contribution hook failed: ${String(hookErr)}`);
+ 	}) : void 0;
++	params.qqPromptBuildTrace?.mark("prompt_heartbeat_contribution_ready");
++	params.qqPromptBuildTrace?.mark("prompt_handlers_begin");
++	const catchPromptBuildError = (hookErr) => {
++		log.warn(`before_prompt_build hook failed: ${String(hookErr)}`);
++	};
+ 	const promptBuildResult = params.hookRunner?.hasHooks("before_prompt_build") ? await params.hookRunner.runBeforePromptBuild({
+ 		prompt: params.prompt,
+-		messages: params.messages
+-	}, params.hookCtx).catch((hookErr) => {
+-		log.warn(`before_prompt_build hook failed: ${String(hookErr)}`);
+-	}) : void 0;
+-	return {
++		messages: params.messages,
++		...readQQClaudeMemoryRecallInput(params.qqClaudeRecallInput, params.hookCtx)
++	}, params.hookCtx).catch(catchPromptBuildError) : void 0;
++	const aggregatePromptBuild = (promptBuildResult) => ({
+ 		systemPrompt: promptBuildResult?.systemPrompt,
+ 		...promptBuildResult?.toolsAllow !== void 0 ? { toolsAllow: promptBuildResult.toolsAllow } : {},
+ 		prependContext: joinPresentTextSegments([
+@@ -379,7 +390,17 @@
+ 		]),
+ 		prependSystemContext: wrapPluginSystemContextSection(promptBuildResult?.prependSystemContext),
+ 		appendSystemContext: wrapPluginSystemContextSection(promptBuildResult?.appendSystemContext)
+-	};
++	});
++	// Do not inspect the partial hook result twice. The placeholder never crosses
++	// the pre-authority join; only the genuine f20 continuation creates final data.
++	const partialResult = Object.freeze({});
++	if (bindQQClaudeLegacyRecallPromptFinalizer(params.hookCtx, partialResult, async (resumeHook) => {
++		const completed = await Promise.resolve().then(resumeHook).catch(catchPromptBuildError);
++		params.qqPromptBuildTrace?.mark("prompt_handlers_ready");
++		return aggregatePromptBuild(completed);
++	})) return partialResult;
++	params.qqPromptBuildTrace?.mark("prompt_handlers_ready");
++	return aggregatePromptBuild(promptBuildResult);
+ }
+ function resolvePromptModeForSession(sessionKey) {
+ 	if (!sessionKey) return "full";

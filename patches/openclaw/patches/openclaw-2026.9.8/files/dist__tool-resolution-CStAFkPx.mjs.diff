@@ -1,0 +1,50 @@
+diff -ruN a/dist/tool-resolution-CStAFkPx.mjs b/dist/tool-resolution-CStAFkPx.mjs
+--- a/dist/tool-resolution-CStAFkPx.mjs	2026-11-13 19:09:04.917063915 +0800
++++ b/dist/tool-resolution-CStAFkPx.mjs	2026-11-13 19:09:04.921064117 +0800
+@@ -31,7 +31,19 @@
+ import { r as resolveCoreToolFactoryFamily } from "./core-tool-factory-descriptors-DYpD_U2M.mjs";
+ //#region src/gateway/tool-resolution.ts
+ /** Resolve the tools visible to a gateway caller after agent, channel, and surface policy. */
++// QQ-COMPLETE-GROUP-CATALOG v1. Advertise stable descriptors with the original requester.
++// All executable tools still use the QQ before_tool_call interlock and actual sender ID.
++function isQQCompleteLoopbackCatalog(params) {
++	if (params.surface !== "loopback" || params.rootedExecution || params.scheduledToolPolicy || params.spawnedBy || params.messageProvider?.trim().toLowerCase() !== "qqbot" || !["user", "heartbeat"].includes(params.trigger)) return false;
++	if (params.runtimePolicySessionKey && params.runtimePolicySessionKey !== params.sessionKey) return false;
++	const guard = globalThis[Symbol.for("openclaw.qqGroupOwnerGuard")];
++	try {
++		return guard?.active === true && guard.unifiedToolsReady === true && guard.readScopesReady === true && guard.isFullCatalogGroup?.(params.sessionKey) === true;
++	} catch { return false; }
++}
++
+ function resolveGatewayScopedTools(params) {
++	const qqCompleteCatalog = isQQCompleteLoopbackCatalog(params);
+ 	const runtimePolicySessionKey = params.runtimePolicySessionKey?.trim() || params.sessionKey;
+ 	const sessionAgentId = resolveSessionAgentIds({
+ 		config: params.cfg,
+@@ -85,7 +97,7 @@
+ 	const policyAgentId = resolvedPolicyAgentId ?? runtimePolicyAgentId;
+ 	const senderId = params.channelContext?.sender?.id;
+ 	const isOwnerInternalSession = nodeExecSurface && params.senderIsOwner === true && normalizeMessageChannel(params.messageProvider) === "webchat";
+-	const { groupPolicy, senderPolicy, subagentPolicy, inheritedToolPolicy } = resolveRequesterToolPolicies({
++	const { groupPolicy: configuredGroupPolicy, senderPolicy, subagentPolicy, inheritedToolPolicy } = resolveRequesterToolPolicies({
+ 		config: params.cfg,
+ 		sessionKey: runtimePolicySessionKey,
+ 		subagentSessionKey: runtimePolicySessionKey,
+@@ -104,6 +116,8 @@
+ 		groupPolicySessionKey: params.scheduledToolPolicy?.ownerSessionKey,
+ 		requireConfiguredGroupAccount: params.scheduledToolPolicy?.mode === "account"
+ 	});
++	// Only the configured group and owner-only discovery filters move to the existing invocation guard.
++	const groupPolicy = qqCompleteCatalog ? void 0 : configuredGroupPolicy;
+ 	const sandboxRuntime = resolveSandboxRuntimeStatus({
+ 		cfg: params.cfg,
+ 		sessionKey: params.sessionKey,
+@@ -122,7 +136,7 @@
+ 		sessionId: params.sessionId
+ 	}) : void 0;
+ 	const defaultGatewayDeny = surface === "http" ? DEFAULT_GATEWAY_HTTP_TOOL_DENY.filter((name) => !gatewayToolsCfg?.allow?.some((allowed) => normalizeToolPolicyName(allowed) === normalizeToolPolicyName(name))) : [];
+-	const ownerOnlyGatewayDeny = params.senderIsOwner === false || surface === "http" && params.senderIsOwner !== true ? GATEWAY_OWNER_ONLY_CORE_TOOLS.filter((name) => (name !== "portal" || !sessionPortalTarget) && (name !== "sessions" || surface !== "loopback" || !hasSessionControlAuthority(params.sessionControlAuthority))) : [];
++	const ownerOnlyGatewayDeny = !qqCompleteCatalog && (params.senderIsOwner === false || surface === "http" && params.senderIsOwner !== true) ? GATEWAY_OWNER_ONLY_CORE_TOOLS.filter((name) => (name !== "portal" || !sessionPortalTarget) && (name !== "sessions" || surface !== "loopback" || !hasSessionControlAuthority(params.sessionControlAuthority))) : [];
+ 	const workspaceDir = params.rootedExecution?.workspaceDir ?? (params.workspaceDir?.trim() || resolveAgentWorkspaceDir(params.cfg, sessionAgentId));
+ 	const basePolicies = [
+ 		profilePolicy,

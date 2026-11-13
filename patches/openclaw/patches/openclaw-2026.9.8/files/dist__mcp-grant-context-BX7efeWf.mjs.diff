@@ -1,0 +1,19 @@
+diff -ruN a/dist/mcp-grant-context-BX7efeWf.mjs b/dist/mcp-grant-context-BX7efeWf.mjs
+--- a/dist/mcp-grant-context-BX7efeWf.mjs	2026-11-13 19:09:04.121023731 +0800
++++ b/dist/mcp-grant-context-BX7efeWf.mjs	2026-11-13 19:09:04.121023731 +0800
+@@ -113,12 +113,15 @@
+ 		...delegationCapability ? { delegationCapability } : {},
+ 		...params.run.scheduledToolPolicy ? { scheduledToolPolicy: { ...params.run.scheduledToolPolicy } } : {},
+ 		...params.run.cronCreatorCallerOrigin ? { cronCreatorCallerOrigin: { ...params.run.cronCreatorCallerOrigin } } : {},
++		...params.qqDescriptorPolicy ? { qqDescriptorPolicy: structuredClone(params.qqDescriptorPolicy) } : {},
+ 		modelProvider: params.modelProvider,
+ 		modelId: params.modelId,
+ 		...params.run.requesterModel ? { requesterModel: {
+ 			provider: params.run.requesterModel.provider,
+ 			model: params.run.requesterModel.model
+ 		} } : {},
++		// QQ-CLAUDE-MCP-REQUESTER v1: exact admitted attachment paths, never client input.
++		...Array.isArray(params.run.inputAttachmentMedia ?? params.run.media) ? { readAssets: (params.run.inputAttachmentMedia ?? params.run.media).filter(file => typeof file?.path === "string" && !file.hydrationSuppressed).map(file => file.path).slice(0, 128) } : {},
+ 		modelHasVision: params.run.modelHasVision,
+ 		messageProvider,
+ 		clientCaps: clientCaps.length > 0 ? clientCaps : void 0,

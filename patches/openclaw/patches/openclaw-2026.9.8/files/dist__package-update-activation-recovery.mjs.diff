@@ -1,0 +1,259 @@
+diff -ruN a/dist/package-update-activation-recovery.mjs b/dist/package-update-activation-recovery.mjs
+--- a/dist/package-update-activation-recovery.mjs	2026-11-13 19:09:04.421038877 +0800
++++ b/dist/package-update-activation-recovery.mjs	2026-11-13 19:09:04.797057858 +0800
+@@ -508472,10 +508472,10 @@
+ 	}
+ }
+ async function resizeImageBase64IfNeeded(params) {
+-	const buf = Buffer.from(params.base64, "base64");
++	let buf = Buffer.from(params.base64, "base64");
+ 	const meta = readImageMetadataFromHeader(buf) ?? await getImageMetadata$1(buf);
+-	const width = meta?.width;
+-	const height = meta?.height;
++	let width = meta?.width;
++	let height = meta?.height;
+ 	const overBytes = buf.byteLength > params.maxBytes;
+ 	const hasDimensions = typeof width === "number" && typeof height === "number";
+ 	const overDimensions = hasDimensions && (width > params.maxDimensionPx || height > params.maxDimensionPx);
+@@ -508489,6 +508489,48 @@
+ 			height
+ 		};
+ 	}
++	/* IMG-RESIZE-CACHE-PATCH v1 */
++	const __rcOn = process.env.OPENCLAW_IMAGE_RESIZE_CACHE !== "0";
++	const __rcDir = __rcOn ? (() => { try { return process.env.OPENCLAW_IMAGE_RESIZE_CACHE_DIR || process.getBuiltinModule("node:path").join(process.getBuiltinModule("node:os").homedir(), ".openclaw", "cache", "image-resize-v1"); } catch { return null; } })() : null;
++	const __rcKey = __rcDir ? (() => { try { return process.getBuiltinModule("node:crypto").createHash("sha256").update(buf).update(`|rc1|${params.maxDimensionPx}|${params.maxBytes}|${JSON.stringify(IMAGE_REDUCE_QUALITY_STEPS)}`).digest("hex"); } catch { return null; } })() : null;
++	if (__rcKey) try {
++		const __rcHit = await process.getBuiltinModule("node:fs").promises.readFile(`${__rcDir}/${__rcKey}.jpg`);
++		if (__rcHit.byteLength > 0 && __rcHit.byteLength <= params.maxBytes) {
++			log$196.info(`Image resize cache hit: ${params.fileName ? `${params.fileName} ` : ""}${typeof width === "number" && typeof height === "number" ? `${width}x${height}px` : "unknown"} ${formatBytesShort(buf.byteLength)} -> ${formatBytesShort(__rcHit.byteLength)}`);
++			return {
++				base64: __rcHit.toString("base64"),
++				mimeType: "image/jpeg",
++				resized: true,
++				width,
++				height
++			};
++		}
++	} catch {}
++	/* /IMG-RESIZE-CACHE-PATCH v1 */
++	/* OVERSIZE-IMAGE-PATCH v1 */
++	if (hasDimensions && width * height > 25e6 * 0.98) {
++		const __osTargetPx = Math.floor(25e6 * 0.95);
++		const __osScale = Math.sqrt(__osTargetPx / (width * height));
++		const __osSide = Math.max(1, Math.floor(Math.max(width, height) * __osScale));
++		const __osInCap = Math.min(Math.max(width * height + 1, 25e6), 120e6);
++		const __osOut = await createImageProcessorWithPixelLimits({
++			inputPixels: __osInCap,
++			outputPixels: 25e6
++		}).encode(buf, {
++			format: "jpeg",
++			resize: {
++				maxSide: __osSide,
++				enlarge: false
++			},
++			quality: 85
++		});
++		const __osPrevW = width, __osPrevH = height, __osPrevBytes = buf.byteLength;
++		buf = __osOut.data;
++		width = __osOut.width ?? Math.max(1, Math.floor(__osPrevW * __osScale));
++		height = __osOut.height ?? Math.max(1, Math.floor(__osPrevH * __osScale));
++		log$196.info(`Image pre-shrunk under Rastermill input limit: ${params.fileName ? `${params.fileName} ` : ""}${__osPrevW}x${__osPrevH}px ${formatBytesShort(__osPrevBytes)} -> ${width}x${height}px ${formatBytesShort(buf.byteLength)}`);
++	}
++	/* /OVERSIZE-IMAGE-PATCH v1 */
+ 	const maxDim = hasDimensions ? Math.max(width ?? 0, height ?? 0) : params.maxDimensionPx;
+ 	const sideStart = maxDim > 0 ? Math.min(params.maxDimensionPx, maxDim) : params.maxDimensionPx;
+ 	const sideGrid = buildImageResizeSideGrid(params.maxDimensionPx, sideStart);
+@@ -508533,6 +508575,17 @@
+ 					outputMaxSide: side,
+ 					byteReductionPct
+ 				});
++				/* IMG-RESIZE-CACHE-PATCH v1 store */
++				if (__rcKey) try {
++					const __rcFs = process.getBuiltinModule("node:fs");
++					__rcFs.mkdirSync(__rcDir, { recursive: true, mode: 448 });
++					const __rcTmp = `${__rcDir}/.${__rcKey}.${process.pid}.tmp`;
++					__rcFs.writeFileSync(__rcTmp, out, { mode: 384 });
++					__rcFs.renameSync(__rcTmp, `${__rcDir}/${__rcKey}.jpg`);
++					const __rcFiles = __rcFs.readdirSync(__rcDir).filter((n) => n.endsWith(".jpg"));
++					if (__rcFiles.length > 300) for (const n of __rcFiles.map((n) => ({ n, t: __rcFs.statSync(`${__rcDir}/${n}`).mtimeMs })).sort((a, b) => a.t - b.t).slice(0, __rcFiles.length - 250)) __rcFs.rmSync(`${__rcDir}/${n.n}`, { force: true });
++				} catch {}
++				/* /IMG-RESIZE-CACHE-PATCH v1 store */
+ 				return {
+ 					base64: out.toString("base64"),
+ 					mimeType: "image/jpeg",
+@@ -705908,6 +705961,22 @@
+ function rawAliasDedupeKey(alias) {
+ 	return path.isAbsolute(alias) || /^[A-Za-z]:[\\/]/.test(alias) || /^[a-z][a-z0-9+.-]*:/i.test(alias) ? normalizeRefForDedupe(alias) : void 0;
+ }
++/* IMAGE-REPLAY-CACHE-PATCH v1 */
++async function __ocLoadPromptImageForResizeCache(mediaUrl, options) {
++ if (process.env.OPENCLAW_IMAGE_RESIZE_CACHE === "0") return loadWebMedia$1(mediaUrl, options);
++ const normalized = typeof options === "number" ? { maxBytes: options } : { ...options };
++ try {
++  // Preserve original bytes so the final model sanitizer can reuse A1's exact output.
++  return await loadWebMedia$1(mediaUrl, { ...normalized, optimizeImages: false });
++ } catch (err) {
++  // Keep the old optimized loader for images exceeding its raw read/byte/dimension cap.
++  // Access, SSRF, cancellation and other failures must retain their original behavior.
++  const msg = String(err?.message ?? "");
++  if (err?.cause?.code !== "too-large" && !/^(?:Media|Image|GIF) (?:exceeds|dimensions? exceed)/i.test(msg)) throw err;
++  return await loadWebMedia$1(mediaUrl, options);
++ }
++}
++/* /IMAGE-REPLAY-CACHE-PATCH v1 */
+ async function loadMediaFromRef(ref, workspaceDir, options) {
+ 	options?.signal?.throwIfAborted();
+ 	const redactedRef = redactSensitiveText$2(ref.raw || ref.resolved);
+@@ -705929,11 +705998,11 @@
+ 			return null;
+ 		}
+ 		else if (!path.isAbsolute(targetPath)) targetPath = path.resolve(workspaceDir, targetPath);
+-		const media = options?.sandbox ? await loadWebMedia$1(targetPath, {
++		const media = options?.sandbox ? await __ocLoadPromptImageForResizeCache(targetPath, {
+ 			maxBytes: options.maxBytes,
+ 			sandboxValidated: true,
+ 			readFile: createSandboxBridgeReadFile({ sandbox: options.sandbox })
+-		}) : await loadWebMedia$1(targetPath, options?.workspaceOnly || options?.localRoots ? {
++		}) : await __ocLoadPromptImageForResizeCache(targetPath, options?.workspaceOnly || options?.localRoots ? {
+ 			maxBytes: options.maxBytes,
+ 			localRoots: options.localRoots ?? [workspaceDir]
+ 		} : options?.maxBytes);
+@@ -825069,6 +825138,23 @@
+ 		return recorder;
+ 	};
+ }
++// QQ-IMAGE-DIRECT-COMPLETION-PATCH v1: trusted producer metadata only.
++function buildQQImageCompletion(params, route, expectedMedia) {
++	if (params.sourceTool !== "image_generate" || route.channel !== "qqbot" || !params.preparedRequester?.binding) return;
++	const sk = params.preparedRequester.binding.sessionKey;
++	if (!/^agent:main:qqbot:group:(__HS_GROUP_NEW_OPENID__|__HS_GROUP_OLD_OPENID__)$/.test(sk)) return;
++	const events = params.internalEvents;
++	if (!Array.isArray(events) || events.length !== 1) return;
++	const event = events[0];
++	if (event.type !== "task_completion" || event.source !== "image_generation" || !["ok", "error"].includes(event.status) || !event.childSessionId || event.childSessionKey !== `image_generate:${event.childSessionId}`) return;
++	const urls = expectedMedia.expectedMediaUrls ?? [];
++	if (event.status === "ok" && urls.length === 0 || event.status === "error" && urls.length !== 0) return;
++	const error = event.status === "error" ? String(event.result ?? "") : "";
++	const failure = /quota|usage limit|额度|配额/i.test(error) ? "quota" : /426/.test(error) ? "client" : /not support|unsupported|不支持/i.test(error) ? "unsupported" : "other";
++	const header = event.status === "ok" ? /^Generated (\d+) images? with ([A-Za-z0-9][A-Za-z0-9._:/-]{0,119})\./.exec(String(event.result ?? "")) : null;
++	return { version: 1, taskId: event.childSessionId, status: event.status, failure, ...header ? { modelLabel: header[2] } : {} };
++}
++
+ async function deliverSubagentAnnouncement(params) {
+ 	const sourceOwnerChanged = () => params.isSourceSessionEffectsAllowed?.() === false || params.isSourceSessionAdmissionAllowed?.() === false;
+ 	if (sourceOwnerChanged()) return sourceOwnerChangedResult();
+@@ -825092,6 +825178,7 @@
+ 			requesterSessionOrigin
+ 		}) ? "message_tool_only" : "automatic";
+ 		const expectedMedia = collectExpectedMediaFromInternalEvents(params.internalEvents);
++		const qqImageCompletion = buildQQImageCompletion(params, queuedRoute.route, expectedMedia);
+ 		const queuePayload = {
+ 			kind: "agentTurn",
+ 			sessionKey: canonicalSessionKey,
+@@ -825107,6 +825194,7 @@
+ 			},
+ 			sourceReplyDeliveryMode,
+ 			...expectedMedia,
++			...qqImageCompletion ? { qqImageCompletion } : {},
+ 			idempotencyKey: `${params.directIdempotencyKey}:agent-loop`,
+ 			...params.preparedRequester ? { requesterBinding: params.preparedRequester.binding } : {}
+ 		};
+@@ -1344427,7 +1344515,7 @@
+ 	init_delivery_queue_storage();
+ 	init_delivery_context_read();
+ 	init_delivery_context_shared();
+-	PENDING_DELIVERY_NOTICE = "I couldn’t confirm whether my previous reply reached this chat, so I won’t resend it automatically. Please ask for any missing remainder.";
++	PENDING_DELIVERY_NOTICE = "刚重启过，上一条可能没发到，缺的再问我～";
+ }));
+ //#endregion
+ //#region src/channels/inbound-event/session-transcript-context.runtime.ts
+@@ -1365045,6 +1365133,72 @@
+ 	if (expectedMediaUrls.length === 0 && !hasQueuedVisibleReplyEvidence(params)) await rearmAgentRun("queued generated-media agent turn completed without a visible reply");
+ }
+ /** Runs durable generated-media handoffs through the normal owning-session agent loop. */
++// QQ-IMAGE-DIRECT-COMPLETION-PATCH v1: keep agentTurn custody and original requester lease.
++async function deliverQueuedQQImageCompletion(params, assertRequesterAdmissionCurrent, readRequester, evaluateResult) {
++	const { entry, queueContext } = params;
++	const completion = entry.qqImageCompletion;
++	if (!completion || process.env.OPENCLAW_QQ_IMAGE_DIRECT === "0") return false;
++	const binding = entry.requesterBinding;
++	const route = entry.route;
++	if (!binding || completion.version !== 1 || !["ok", "error"].includes(completion.status) || !completion.taskId || entry.inputProvenance?.sourceTool !== "image_generate" || route?.channel !== "qqbot" || !/^agent:main:qqbot:group:(__HS_GROUP_NEW_OPENID__|__HS_GROUP_OLD_OPENID__)$/.test(binding.sessionKey)) return await deadLetterSessionDelivery(entry, "invalid direct image completion custody", queueContext);
++	const groupId = binding.sessionKey.split(":").at(-1);
++	if (String(route.to).toLowerCase().replace(/^qqbot:/, "").replace(/^group:/, "") !== groupId) return await deadLetterSessionDelivery(entry, "direct image completion target changed", queueContext);
++	const urls = entry.expectedMediaUrls ?? [];
++	if (completion.status === "ok" && !urls.length || completion.status === "error" && urls.length) return await deadLetterSessionDelivery(entry, "invalid direct image completion media", queueContext);
++	// Generated local artifacts only. Transport retains its normal root and sandbox checks.
++	const generatedRoot = path.join(getMediaDir(), "tool-image-generation");
++	if (urls.some((url) => typeof url !== "string" || !path.isAbsolute(url) || !path.relative(generatedRoot, url) || path.relative(generatedRoot, url).startsWith("..") || path.isAbsolute(path.relative(generatedRoot, url)))) return await deadLetterSessionDelivery(entry, "direct image artifact outside generated media roots", queueContext);
++	const failureText = { quota: "图片生成失败：当前额度已用完，这次没有成品。", client: "图片生成失败：服务端要求的客户端不兼容，这次没有成品。", unsupported: "图片生成失败：指定模型不支持这次请求，这次没有成品。", other: "图片生成失败，这次没有成品。" };
++	const modelLabel = typeof completion.modelLabel === "string" && /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}$/.test(completion.modelLabel) ? completion.modelLabel : "";
++	const text = entry.suppressTextDelivery === true ? "" : completion.status === "ok" ? modelLabel ? `图画好啦（${modelLabel}，${urls.length}张）。` : "图画好啦。" : failureText[completion.failure] ?? failureText.other;
++	// One attachment per payload makes partial delivery evidence exact.
++	const payloads = urls.length ? urls.map((mediaUrl, index) => ({ text: index === 0 ? text : "", mediaUrl })) : [{ text }];
++	const started = Date.now();
++	let platformDispatchStarted = false;
++	try {
++		return await withSessionDeliveryEnqueueAdmission(entry, queueContext, async (assertLeaseCurrent) => {
++			const assertCurrent = () => { assertLeaseCurrent(); assertRequesterAdmissionCurrent(); };
++			assertCurrent();
++			await readRequester();
++			assertCurrent();
++			await markSessionDeliveryAttemptStarted(entry, queueContext);
++			assertCurrent();
++			const send = await sendMessage({
++				cfg: params.resolveGatewayContext?.()?.getRuntimeConfig() ?? getRuntimeConfig(),
++				channel: route.channel, to: route.to, accountId: route.accountId,
++				agentId: binding.agentId, requesterSessionKey: binding.sessionKey,
++				conversationType: "group", threadId: route.threadId, replyToId: route.replyToId,
++				payloads, content: text,
++				// This already has a durable session queue owner; never create a competing retry.
++				gatewayOwnedDelivery: true, bestEffort: true, skipQueue: true,
++				mediaAccess: { localRoots: [generatedRoot] },
++				runId: resolveQueuedAgentRunId(entry),
++				mirror: { agentId: binding.agentId, sessionKey: binding.sessionKey, expectedSessionId: binding.sessionId, idempotencyKey: `${resolveQueuedAgentRunId(entry)}:direct-image-transcript` },
++				assertDirectAdapterHandoff: assertCurrent,
++				onPlatformSendDispatch: async () => { assertCurrent(); await readRequester(); assertCurrent(); platformDispatchStarted = true; }
++			});
++			assertCurrent();
++			if (!["sent", "suppressed", "failed", "partial_failed"].includes(send.deliveryStatus) || !send.payloadOutcomes?.length && (send.sentBeforeError === true || platformDispatchStarted && ["failed", "partial_failed"].includes(send.deliveryStatus))) return await deadLetterSessionDelivery(entry, "direct image completion has ambiguous send evidence", queueContext);
++			if (send.deliveryStatus === "suppressed" || send.payloadOutcomes?.some((outcome) => outcome.status === "suppressed")) return await deadLetterSessionDelivery(entry, "direct image completion was suppressed without confirmed delivery", queueContext);
++			if (platformDispatchStarted || send.payloadOutcomes?.length || send.deliveryStatus === "sent") {
++				const classified = new Map();
++				for (const outcome of send.payloadOutcomes ?? []) {
++					if (!Number.isInteger(outcome.index) || outcome.index < 0 || outcome.index >= payloads.length || classified.has(outcome.index) || !(outcome.status === "sent" || outcome.status === "failed" && outcome.sentBeforeError === false) || send.deliveryStatus === "sent" && outcome.status !== "sent") return await deadLetterSessionDelivery(entry, "direct image completion has ambiguous payload evidence", queueContext);
++					classified.set(outcome.index, outcome);
++				}
++				if (classified.size !== payloads.length) return await deadLetterSessionDelivery(entry, "direct image completion has incomplete payload evidence", queueContext);
++			}
++			// Use the same per-payload proof, missing-only retry and dead-letter rules as the agent path.
++			const result = { payloads, deliveryStatus: { status: send.deliveryStatus, payloadOutcomes: send.payloadOutcomes, errorMessage: send.error } };
++			log$33.info("qq image completion direct delivery", { queueId: entry.id, elapsedMs: Date.now() - started, status: send.deliveryStatus, count: urls.length });
++			return await evaluateResult(result);
++		});
++	} catch (error) {
++		if (error instanceof SessionDeliveryDeadLetteredError) return await deadLetterSessionDelivery(entry, error.message, queueContext);
++		throw error;
++	}
++}
++
+ async function deliverQueuedGeneratedMediaAgentTurn(params) {
+ 	if (params.entry.kind !== "agentTurn") return false;
+ 	const entry = params.entry;
+@@ -1365202,6 +1365356,7 @@
+ 		throw new SessionDeliveryDeferredError("queued generated-media agent turn is still owned by agent recovery");
+ 	}
+ 	if (entry.deliveryStartedAt !== void 0) await deadLetterSessionDelivery(entry, "queued generated-media agent turn dead-lettered after an interrupted unproven attempt", params.queueContext);
++	if (entry.qqImageCompletion && process.env.OPENCLAW_QQ_IMAGE_DIRECT !== "0") return await deliverQueuedQQImageCompletion(params, assertRequesterAdmissionCurrent, readRequester, evaluateResult);
+ 	const sourceReplyDeliveryMode = "automatic";
+ 	const cronSessionId = sessionEntry?.cronRunContinuation?.lifecycleRevision?.trim() ? sessionEntry?.sessionId?.trim() : void 0;
+ 	await markSessionDeliveryAttemptStarted(entry, params.queueContext);
+@@ -1365273,6 +1365428,7 @@
+ }
+ var log$33, AGENT_DELIVERY_OWNERSHIP_RETRY_MS;
+ var init_server_restart_sentinel_agent_delivery = __esmMin((() => {
++	init_message();
+ 	init_delivery_evidence$1();
+ 	init_internal_events();
+ 	init_completion_delivery_policy();

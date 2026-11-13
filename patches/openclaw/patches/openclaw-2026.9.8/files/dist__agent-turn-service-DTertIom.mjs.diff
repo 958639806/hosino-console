@@ -1,0 +1,113 @@
+diff -ruN a/dist/agent-turn-service-DTertIom.mjs b/dist/agent-turn-service-DTertIom.mjs
+--- a/dist/agent-turn-service-DTertIom.mjs	2026-11-13 19:09:04.013018281 +0800
++++ b/dist/agent-turn-service-DTertIom.mjs	2026-11-13 19:09:04.017018483 +0800
+@@ -52,7 +52,7 @@
+ import { u as AGENT_SESSION_RESET_COMMAND_RE } from "./method-scopes-DZtl1Vvs.mjs";
+ import { C as hasSessionTranscriptEventsSync } from "./session-accessor.sqlite-transcript-write-CZkj18r-.mjs";
+ import { r as mergeSessionEntry } from "./types-DBHkhm7j.mjs";
+-import { d as patchSessionEntryTarget } from "./session-accessor.sqlite-entry-C87Sde4p.mjs";
++import { c as loadSessionEntryReadOnly, d as patchSessionEntryTarget } from "./session-accessor.sqlite-entry-C87Sde4p.mjs";
+ import "./session-accessor-CGLseszP.mjs";
+ import { a as tryResolveSessionCompatibilityOwnerAgentId, n as resolveRequestedSessionAgentId } from "./session-request-agent-DFWpsx2m.mjs";
+ import { i as resolveSessionStoreKey, r as resolveSessionStoreIdentity } from "./session-store-key-__CfQfd2.mjs";
+@@ -141,6 +141,7 @@
+ import { t as reactivateCompletedSubagentSession } from "./session-subagent-reactivation-D6W2qhKm.mjs";
+ import { t as captureGatewayUiCommandTarget } from "./ui-command-target-BobwsuGc.mjs";
+ import { randomUUID } from "node:crypto";
++import { isDeepStrictEqual } from "node:util";
+ //#region src/gateway/server-methods/agent-cron-continuation.ts
+ function createCronContinuationController(params) {
+ 	let claim;
+@@ -2759,6 +2760,56 @@
+ 		}
+ 	} : { messageChannel };
+ }
++// QQ-RESTART-REQUESTER-HOST v1. Only the admitted recovery issuer can lend task-scoped authority.
++function bindAgentRestartRecoveryQQRequester(params) {
++	const guard = globalThis[Symbol.for("openclaw.qqGroupOwnerGuard")];
++	const context = params.restartRecoveryContext?.channel;
++	if (params.isRestartRecoveryResumeRun !== true || params.canUseInternalRuntimeHandoff !== true || !context || params.restartRecoveryContext.messageChannel !== "qqbot" || typeof guard?.admitRestartRecoveryRequester !== "function") return;
++	const sessionKey = normalizeOptionalString(params.sessionKey);
++	const sessionId = normalizeOptionalString(params.sessionId);
++	const runId = normalizeOptionalString(params.runId);
++	const sourceTurnId = normalizeOptionalString(context.sourceTurnId);
++	// Core generation is an opaque UUID string; do not parse, trim or coerce the ownership token.
++	if (!sessionKey || !sessionId || !runId || !sourceTurnId || !params.storePath || typeof params.assertCurrent !== "function" || typeof params.lifecycleGeneration !== "string" || !params.lifecycleGeneration || params.lifecycleGeneration.length > 512 || /[\s\x00-\x1f\x7f]/.test(params.lifecycleGeneration)) return;
++	const normalizeQQDelivery = value => {
++		const normalized = normalizeDeliveryContext(value);
++		return normalized?.channel === "qqbot" ? { ...normalized, accountId: normalizeOptionalString(normalized.accountId) ?? "default" } : normalized;
++	};
++	const requestDelivery = normalizeQQDelivery({
++		channel: params.request?.channel,
++		to: params.request?.to,
++		accountId: params.request?.accountId,
++		threadId: params.request?.threadId
++	});
++	let issuedSnapshot;
++	let issuedProof;
++	let issuedDelivery;
++	const readCurrent = () => {
++		params.assertCurrent();
++		const entry = loadSessionEntryReadOnly({ storePath: params.storePath, sessionKey, readConsistency: "latest", clone: true });
++		if (!issuedSnapshot && (entry?.chatType !== "direct" || !entry.restartRecoveryQQRequesterAuthority)) return;
++		const state = entry?.mainRestartRecovery;
++		const delivery = normalizeQQDelivery(entry?.restartRecoveryDeliveryContext);
++		const accountId = normalizeOptionalString(entry?.restartRecoveryRequesterAccountId);
++		const senderId = normalizeOptionalString(entry?.restartRecoveryRequesterSenderId);
++		const cycleId = normalizeOptionalString(state?.cycleId);
++		if (!entry || entry.sessionId !== sessionId || entry.chatType !== "direct" || entry.status !== "running" || entry.abortedLastRun === true || entry.archivedAt !== void 0 || entry.lifecycleRunId !== runId || entry.restartRecoveryDeliveryRunId !== runId || entry.restartRecoveryDeliverySourceRunId !== sourceTurnId || entry.restartRecoverySourceIngress !== "channel" || !cycleId || !Number.isInteger(state?.chargedAttempts) || state.chargedAttempts < 1 || state.tombstone || state.reservation || !entry.restartRecoveryRuns?.some(fence => fence.runId === runId && fence.lifecycleGeneration === params.lifecycleGeneration) || !accountId || !senderId || delivery?.channel !== "qqbot" || !delivery.to || delivery.accountId !== accountId || !isDeepStrictEqual(delivery, requestDelivery) || context.requesterAccountId !== accountId || context.requesterSenderId !== senderId || context.currentChannelId !== delivery.to || context.currentThreadTs !== (delivery.threadId != null ? String(delivery.threadId) : void 0)) throw new Error("QQ restart requester no longer owns the exact admitted recovery claim");
++		const snapshot = Object.freeze({ cycleId, chargedAttempts: state.chargedAttempts, lifecycleGeneration: params.lifecycleGeneration, recoveryRunId: runId, sourceTurnId, sessionId, accountId, senderId, target: delivery.to, channel: "qqbot" });
++		if (issuedSnapshot && (!isDeepStrictEqual(snapshot, issuedSnapshot) || !isDeepStrictEqual(delivery, issuedDelivery) || !isDeepStrictEqual(entry.restartRecoveryQQRequesterAuthority, issuedProof))) throw new Error("QQ restart requester source authorization changed");
++		params.assertCurrent();
++		return { snapshot, proof: entry.restartRecoveryQQRequesterAuthority, delivery };
++	};
++	const current = readCurrent();
++	// Old interrupted tasks have no host-issued proof. Never manufacture one from historical flags.
++	if (!current?.proof) return;
++	issuedProof = Object.freeze(structuredClone(current.proof));
++	issuedSnapshot = current.snapshot;
++	issuedDelivery = Object.freeze({ ...current.delivery });
++	const assertCurrent = () => readCurrent().snapshot;
++	assertCurrent();
++	return guard.admitRestartRecoveryRequester(Object.freeze({ sessionKey, sessionId, runId, sourceTurnId, lifecycleGeneration: params.lifecycleGeneration, ownerProof: issuedProof, freshEntry: issuedSnapshot, assertCurrent }));
++}
++// /QQ-RESTART-REQUESTER-HOST v1
+ /** Resolve only the private token durably owned by the admitted recovery cycle. */
+ function resolveAgentRestartRecoveryExecutionIdentityAdmission(params) {
+ 	if (!params.isRestartRecoveryResumeRun || !params.collectionEnabled) return;
+@@ -3274,6 +3325,7 @@
+ 				await yieldAfterAgentAcceptedAck();
+ 				let dispatched = false;
+ 				let pendingRecovery;
++				let releaseRestartRecoveryQQRequester;
+ 				const settleUnstartedFollowup = (outcome) => !dispatched ? settleUnstartedGatewayFollowup({
+ 					completion: prepared.followupCompletion,
+ 					runId: params.runId,
+@@ -3410,6 +3462,18 @@
+ 						runId: params.runId,
+ 						sessionEntry: params.sessionEntry
+ 					});
++					releaseRestartRecoveryQQRequester = bindAgentRestartRecoveryQQRequester({
++						isRestartRecoveryResumeRun: params.isRestartRecoveryResumeRun,
++						canUseInternalRuntimeHandoff: params.canUseInternalRuntimeHandoff,
++						restartRecoveryContext,
++						sessionKey: params.resolvedSessionKey,
++						sessionId: params.resolvedSessionId,
++						runId: params.runId,
++						lifecycleGeneration: params.lifecycleGeneration,
++						storePath: prepared.lifecycleStorePath,
++						request: params.request,
++						assertCurrent: assertDispatchCurrent
++					});
+ 					const restartRecoveryChannelContext = restartRecoveryContext?.channel;
+ 					const runContext = {
+ 						messageChannel: restartRecoveryContext?.messageChannel ?? params.delivery.originMessageChannel,
+@@ -3592,6 +3656,8 @@
+ 					}
+ 					await finishFailure(err);
+ 				} finally {
++					try { releaseRestartRecoveryQQRequester?.(); }
++					catch (error) { diagnostics.warning("failed to release QQ restart requester authority")(error); }
+ 					try {
+ 						if (!dispatched) try {
+ 							const restoreAdmittedRecovery = prepared.restoreAdmittedRestartRecoveryInterrupted;

@@ -1,0 +1,57 @@
+{
+  "default": "openai/gpt-image-2",
+  "default_chain": [
+    "openai/gpt-image-2",
+    "openai/gpt-image-1.5",
+    "doubao/doubao-seedream-4-5-251128",
+    "grok-imagine/grok-imagine"
+  ],
+  "floor_side": 960,
+  "_comment": "floor_side=960 表示 1:1 表情包边长不低于 960（像素量≈720p 的 1280x720）。模型最小边长取 min_side，或由 min_pixels 换算 ceil(sqrt(min_pixels))。",
+  "models": {
+    "doubao/doubao-seedream-4-5-251128": {
+      "provider": "doubao",
+      "model_id": "doubao-seedream-4-5-251128",
+      "min_pixels": 3686400
+    },
+    "doubao/doubao-seedream-5-0-pro-260628": {
+      "provider": "doubao",
+      "model_id": "doubao-seedream-5-0-pro-260628",
+      "min_pixels": 3686400
+    },
+    "openai/gpt-image-2": {
+      "provider": "openclaw",
+      "model_id": "gpt-image-2",
+      "min_side": 1024,
+      "square_sizes": ["1024x1024", "2048x2048"]
+    },
+    "openai/gpt-image-1.5": {
+      "provider": "openclaw",
+      "model_id": "gpt-image-1.5",
+      "min_side": 1024,
+      "square_sizes": ["1024x1024", "1536x1024", "1024x1536", "2048x2048"]
+    },
+    "openai/gpt-image-1": {
+      "provider": "openclaw",
+      "model_id": "gpt-image-1",
+      "min_side": 1024,
+      "square_sizes": ["1024x1024", "1536x1024", "1024x1536"]
+    },
+    "openai/gpt-image-1-mini": {
+      "provider": "openclaw",
+      "model_id": "gpt-image-1-mini",
+      "min_side": 1024,
+      "square_sizes": ["1024x1024", "1536x1024", "1024x1536"]
+    },
+    "grok-imagine/grok-imagine": {
+      "provider": "stringai_grok",
+      "model_id": "grok-imagine",
+      "min_side": 1024
+    },
+    "grok-imagine/grok-imagine-image": {
+      "provider": "stringai_grok",
+      "model_id": "grok-imagine-image",
+      "min_side": 1024
+    }
+  }
+}

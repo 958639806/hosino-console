@@ -1,0 +1,12 @@
+diff -ruN a/dist/session-observer-model-DvZF_Ub9.mjs b/dist/session-observer-model-DvZF_Ub9.mjs
+--- a/dist/session-observer-model-DvZF_Ub9.mjs	2026-11-13 19:09:04.885062300 +0800
++++ b/dist/session-observer-model-DvZF_Ub9.mjs	2026-11-13 19:09:04.885062300 +0800
+@@ -94,7 +94,7 @@
+ }
+ async function defaultCompleteModel(params) {
+ 	const { runIsolatedCompletion } = await import("./isolated-completion-BmggmMRb.mjs");
+-	return await runIsolatedCompletion(params);
++	return await runIsolatedCompletion({ ...params, runtimePluginPurpose: "simple-completion" });
+ }
+ const SESSION_OBSERVER_SYSTEM_PROMPT = [
+ 	"You judge the trajectory of a running AI agent session for an operator status surface.",

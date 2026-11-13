@@ -1,0 +1,84 @@
+diff -ruN a/dist/qq-claude-host-prep-timing.mjs b/dist/qq-claude-host-prep-timing.mjs
+--- a/dist/qq-claude-host-prep-timing.mjs	1970-01-01 07:30:00.000000000 +0730
++++ b/dist/qq-claude-host-prep-timing.mjs	2026-11-13 19:09:04.829059473 +0800
+@@ -0,0 +1,80 @@
++// QQ-CLAUDE-HOST-PREP-TIMING v1. Diagnostic state never authorizes or caches work.
++import { createHash } from 'node:crypto';
++
++const PHASES = new Set(['prepare', 'prepared_execute', 'plugin_dispatch']);
++export const QQ_CLAUDE_PREP_POINTS = Object.freeze([
++  'entry', 'cold_storage_ready', 'read_fence_enter', 'configuration_ready',
++  'maintenance_begin', 'maintenance_ready', 'rooted_policy_begin', 'auth_begin', 'auth_ready',
++  'prompt_hooks_begin', 'prompt_hooks_ready',
++  'prompt_history_begin',
++  'prompt_history_ready',
++  'prompt_recall_input_begin',
++  'prompt_recall_input_ready',
++  'prompt_resolver_begin',
++  'prompt_resolver_ready',
++  'prompt_injections_begin',
++  'prompt_injections_ready',
++  'prompt_turn_prepare_begin',
++  'prompt_turn_prepare_ready',
++  'prompt_heartbeat_contribution_begin',
++  'prompt_heartbeat_contribution_ready',
++  'prompt_handlers_begin',
++  'prompt_handlers_ready',
++  'bootstrap_begin', 'bootstrap_ready',
++  'mcp_loopback_begin', 'mcp_loopback_ready', 'tool_projection_begin', 'tool_projection_ready',
++  'context_model_ids_begin', 'context_model_ids_ready',
++  'memory_recall_join_begin', 'memory_recall_join_ready',
++  'authorized_hooks_begin', 'authorized_hooks_ready', 'grant_begin', 'backend_config_begin', 'backend_config_ready',
++  'backend_execution_begin', 'backend_execution_ready', 'auth_epoch_begin', 'auth_epoch_ready',
++  'skills_plugin_begin', 'skills_plugin_ready', 'transcript_probe_begin', 'transcript_probe_ready',
++  'skills_prompt_begin', 'skills_prompt_ready', 'system_prompt_begin', 'system_prompt_ready',
++  'history_admission_begin', 'history_boundary_ready', 'session_prompt_context_begin', 'session_prompt_context_ready',
++  'turn_context_begin', 'turn_context_ready', 'context_engine_begin', 'context_engine_ready',
++  'transcript_exists_begin', 'transcript_exists_ready', 'final_admission_begin', 'final_admission_ready',
++  'heartbeat_claim_begin', 'heartbeat_claim_ready', 'prepared_context_ready',
++  'system_prompt_file_ready', 'image_payload_begin', 'image_payload_ready', 'route_ready',
++  'queue_enqueue', 'queue_enter', 'attempt_begin', 'before_execution_begin', 'before_execution_ready',
++  'capture_begin', 'capture_ready', 'env_ready', 'executable_identity_begin', 'executable_identity_ready',
++  'process_dispatch', 'executable_resolution_ready', 'live_session_begin', 'live_session_ready',
++  'native_iterator_invoke', 'native_iterator_ready', 'native_iterator_next', 'done'
++]);
++const POINT_SET = new Set(QQ_CLAUDE_PREP_POINTS);
++// New detail points are user-only; existing summary/point scope is unchanged.
++const QQ_CLAUDE_PROMPT_DETAIL_POINTS = new Set(["context_model_ids_begin", "context_model_ids_ready", "memory_recall_join_begin", "memory_recall_join_ready", "prompt_history_begin", "prompt_history_ready", "prompt_recall_input_begin", "prompt_recall_input_ready", "prompt_resolver_begin", "prompt_resolver_ready", "prompt_injections_begin", "prompt_injections_ready", "prompt_turn_prepare_begin", "prompt_turn_prepare_ready", "prompt_heartbeat_contribution_begin", "prompt_heartbeat_contribution_ready", "prompt_handlers_begin", "prompt_handlers_ready"]);
++const FLAG_NAMES = ['useResume', 'forceNewSession', 'managedLiveRequested', 'requiredGenerationPresent'];
++const safe = callback => { try { return callback(); } catch {} };
++const numeric = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 ? Math.round(value * 1000) / 1000 : null;
++
++export function createQQClaudeHostPrepTrace(params, phase) {
++  return safe(() => {
++    if (!PHASES.has(phase)) return;
++    const groupAlias = params?.sessionKey === 'agent:main:qqbot:group:__HS_GROUP_NEW_OPENID__' ? 'new' : params?.sessionKey === 'agent:main:qqbot:group:__HS_GROUP_OLD_OPENID__' ? 'old' : null;
++    if (!groupAlias || typeof params.runId !== 'string' || !params.runId.length || params.runId.length > 512) return;
++    if (!['anthropic', 'claude-cli'].includes(params.provider) && !(typeof params.model === 'string' && params.model.startsWith('claude-'))) return;
++    const runHash = createHash('sha256').update('qq-claude-native-run-v1\0').update(params.runId).digest('hex').slice(0, 24);
++    const trigger = ['user', 'heartbeat'].includes(params.trigger) ? params.trigger : 'unknown';
++    const points = [], seen = new Set();
++    const flags = Object.fromEntries(FLAG_NAMES.map(name => [name, null]));
++    let closed = false;
++    const mark = name => {
++      if (closed || !POINT_SET.has(name) || seen.has(name)) return;
++      if (QQ_CLAUDE_PROMPT_DETAIL_POINTS.has(name) && trigger !== "user") return;
++      const atMonoMs = numeric(performance.now());
++      if (atMonoMs === null) return;
++      seen.add(name); points.push({ name, atMonoMs });
++    };
++    mark('entry');
++    return Object.freeze({
++      mark(name) { safe(() => mark(name)); },
++      flags(values) { safe(() => { if (!closed) for (const name of FLAG_NAMES) if (typeof values?.[name] === 'boolean') flags[name] = values[name]; }); },
++      finish(outcome) { safe(() => {
++        if (closed) return;
++        mark('done'); closed = true;
++        const acceptedOutcome = ['completed', 'error', 'aborted'].includes(outcome) ? outcome : 'error';
++        const segments = points.slice(1).map((point, index) => ({ from: points[index].name, to: point.name, durationMs: numeric(point.atMonoMs - points[index].atMonoMs) }));
++        const durationMs = points.length > 1 ? numeric(points.at(-1).atMonoMs - points[0].atMonoMs) : null;
++        console.info('[qq-claude-host-prep] ' + JSON.stringify({ schema: 'qq-claude-host-prep-v1', phase, groupAlias, runHash, trigger, outcome: acceptedOutcome, flags, durationMs, points, segments }));
++      }); }
++    });
++  });
++}

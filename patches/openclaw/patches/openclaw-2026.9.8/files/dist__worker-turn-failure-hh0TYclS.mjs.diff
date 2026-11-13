@@ -1,0 +1,65 @@
+diff -ruN a/dist/worker-turn-failure-hh0TYclS.mjs b/dist/worker-turn-failure-hh0TYclS.mjs
+--- a/dist/worker-turn-failure-hh0TYclS.mjs	2026-11-13 19:09:04.941065127 +0800
++++ b/dist/worker-turn-failure-hh0TYclS.mjs	2026-11-13 19:09:04.945065329 +0800
+@@ -1,3 +1,5 @@
++import { qqHostLatencyTraceFromContext, createQqAdmissionTrace, beginQqAdmissionSpan, endQqAdmissionSpan, closeQqAdmissionTrace, createQqWorkerPrepareObserver, closeQqWorkerPrepareObserver } from "./qq-host-latency-trace.mjs";
++import { t as createSubsystemLogger } from "./subsystem-CeqVSEVi.mjs";
+ import { t as createDeferredCore } from "./deferred-D0La5CRk.mjs";
+ import { t as createAbortError } from "./abort-signal-Z3A36sLL.mjs";
+ import { s as getGatewayRestartDrainSignal } from "./gateway-work-admission-B4bQUVQ6.mjs";
+@@ -250,20 +252,39 @@
+ 	if (turnClaim.owner.kind === "worker" && placements.validateTurnClaim(turnClaim)) await placements.closeWorkerTurnToolState(turnClaim);
+ 	await placements.releaseTurnIfOwned(turnClaim);
+ }
++const qqPlacementTraceLog = createSubsystemLogger("gateway/worker-placement");
+ async function executeLocalTurn(params) {
++	const qqPlacementTrace = qqHostLatencyTraceFromContext(params.qqLatencyTraceContext, "embedded", qqPlacementTraceLog);
++	const qqPlacementPoint = (stage) => { try { qqPlacementTrace?.point(stage); } catch {} };
++	qqPlacementPoint("placement_projection_begin");
+ 	const current = (await params.placements.readProjection([params.claim.sessionId])).placements.get(params.claim.sessionId);
++	qqPlacementPoint("placement_projection_ready");
+ 	params.assertCurrent?.();
+ 	const identity = resolvePlacementIdentity(params.claim, current);
+ 	if (loadSessionEntryReadOnly({
+ 		...identity,
+ 		storePath: resolveSessionStorePathForScope(identity)
+ 	})?.repositoryWorkspaceId) throw new Error("This repository session needs a cloud worker. Choose a cloud environment and retry.");
+-	const turnClaim = await params.placements.claimTurn({
+-		...identity,
+-		claimId: randomUUID(),
+-		runId: params.claim.runId,
+-		owner: { kind: "local" }
+-	}, params.assertCurrent);
++	qqPlacementPoint("placement_claim_begin");
++	const qqClaimAdmissionTrace = createQqAdmissionTrace(qqPlacementTrace);
++	const qqClaimSpan = beginQqAdmissionSpan(qqClaimAdmissionTrace, "worker_prepare");
++	const qqClaimObserver = createQqWorkerPrepareObserver(qqClaimAdmissionTrace, qqClaimSpan);
++	let qqClaimOutcome = "error";
++	let turnClaim;
++	try {
++		turnClaim = await params.placements.claimTurn({
++			...identity,
++			claimId: randomUUID(),
++			runId: params.claim.runId,
++			owner: { kind: "local" }
++		}, params.assertCurrent, qqClaimObserver);
++		qqClaimOutcome = "ok";
++	} finally {
++		closeQqWorkerPrepareObserver(qqClaimObserver, qqClaimOutcome);
++		endQqAdmissionSpan(qqClaimAdmissionTrace, qqClaimSpan);
++		closeQqAdmissionTrace(qqClaimAdmissionTrace);
++	}
++	qqPlacementPoint("placement_claim_ready");
+ 	let closed = false;
+ 	let settlement;
+ 	const settle = () => {
+@@ -272,7 +293,9 @@
+ 	};
+ 	let authority;
+ 	try {
++		qqPlacementPoint("placement_authority_begin");
+ 		authority = await params.placements.prepareTurnClaimAuthority(turnClaim);
++		qqPlacementPoint("placement_authority_ready");
+ 		params.assertCurrent?.();
+ 		return await withSessionPlacementForcedTerminalSettlement(settle, () => {
+ 			if (closed || !authority?.isCurrent()) throw createSessionPlacementSettlementClosedAbortError();

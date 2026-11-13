@@ -1,0 +1,98 @@
+diff -ruN a/dist/server-restart-sentinel-CzWy_UqH.mjs b/dist/server-restart-sentinel-CzWy_UqH.mjs
+--- a/dist/server-restart-sentinel-CzWy_UqH.mjs	2026-11-13 19:09:04.857060886 +0800
++++ b/dist/server-restart-sentinel-CzWy_UqH.mjs	2026-11-13 19:09:04.861061088 +0800
+@@ -1,3 +1,4 @@
++import { t as sendMessage } from "./message-B6mQFm-D.mjs";
+ import { u as toErrorObject } from "./error-coercion-1P2One0X.mjs";
+ import "./src-SskUVPJG.mjs";
+ import { t as expectDefined } from "./expect-lbe3Hgrh.mjs";
+@@ -43,7 +44,7 @@
+ import { n as dispatchGatewayLifecycleMethod } from "./server-recovery-runtime-context-4f6dl75P.mjs";
+ import { t as dispatchReplyWithBufferedBlockDispatcherCore } from "./provider-dispatcher-fTs8qLGK.mjs";
+ import { t as recordInboundSession } from "./session-DtiLRiR0.mjs";
+-import { a as enqueueSessionDelivery, d as mergeSessionDeliveryPreparedMediaBlocks, l as markSessionDeliveryAttemptStarted, o as failSessionDelivery, r as deferSessionDelivery, t as advanceSessionDeliveryAgentRun, u as markSessionDeliverySettlement } from "./session-delivery-queue-storage-D5pkrc1d.mjs";
++import { m as withSessionDeliveryEnqueueAdmission, a as enqueueSessionDelivery, d as mergeSessionDeliveryPreparedMediaBlocks, l as markSessionDeliveryAttemptStarted, o as failSessionDelivery, r as deferSessionDelivery, t as advanceSessionDeliveryAgentRun, u as markSessionDeliverySettlement } from "./session-delivery-queue-storage-D5pkrc1d.mjs";
+ import { a as SessionDeliveryDeferredError, i as SessionDeliveryDeadLetteredError, o as SessionDeliveryRetryChargedError, s as SessionDeliverySafeRetryError } from "./session-delivery-queue.records-CjQTBb2t.mjs";
+ import { C as recoverPendingSessionDeliveries, S as drainPendingSessionDelivery } from "./subagent-registry-helpers-BH63OlUO.mjs";
+ import { r as hasExplicitlyVisibleAgentPayload } from "./message-visibility-BWNHaOTg.mjs";
+@@ -168,6 +169,72 @@
+ 	if (expectedMediaUrls.length === 0 && !hasQueuedVisibleReplyEvidence(params)) await rearmAgentRun("queued generated-media agent turn completed without a visible reply");
+ }
+ /** Runs durable generated-media handoffs through the normal owning-session agent loop. */
++// QQ-IMAGE-DIRECT-COMPLETION-PATCH v1: keep agentTurn custody and original requester lease.
++async function deliverQueuedQQImageCompletion(params, assertRequesterAdmissionCurrent, readRequester, evaluateResult) {
++	const { entry, queueContext } = params;
++	const completion = entry.qqImageCompletion;
++	if (!completion || process.env.OPENCLAW_QQ_IMAGE_DIRECT === "0") return false;
++	const binding = entry.requesterBinding;
++	const route = entry.route;
++	if (!binding || completion.version !== 1 || !["ok", "error"].includes(completion.status) || !completion.taskId || entry.inputProvenance?.sourceTool !== "image_generate" || route?.channel !== "qqbot" || !/^agent:main:qqbot:group:(__HS_GROUP_NEW_OPENID__|__HS_GROUP_OLD_OPENID__)$/.test(binding.sessionKey)) return await deadLetterSessionDelivery(entry, "invalid direct image completion custody", queueContext);
++	const groupId = binding.sessionKey.split(":").at(-1);
++	if (String(route.to).toLowerCase().replace(/^qqbot:/, "").replace(/^group:/, "") !== groupId) return await deadLetterSessionDelivery(entry, "direct image completion target changed", queueContext);
++	const urls = entry.expectedMediaUrls ?? [];
++	if (completion.status === "ok" && !urls.length || completion.status === "error" && urls.length) return await deadLetterSessionDelivery(entry, "invalid direct image completion media", queueContext);
++	// Generated local artifacts only. Transport retains its normal root and sandbox checks.
++	const generatedRoot = path.join(getMediaDir(), "tool-image-generation");
++	if (urls.some((url) => typeof url !== "string" || !path.isAbsolute(url) || !path.relative(generatedRoot, url) || path.relative(generatedRoot, url).startsWith("..") || path.isAbsolute(path.relative(generatedRoot, url)))) return await deadLetterSessionDelivery(entry, "direct image artifact outside generated media roots", queueContext);
++	const failureText = { quota: "图片生成失败：当前额度已用完，这次没有成品。", client: "图片生成失败：服务端要求的客户端不兼容，这次没有成品。", unsupported: "图片生成失败：指定模型不支持这次请求，这次没有成品。", other: "图片生成失败，这次没有成品。" };
++	const modelLabel = typeof completion.modelLabel === "string" && /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,119}$/.test(completion.modelLabel) ? completion.modelLabel : "";
++	const text = entry.suppressTextDelivery === true ? "" : completion.status === "ok" ? modelLabel ? `图画好啦（${modelLabel}，${urls.length}张）。` : "图画好啦。" : failureText[completion.failure] ?? failureText.other;
++	// One attachment per payload makes partial delivery evidence exact.
++	const payloads = urls.length ? urls.map((mediaUrl, index) => ({ text: index === 0 ? text : "", mediaUrl })) : [{ text }];
++	const started = Date.now();
++	let platformDispatchStarted = false;
++	try {
++		return await withSessionDeliveryEnqueueAdmission(entry, queueContext, async (assertLeaseCurrent) => {
++			const assertCurrent = () => { assertLeaseCurrent(); assertRequesterAdmissionCurrent(); };
++			assertCurrent();
++			await readRequester();
++			assertCurrent();
++			await markSessionDeliveryAttemptStarted(entry, queueContext);
++			assertCurrent();
++			const send = await sendMessage({
++				cfg: params.resolveGatewayContext?.()?.getRuntimeConfig() ?? getRuntimeConfig(),
++				channel: route.channel, to: route.to, accountId: route.accountId,
++				agentId: binding.agentId, requesterSessionKey: binding.sessionKey,
++				conversationType: "group", threadId: route.threadId, replyToId: route.replyToId,
++				payloads, content: text,
++				// This already has a durable session queue owner; never create a competing retry.
++				gatewayOwnedDelivery: true, bestEffort: true, skipQueue: true,
++				mediaAccess: { localRoots: [generatedRoot] },
++				runId: resolveQueuedAgentRunId(entry),
++				mirror: { agentId: binding.agentId, sessionKey: binding.sessionKey, expectedSessionId: binding.sessionId, idempotencyKey: `${resolveQueuedAgentRunId(entry)}:direct-image-transcript` },
++				assertDirectAdapterHandoff: assertCurrent,
++				onPlatformSendDispatch: async () => { assertCurrent(); await readRequester(); assertCurrent(); platformDispatchStarted = true; }
++			});
++			assertCurrent();
++			if (!["sent", "suppressed", "failed", "partial_failed"].includes(send.deliveryStatus) || !send.payloadOutcomes?.length && (send.sentBeforeError === true || platformDispatchStarted && ["failed", "partial_failed"].includes(send.deliveryStatus))) return await deadLetterSessionDelivery(entry, "direct image completion has ambiguous send evidence", queueContext);
++			if (send.deliveryStatus === "suppressed" || send.payloadOutcomes?.some((outcome) => outcome.status === "suppressed")) return await deadLetterSessionDelivery(entry, "direct image completion was suppressed without confirmed delivery", queueContext);
++			if (platformDispatchStarted || send.payloadOutcomes?.length || send.deliveryStatus === "sent") {
++				const classified = new Map();
++				for (const outcome of send.payloadOutcomes ?? []) {
++					if (!Number.isInteger(outcome.index) || outcome.index < 0 || outcome.index >= payloads.length || classified.has(outcome.index) || !(outcome.status === "sent" || outcome.status === "failed" && outcome.sentBeforeError === false) || send.deliveryStatus === "sent" && outcome.status !== "sent") return await deadLetterSessionDelivery(entry, "direct image completion has ambiguous payload evidence", queueContext);
++					classified.set(outcome.index, outcome);
++				}
++				if (classified.size !== payloads.length) return await deadLetterSessionDelivery(entry, "direct image completion has incomplete payload evidence", queueContext);
++			}
++			// Use the same per-payload proof, missing-only retry and dead-letter rules as the agent path.
++			const result = { payloads, deliveryStatus: { status: send.deliveryStatus, payloadOutcomes: send.payloadOutcomes, errorMessage: send.error } };
++			log$1.info("qq image completion direct delivery", { queueId: entry.id, elapsedMs: Date.now() - started, status: send.deliveryStatus, count: urls.length });
++			return await evaluateResult(result);
++		});
++	} catch (error) {
++		if (error instanceof SessionDeliveryDeadLetteredError) return await deadLetterSessionDelivery(entry, error.message, queueContext);
++		throw error;
++	}
++}
++
+ async function deliverQueuedGeneratedMediaAgentTurn(params) {
+ 	if (params.entry.kind !== "agentTurn") return false;
+ 	const entry = params.entry;
+@@ -326,6 +393,7 @@
+ 		throw new SessionDeliveryDeferredError("queued generated-media agent turn is still owned by agent recovery");
+ 	}
+ 	if (entry.deliveryStartedAt !== void 0) await deadLetterSessionDelivery(entry, "queued generated-media agent turn dead-lettered after an interrupted unproven attempt", params.queueContext);
++	if (entry.qqImageCompletion && process.env.OPENCLAW_QQ_IMAGE_DIRECT !== "0") return await deliverQueuedQQImageCompletion(params, assertRequesterAdmissionCurrent, readRequester, evaluateResult);
+ 	const sourceReplyDeliveryMode = "automatic";
+ 	const cronSessionId = sessionEntry?.cronRunContinuation?.lifecycleRevision?.trim() ? sessionEntry?.sessionId?.trim() : void 0;
+ 	await markSessionDeliveryAttemptStarted(entry, params.queueContext);

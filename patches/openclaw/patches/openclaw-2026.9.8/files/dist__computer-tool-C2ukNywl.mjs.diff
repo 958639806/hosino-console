@@ -1,0 +1,23 @@
+diff -ruN a/dist/computer-tool-C2ukNywl.mjs b/dist/computer-tool-C2ukNywl.mjs
+--- a/dist/computer-tool-C2ukNywl.mjs	2026-11-13 19:09:04.041019693 +0800
++++ b/dist/computer-tool-C2ukNywl.mjs	2026-11-13 19:09:04.045019895 +0800
+@@ -151,7 +151,7 @@
+ /** Loads host and node inventory only when an ordinary computer tool can reach the model. */
+ async function loadPairedComputerUseAvailabilityForSurface(params) {
+ 	if (!params.computerAllowed || params.modelHasVision === false || params.embeddedMode === true || params.computerTransport !== void 0) return;
+-	return loadPairedComputerUseAvailability(params.signal);
++	return loadPairedComputerUseAvailability(params.signal, params.loadNodes);
+ }
+ /** A paired target must support both observation and input to enter the computer tool pool. */
+ function isEligibleComputerNode(node) {
+@@ -170,8 +170,8 @@
+ 	};
+ }
+ /** Loads current desktop facts before a model-facing tool catalog is serialized. */
+-async function loadPairedComputerUseAvailability(signal) {
+-	const [nodes, gateway] = await Promise.all([listNodes({}, signal).catch(() => {
++async function loadPairedComputerUseAvailability(signal, loadNodes) {
++	const [nodes, gateway] = await Promise.all([(loadNodes ? loadNodes() : listNodes({}, signal)).catch(() => {
+ 		signal?.throwIfAborted();
+ 		return [];
+ 	}), loadGatewayComputerStatus({}, signal).catch((error) => {

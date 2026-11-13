@@ -1,0 +1,11 @@
+diff -ruN a/dist/session-cY6eTKvB.mjs b/dist/session-cY6eTKvB.mjs
+--- a/dist/session-cY6eTKvB.mjs	2026-11-13 19:09:04.873061694 +0800
++++ b/dist/session-cY6eTKvB.mjs	2026-11-13 19:09:04.873061694 +0800
+@@ -55,6 +55,7 @@
+ 		restartRecoveryDeliveryToolCallId: void 0,
+ 		restartRecoveryRequesterAccountId: void 0,
+ 		restartRecoveryRequesterSenderId: void 0,
++		restartRecoveryQQRequesterAuthority: void 0,
+ 		restartRecoverySameChannelThreadRequired: void 0,
+ 		restartRecoverySourceIngress: void 0,
+ 		restartRecoverySourceReplyDeliveryMode: void 0,

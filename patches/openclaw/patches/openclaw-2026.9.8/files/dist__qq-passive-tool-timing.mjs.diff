@@ -1,0 +1,143 @@
+diff -ruN a/dist/qq-passive-tool-timing.mjs b/dist/qq-passive-tool-timing.mjs
+--- a/dist/qq-passive-tool-timing.mjs	1970-01-01 07:30:00.000000000 +0730
++++ b/dist/qq-passive-tool-timing.mjs	2026-11-13 19:09:04.837059877 +0800
+@@ -0,0 +1,139 @@
++// Passive metadata only. No authority, arguments, outputs, timers, I/O or awaits.
++import { createHash } from 'node:crypto';
++import { qqHostLatencyTraceFromContext } from './qq-host-latency-trace.mjs';
++import { qqLatencyTraceHash, qqLatencyTraceNow } from './qq-latency-trace.mjs';
++
++const RUNS = new WeakMap();
++const TOOL_LIMIT = 32;
++const OBSERVER_LIMIT = 8;
++const EVENT_LIMIT = 80;
++const PUBLIC_TOOLS = new Set('exec bash process read write edit apply_patch web_search web_fetch browser image imagegen image_generate tts message media_job session_status sessions_list sessions_history sessions_send sessions_spawn subagents agents_list cron gateway nodes canvas memory_search memory_get memory_store memory_update memory_delete memory_list memory_count memory_stats memory_wiki_search memory_wiki_get wiki_search wiki_get qqbot_send_message qqbot_send_media'.split(' '));
++const HASH = /^[a-f0-9]{24}$/;
++const id = value => typeof value === 'string' && value.length > 0 && value.length <= 512 && !/[\x00-\x1f]/.test(value);
++const ms = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= Number.MAX_SAFE_INTEGER / 1000 ? Math.round(value * 1000) / 1000 : null;
++const inc = (obj, key) => { obj[key] = Math.min(65535, obj[key] + 1); };
++const callHash = value => id(value) ? createHash('sha256').update(value).digest('hex') : null;
++const nameIdentity = value => id(value) ? createHash('sha256').update(value).digest('hex') : null;
++
++export function createQqPassiveToolTiming(context, log, runId) {
++  try {
++    // The existing trace factory accepts only its in-process minted capsules.
++    // Matching the current raw run keeps a reused/misrouted capsule unobserved.
++    if (!qqHostLatencyTraceFromContext(context, 'embedded', log) || !id(runId) ||
++        context.runHash !== qqLatencyTraceHash('run', [runId]) ||
++        !['new', 'old'].includes(context.groupAlias) ||
++        ![context.runHash, context.sourceHash, context.scopeHash].every(v => typeof v === 'string' && HASH.test(v))) return null;
++    let run = RUNS.get(context);
++    if (!run) {
++      run = { observers: 0, started: 0, droppedStarts: 0, observerOverflow: 0, emitted: 0, outputDropped: 0, outputFailed: 0 };
++      RUNS.set(context, run);
++    }
++    if (run.observers >= OBSERVER_LIMIT) { inc(run, 'observerOverflow'); return null; }
++    const observerOrdinal = ++run.observers;
++    const entries = new Map();
++    const counts = { started: 0, terminal: 0, unobservedTerminal: 0, unfinishedAtClose: 0, duplicateStart: 0, duplicateTerminal: 0, unmatchedTerminal: 0, invalidIdentity: 0, nameMismatch: 0, clockError: 0 };
++    let closed = false;
++    const beganMonoMs = ms(qqLatencyTraceNow());
++    if (beganMonoMs === null) inc(counts, 'clockError');
++    const stamp = () => {
++      const value = ms(qqLatencyTraceNow());
++      if (value === null || beganMonoMs !== null && value < beganMonoMs) { inc(counts, 'clockError'); return null; }
++      return value;
++    };
++    const emit = (stage, fields) => {
++      try {
++        if (run.emitted >= EVENT_LIMIT) { inc(run, 'outputDropped'); return; }
++        run.emitted++;
++        log.info('[qq-passive-tool-timing] ' + JSON.stringify({
++          schema: 'qq-passive-tool-timing-v1', stage,
++          bindingKind: 'minted-qq-context-matching-run-and-actual-tool-call-sha256',
++          clockKind: 'qq-shared-performance-now-monotonic-ms',
++          toolDurationsMayOverlap: true,
++          groupAlias: context.groupAlias, sourceHash: context.sourceHash,
++          runHash: context.runHash, scopeHash: context.scopeHash, observerOrdinal,
++          ...fields
++        }));
++      } catch { inc(run, 'outputFailed'); }
++    };
++    const terminal = (cid, boundary, outcome, observed) => {
++      try {
++        if (closed) return;
++        const hash = callHash(cid);
++        if (!hash) { inc(counts, 'invalidIdentity'); return; }
++        const entry = entries.get(hash);
++        if (!entry) { inc(counts, 'unmatchedTerminal'); return; }
++        if (entry.terminal) { inc(counts, 'duplicateTerminal'); return; }
++        entry.terminal = true;
++        counts.terminal++;
++        if (!observed) counts.unobservedTerminal++;
++        const endedMonoMs = stamp();
++        const durationMs = endedMonoMs !== null && entry.beganMonoMs !== null && endedMonoMs >= entry.beganMonoMs ? ms(endedMonoMs - entry.beganMonoMs) : null;
++        if (endedMonoMs !== null && entry.beganMonoMs !== null && endedMonoMs < entry.beganMonoMs) inc(counts, 'clockError');
++        emit('tool_terminal', { toolOrdinal: entry.toolOrdinal, toolCallHash: hash, toolName: entry.toolName,
++          toolNameKnown: entry.toolNameKnown, beganMonoMs: entry.beganMonoMs, endedMonoMs,
++          durationMs, terminalBoundary: boundary, outcome, terminalObserved: observed,
++          timingComplete: observed === true && durationMs !== null && !entry.ambiguous, identityAmbiguous: entry.ambiguous === true,
++          missingFieldsAreUnknown: true });
++      } catch { /* Observation cannot alter tool results, exceptions or cancellation. */ }
++    };
++    return Object.freeze({
++      start(name, cid) {
++        try {
++          if (closed) return;
++          const hash = callHash(cid);
++          if (!hash) { inc(counts, 'invalidIdentity'); return; }
++          if (entries.has(hash)) { entries.get(hash).ambiguous = true; inc(counts, 'duplicateStart'); return; }
++          if (run.started >= TOOL_LIMIT) { inc(run, 'droppedStarts'); return; }
++          const known = typeof name === 'string' && PUBLIC_TOOLS.has(name);
++          const entry = { toolOrdinal: ++run.started, toolName: known ? name : 'other', toolNameKnown: known, nameIdentity: nameIdentity(name),
++            beganMonoMs: stamp(), terminal: false };
++          entries.set(hash, entry); counts.started++;
++          emit('tool_start', { toolOrdinal: entry.toolOrdinal, toolCallHash: hash, toolName: entry.toolName,
++            toolNameKnown: known, beganMonoMs: entry.beganMonoMs, startObserved: entry.beganMonoMs !== null, timingComplete: false,
++            missingFieldsAreUnknown: true });
++        } catch {}
++      },
++      result(name, cid, isError) {
++        try {
++          const hash = callHash(cid), entry = hash && entries.get(hash);
++          if (entry && (entry.nameIdentity === null || nameIdentity(name) !== entry.nameIdentity)) {
++            inc(counts, 'nameMismatch'); return;
++          }
++          terminal(cid, 'tool_result_event', isError === true ? 'result_error' : isError === false ? 'result_ok' : 'result_unknown', true);
++        } catch {}
++      },
++      fault(cid, boundary) {
++        if (boundary === 'execution_throw') terminal(cid, boundary, 'execution_threw', false);
++        else if (boundary === 'handler_error') terminal(cid, boundary, 'handler_error', false);
++      },
++      close(aborted) {
++        try {
++          if (closed) return;
++          for (const [hash, entry] of entries) {
++            if (entry.terminal) continue;
++            // The raw call id is deliberately not retained. Close is an observed
++            // subscription boundary; it does not assert the implementation stopped.
++            entry.terminal = true; counts.unfinishedAtClose++; counts.terminal++; counts.unobservedTerminal++;
++            const endedMonoMs = stamp();
++            const durationMs = endedMonoMs !== null && entry.beganMonoMs !== null && endedMonoMs >= entry.beganMonoMs ? ms(endedMonoMs - entry.beganMonoMs) : null;
++            emit('tool_terminal', { toolOrdinal: entry.toolOrdinal, toolCallHash: hash, toolName: entry.toolName,
++              toolNameKnown: entry.toolNameKnown, beganMonoMs: entry.beganMonoMs, endedMonoMs, durationMs,
++              terminalBoundary: 'subscription_close', outcome: aborted === true ? 'run_aborted_before_terminal' : 'subscription_closed_before_terminal',
++              terminalObserved: false, timingComplete: false, missingFieldsAreUnknown: true });
++          }
++          closed = true;
++          emit('tool_summary', { summaryScope: 'subscription-observer', runCountersAreSnapshot: true, beganMonoMs, endedMonoMs: stamp(),
++            outcome: aborted === true ? 'run_abort' : 'subscription_close',
++            counts: { ...counts }, perRunStartedToolCount: run.started,
++            perRunDroppedToolStartCount: run.droppedStarts, perRunObserverOverflowCount: run.observerOverflow,
++            perRunEventAttemptCount: run.emitted, perRunEventOutputDroppedCount: run.outputDropped,
++            perRunEventOutputFailedCount: run.outputFailed, toolLimit: TOOL_LIMIT, observerLimit: OBSERVER_LIMIT,
++            eventLimit: EVENT_LIMIT, missingEventsAreUnknown: true,
++            timingComplete: beganMonoMs !== null && counts.unfinishedAtClose === 0 && counts.unobservedTerminal === 0 && counts.clockError === 0 && counts.invalidIdentity === 0 && counts.duplicateStart === 0 &&
++              counts.nameMismatch === 0 && counts.unmatchedTerminal === 0 && run.droppedStarts === 0 && run.observerOverflow === 0 && run.outputDropped === 0 && run.outputFailed === 0 });
++          entries.clear();
++        } catch {} finally { closed = true; }
++      }
++    });
++  } catch { return null; }
++}

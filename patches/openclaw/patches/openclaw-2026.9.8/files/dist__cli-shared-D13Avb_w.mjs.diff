@@ -1,0 +1,41 @@
+diff -ruN a/dist/cli-shared-D13Avb_w.mjs b/dist/cli-shared-D13Avb_w.mjs
+--- a/dist/cli-shared-D13Avb_w.mjs	2026-11-13 19:09:04.033019290 +0800
++++ b/dist/cli-shared-D13Avb_w.mjs	2026-11-13 19:09:04.037019491 +0800
+@@ -1,7 +1,7 @@
+ import { c as normalizeOptionalLowercaseString } from "./string-coerce-6kR-86XC.mjs";
+ import { r as resolveAgentConfig } from "./agent-scope-config-Dm6T00l4.mjs";
+ import { d as resolveExecModePolicy } from "./exec-approvals-core-GflUelcW.mjs";
+-import { c as requiresClaudeMandatoryAdaptiveThinking } from "./anthropic-BosOSZ2f.mjs";
++import { c as requiresClaudeMandatoryAdaptiveThinking, u as resolveClaudeModelIdentity } from "./anthropic-BosOSZ2f.mjs";
+ import "./string-coerce-runtime-B1b8UNzb.mjs";
+ import "./agent-scope-runtime-BIhssPWI.mjs";
+ import "./exec-approvals-runtime-Dg8CxcmR.mjs";
+@@ -50,6 +50,10 @@
+ 	if (normalizedBudget <= 0) return;
+ 	return { CLAUDE_CODE_AUTO_COMPACT_WINDOW: String(normalizedBudget) };
+ }
++/** CLI-only: Haiku 5.5 has no disabled/fixed-budget thinking mode. */
++function requiresClaudeCliMandatoryAdaptiveThinking(modelId) {
++	return requiresClaudeMandatoryAdaptiveThinking({ id: modelId }) || /^claude-haiku-5-5(?=$|[^a-z0-9])/.test(resolveClaudeModelIdentity({ id: modelId }));
++}
+ /**
+ * Map OpenClaw's fixed thinking levels to Claude Code's per-process budget.
+ *
+@@ -60,7 +64,7 @@
+ * packages/ai/src/providers/simple-options.ts.
+ */
+ function resolveClaudeCliThinkingEnv(thinkingLevel, modelId) {
+-	if (requiresClaudeMandatoryAdaptiveThinking({ id: modelId })) return;
++	if (requiresClaudeCliMandatoryAdaptiveThinking(modelId)) return;
+ 	switch (thinkingLevel) {
+ 		case "off": return { MAX_THINKING_TOKENS: "0" };
+ 		case "minimal": return {
+@@ -158,7 +162,7 @@
+ function applyClaudeCliEffortArgs(args, thinkingLevel, modelId) {
+ 	const level = normalizeOptionalLowercaseString(thinkingLevel);
+ 	switch (level) {
+-		case "off": return requiresClaudeMandatoryAdaptiveThinking({ id: modelId }) ? [
++		case "off": return requiresClaudeCliMandatoryAdaptiveThinking(modelId) ? [
+ 			...stripClaudeEffortArgs(args),
+ 			CLAUDE_EFFORT_ARG,
+ 			"low"

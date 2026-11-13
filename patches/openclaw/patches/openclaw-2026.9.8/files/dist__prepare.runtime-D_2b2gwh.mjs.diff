@@ -1,0 +1,624 @@
+diff -ruN a/dist/prepare.runtime-D_2b2gwh.mjs b/dist/prepare.runtime-D_2b2gwh.mjs
+--- a/dist/prepare.runtime-D_2b2gwh.mjs	2026-11-13 19:09:04.817058867 +0800
++++ b/dist/prepare.runtime-D_2b2gwh.mjs	2026-11-13 19:09:04.817058867 +0800
+@@ -1,3 +1,6 @@
++import { rememberQQCliSystemParts } from "./cli-live-session-registry-UwsGavHf.mjs";
++import { createQQClaudeHostPrepTrace } from "./qq-claude-host-prep-timing.mjs";
++import { h as replyRunRegistry } from "./reply-run-registry.registry-BhusvydJ.mjs";
+ import { l as normalizeOptionalString, o as normalizeLowercaseStringOrEmpty } from "./string-coerce-6kR-86XC.mjs";
+ import { n as captureAsyncWorkTracker } from "./async-work-scope-ClifbwQr.mjs";
+ import { o as resolveUserPath } from "./home-dir-CjKH62jd.mjs";
+@@ -40,7 +43,8 @@
+ import { n as DEFAULT_BOOTSTRAP_FILENAME } from "./workspace-bootstrap-policy-DaS4N8nC.mjs";
+ import { i as isWorkspaceBootstrapPending } from "./workspace-CV6W-hTb.mjs";
+ import { o as waitForSessionTranscriptProjection } from "./session-transcript-reconcile-CihXLpUw.mjs";
+-import { a as runWithSessionTranscriptReadFence, r as resolveSessionTranscriptReadFence } from "./session-transcript-read-fence-Bq0b1oaG.mjs";
++import { a as runWithSessionTranscriptReadFence, c as getUserTurnTranscriptAdmissionOwner, r as resolveSessionTranscriptReadFence } from "./session-transcript-read-fence-Bq0b1oaG.mjs";
++import { captureQQClaudeMemoryRecallInput, offerQQClaudeLegacyRecall, hasQQClaudeLegacyRecallClaim, joinQQClaudeLegacyRecall, closeQQClaudeLegacyRecall, isQQClaudeLegacyRecallProofFailure } from "./qq-claude-memory-prefetch-bridge.mjs";
+ import { c as loadSessionEntryReadOnly, u as patchSessionEntryCore } from "./session-accessor.sqlite-entry-C87Sde4p.mjs";
+ import { l as readSessionTranscriptWatermark } from "./session-accessor-CGLseszP.mjs";
+ import { n as resolveSessionTranscriptDatabasePath } from "./session-accessor.transcript-target-Bb5PwcvU.mjs";
+@@ -64,7 +68,7 @@
+ import { a as resolveSandboxSkillRuntimeInputs, i as remapSkillReferencePaths, n as resolveEmbeddedRunSkillEntries, r as mapSandboxSkillEntriesForPrompt, t as collectRuntimeChannelCapabilities } from "./runtime-capabilities-BEvxgbPN.mjs";
+ import { n as resolveSkillsPrompt } from "./workspace-skill-prompt-DVPD6XZz.mjs";
+ import { a as buildBootstrapTruncationReportMeta, i as buildBootstrapPromptWarningNotice, n as buildBootstrapBudgetState, r as buildBootstrapInjectionStats } from "./bootstrap-budget-CqFoeR-L.mjs";
+-import { a as resolveBootstrapContextForRun, i as makeBootstrapWarn } from "./bootstrap-files-CnxP5PZe.mjs";
++import { a as resolveBootstrapContextForRun, captureOwnerPrivateBootstrapRequester, i as makeBootstrapWarn } from "./bootstrap-files-CnxP5PZe.mjs";
+ import { t as ensureSandboxWorkspaceForSession } from "./context-D3IpkM3T.mjs";
+ import "./sandbox-Ck63sGje.mjs";
+ import { c as resolvePromptBuildHookResult, n as waitForDeferredTurnMaintenanceForSession } from "./context-engine-maintenance-DKbclwGZ.mjs";
+@@ -437,6 +441,41 @@
+ 		}
+ 	};
+ }
++// QQ-CLAUDE-MEMORY-PREPARATION-CURRENT v2: source lifetime precedes final execution admission.
++function createQQClaudeMemoryPreparationCurrentAssertion(params) {
++	const admitted = params.admittedRunContext;
++	const prepared = params.preparedRunAdmission;
++	const runId = params.runId;
++	let assertAdmitted;
++	return () => {
++		if (params.runId !== runId || params.admittedRunContext !== admitted || params.preparedRunAdmission !== prepared) throw new Error("CLI memory preparation source changed");
++		if (admitted) {
++			assertAdmitted ??= createCliRunCurrentAssertion(params);
++			assertAdmitted();
++			return;
++		}
++		// Same pre-admission checks already used by this module's skills preparation.
++		params.assertCurrent?.();
++		params.abortSignal?.throwIfAborted();
++		if (!prepared || !Object.isFrozen(prepared) || typeof prepared.assertSourceCurrent !== "function" || prepared.operationalRunInstance?.runId !== runId) throw new Error("CLI memory preparation source is unavailable");
++		prepared.assertSourceCurrent();
++	};
++}
++// A host-private closure reads the current variable again after tool preparation.
++// It does not accept a caller-provided context or infer authority from text.
++function createQQClaudeDeferredRecallCurrentAssertion(readParams) {
++	const fields = ["runId", "sessionKey", "sessionId", "agentId", "sessionTarget", "userTurnTranscriptRecorder",
++		"senderId", "senderIsOwner", "trigger", "inputProvenance", "provider", "model", "modelId", "config",
++		"messageProvider", "messageChannel", "agentAccountId", "channelContext", "currentChannelId", "messageTo",
++		"abortSignal", "assertCurrent", "preparedRunAdmission", "admittedRunContext", "executionMode", "controlOperation"];
++	const before = readParams();
++	const identity = fields.map(field => before[field]);
++	return () => {
++		const current = readParams();
++		if (!current || fields.some((field, index) => current[field] !== identity[index])) throw new Error("MEMORY_DEFERRED_RECALL_HOST_CHANGED");
++		createQQClaudeMemoryPreparationCurrentAssertion(current)();
++	};
++}
+ async function admitCliRunParams(candidate, agentId) {
+ 	const admittedRunContext = await resolvePreparedRunAdmission({
+ 		runId: candidate.runId,
+@@ -608,14 +647,61 @@
+ 	if (params.authCredential.type === "oauth") return params.policy.oauthRefreshOwner === "core";
+ 	return params.authCredential.type === "api_key" || params.authCredential.type === "token";
+ }
++
++// QQ-QUESTION-ROUTE-AUTHORITY-DIAGNOSTIC v1: observe only, never authorize.
++function captureQQQuestionRouteAuthorityState(params, operation) {
++	try {
++		const groupAlias = params?.sessionKey === "agent:main:qqbot:group:__HS_GROUP_NEW_OPENID__" ? "new" : params?.sessionKey === "agent:main:qqbot:group:__HS_GROUP_OLD_OPENID__" ? "old" : null;
++		if (!groupAlias || !operation || typeof params.runId !== "string" || !params.runId.length || params.runId.length > 512) return;
++		const slot = replyRunRegistry.get(params.sessionKey);
++		const operationSlot = typeof operation.key === "string" ? replyRunRegistry.get(operation.key) : void 0;
++		const result = operation.result;
++		const phase = ["queued", "running", "preflight_compacting", "waiting_for_global_lane", "waiting_for_deferred_maintenance", "completed", "failed", "aborted"].includes(operation.phase) ? operation.phase : "other";
++		const resultKind = result === null ? null : ["completed", "failed", "aborted"].includes(result?.kind) ? result.kind : "other";
++		const resultCode = result?.code === void 0 ? null : ["aborted_by_user", "aborted_for_restart", "aborted_for_supersession", "run_failed", "gateway_draining", "command_lane_cleared"].includes(result.code) ? result.code : "other";
++		return {
++			groupAlias,
++			runHash: sha256Hex("qq-claude-native-run-v1\0" + params.runId).slice(0, 24),
++			phase, resultKind, resultCode,
++			operationAborted: operation.abortSignal?.aborted === true,
++			activeSlotPresent: slot !== void 0,
++			activeSlotMatches: slot === operation,
++			operationSlotMatches: operationSlot === operation,
++			operationKeyMatchesSessionKey: operation.key === params.sessionKey,
++			fingerprintPresent: typeof operation.toolAuthorityFingerprint === "string" && operation.toolAuthorityFingerprint.length > 0,
++			requestedRoutePresent: operation.requestedToolAuthorityRoute !== void 0,
++			boundRoutePresent: operation.toolAuthorityRoute !== void 0
++		};
++	} catch {}
++}
++// /QQ-QUESTION-ROUTE-AUTHORITY-DIAGNOSTIC v1
++
+ async function prepareCliRunContext(inputParams) {
++	const qqPrepTrace = createQQClaudeHostPrepTrace(inputParams, "prepare");
++	let outcome = "completed";
++	try {
++		return await prepareCliRunContextTimed(inputParams, qqPrepTrace);
++	} catch (error) {
++		outcome = inputParams.abortSignal?.aborted ? "aborted" : "error";
++		throw error;
++	} finally {
++		qqPrepTrace?.finish(outcome);
++	}
++}
++async function prepareCliRunContextTimed(inputParams, qqPrepTrace) {
+ 	if (!inputParams.sessionManager && inputParams.sessionTarget) {
+ 		const { restoreSessionColdTranscript } = await import("./session-cold-storage-Bz1cFOwq.mjs");
+ 		await restoreSessionColdTranscript(inputParams.sessionTarget);
+ 	}
+-	return runWithSessionTranscriptReadFence(inputParams.sessionManager ? void 0 : inputParams.userTurnTranscriptRecorder?.getAdmissionReceipt(), () => prepareCliRunContextWithinReadFence(inputParams));
++	qqPrepTrace?.mark("cold_storage_ready");
++	return runWithSessionTranscriptReadFence(inputParams.sessionManager ? void 0 : inputParams.userTurnTranscriptRecorder?.getAdmissionReceipt(), () => {
++		qqPrepTrace?.mark("read_fence_enter");
++		return prepareCliRunContextWithinReadFence(inputParams, qqPrepTrace);
++	});
+ }
+-async function prepareCliRunContextWithinReadFence(inputParams) {
++async function prepareCliRunContextWithinReadFence(inputParams, qqPrepTrace) {
++	let qqDeferredRecall;
++	try { // Covers failures before the existing prepared-resource try as well.
+ 	let params = inputParams.config ? inputParams : {
+ 		...inputParams,
+ 		config: getRuntimeConfig()
+@@ -633,6 +719,7 @@
+ 		contextEngineLogicalTurnLease: void 0,
+ 		onContextEngineTurnCandidate: void 0
+ 	};
++	qqPrepTrace?.mark("configuration_ready");
+ 	const runConfig = params.config;
+ 	const sessionOwner = normalizeAgentId(parseAgentSessionKey(params.sessionKey)?.agentId || params.agentId?.trim() || "main");
+ 	const workspaceConfig = hasAgentRosterProperty(runConfig) ? runConfig : {
+@@ -669,7 +756,9 @@
+ 			sessionKey: suppliedSessionKey
+ 		})
+ 	};
++	qqPrepTrace?.mark("maintenance_begin");
+ 	if (!params.isolatedCompletion && !isControlOperation && !params.sessionManager) await waitForDeferredTurnMaintenanceForSession(params.sessionKey ?? params.sessionId);
++	qqPrepTrace?.mark("maintenance_ready");
+ 	const policySessionKey = params.runtimePolicySessionKey ?? params.sessionKey;
+ 	const policyAgentId = resolveSessionAgentIds({
+ 		sessionKey: policySessionKey,
+@@ -684,6 +773,7 @@
+ 	const backendAuthPolicy = resolveBundledCliBackendAuthPolicy(backendResolved.id);
+ 	const canEnforceExactToolAvailability = backendResolved.nativeToolMode === "selectable" && (backendResolved.toolAvailabilityEnforcement === "execution-args" && backendResolved.resolveExecutionArgs !== void 0 || backendResolved.toolAvailabilityEnforcement === "prepare-execution" && backendResolved.prepareExecution !== void 0);
+ 	const questionOperation = params.toolAuthorityFingerprint ? params.replyOperation : void 0;
++	const qqQuestionAuthorityEntry = qqPrepTrace && questionOperation ? captureQQQuestionRouteAuthorityState(params, questionOperation) : void 0;
+ 	const questionSessionKey = params.sessionKey ?? params.sessionId;
+ 	const questionAbortSignal = params.abortSignal;
+ 	const assertQuestionSourceCurrent = params.assertCurrent;
+@@ -731,6 +821,7 @@
+ 		execHost: params.sessionEntry?.execHost,
+ 		execNode: params.sessionEntry?.execNode
+ 	});
++	qqPrepTrace?.mark("rooted_policy_begin");
+ 	let rootedExecution;
+ 	if (params.rootedExecution) {
+ 		const rootedRequest = params.rootedExecution;
+@@ -791,6 +882,7 @@
+ 		agentId: sessionOwner
+ 	});
+ 	const agentDir = params.agentDir ?? resolveAgentDir(params.config ?? {}, sessionAgentId);
++	qqPrepTrace?.mark("auth_begin");
+ 	const requestedAuthProfileId = params.authProfileId?.trim() || void 0;
+ 	let effectiveAuthProfileId = requestedAuthProfileId ?? backendResolved.defaultAuthProfileId?.trim() ?? void 0;
+ 	let authStore;
+@@ -880,6 +972,7 @@
+ 			};
+ 		}
+ 	}
++	qqPrepTrace?.mark("auth_ready");
+ 	const extraSystemPrompt = params.extraSystemPrompt?.trim() ?? "";
+ 	const bindingFacts = params.cliSessionBindingFacts;
+ 	const bindingExtraSystemPromptStatic = bindingFacts?.extraSystemPromptStatic ?? params.extraSystemPromptStatic;
+@@ -903,7 +996,21 @@
+ 		provider: modelProvider,
+ 		model: modelId
+ 	};
+-	const questionFingerprint = questionOperation ? questionOperation.bindToolAuthorityRoute(questionRoute) : questionSnapshot?.fingerprint(questionRoute);
++	let questionFingerprint;
++	try {
++		questionFingerprint = questionOperation ? questionOperation.bindToolAuthorityRoute(questionRoute) : questionSnapshot?.fingerprint(questionRoute);
++	} catch (error) {
++		try {
++			const failed = qqPrepTrace && questionOperation ? captureQQQuestionRouteAuthorityState(params, questionOperation) : void 0;
++			if (failed) console.warn("[qq-question-route-authority] " + JSON.stringify({
++				schema: "qq-question-route-authority-v1", groupAlias: failed.groupAlias,
++				runHash: failed.runHash, phase: "question_route_bind", outcome: "error",
++				errorCode: error instanceof Error && error.message === "Reply operation has no active tool authority snapshot" ? "active-snapshot-required" : "other",
++				entry: qqQuestionAuthorityEntry ?? null, failed
++			}));
++		} catch {}
++		throw error;
++	}
+ 	if (questionOperation) params = {
+ 		...params,
+ 		toolAuthorityFingerprint: questionFingerprint
+@@ -940,27 +1047,72 @@
+ 		...buildAgentHookContextChannelFields(params)
+ 	};
+ 	const promptBuildHookRunner = skipsTurnPreparation ? void 0 : getGlobalHookRunner();
++	qqPrepTrace?.mark("prompt_hooks_begin");
++	let qqDeferredContextModelIds, qqDeferredContextModelError;
++	let qqDeferredContextModelFailed = false;
+ 	const promptBuildHookResult = await (async () => {
+ 		if (skipsTurnPreparation) return;
+ 		try {
+-			return await resolvePromptBuildHookResult({
++			qqPrepTrace?.mark("prompt_history_begin");
++			const messages = await loadOpenClawHistoryMessages();
++			qqPrepTrace?.mark("prompt_history_ready");
++			qqPrepTrace?.mark("prompt_recall_input_begin");
++			const qqClaudeRecallInput = captureQQClaudeMemoryRecallInput(params, {
++				isClaudeCli: isClaudeCliBackendId(params.provider),
++				getAdmissionOwner: getUserTurnTranscriptAdmissionOwner,
++				readFence: resolveSessionTranscriptReadFence,
++				resolveStorePath: resolveSessionTranscriptDatabasePath,
++				validateAdmission: validateSessionTranscriptContextAdmission,
++				assertCurrent: createQQClaudeMemoryPreparationCurrentAssertion(params)
++			});
++			qqDeferredRecall = offerQQClaudeLegacyRecall(qqClaudeRecallInput, promptBuildHookContext, isClaudeCliBackendId(params.provider), createQQClaudeDeferredRecallCurrentAssertion(() => params));
++			qqPrepTrace?.mark("prompt_recall_input_ready");
++			qqPrepTrace?.mark("prompt_resolver_begin");
++			const qqPromptHookResult = await resolvePromptBuildHookResult({
+ 				config: runConfig,
+ 				prompt: params.prompt,
+-				messages: await loadOpenClawHistoryMessages(),
++				messages,
++				qqClaudeRecallInput,
+ 				hookCtx: promptBuildHookContext,
+-				hookRunner: promptBuildHookRunner
++				hookRunner: promptBuildHookRunner,
++				qqPromptBuildTrace: qqPrepTrace
+ 			});
++			const qqRecallWasDeferred = hasQQClaudeLegacyRecallClaim(qqDeferredRecall);
++			// These two string normalizations and the local ID array are independent
++			// of hook output. Token/catalog resolution, bootstrap and tool authority
++			// stay in their original positions after the full original result joins.
++			if (qqRecallWasDeferred && typeof modelId === "string" && typeof normalizedCatalogModel === "string") {
++				qqPrepTrace?.mark("context_model_ids_begin");
++				try {
++					const requestedContextModelId = resolveClaudeCliContextModelId(modelId);
++					const normalizedContextModelId = resolveClaudeCliContextModelId(normalizedCatalogModel);
++					qqDeferredContextModelIds = { requestedContextModelId, normalizedContextModelId,
++						contextModelIds: [requestedContextModelId, ...normalizedContextModelId !== requestedContextModelId ? [normalizedContextModelId] : []] };
++				} catch (error) {
++					// Settle the original hook before replaying this error at the old
++					// metadata position. A speculative calculation cannot close recall.
++					qqDeferredContextModelFailed = true; qqDeferredContextModelError = error;
++				} finally { qqPrepTrace?.mark("context_model_ids_ready"); }
++			}
++			if (qqRecallWasDeferred) qqPrepTrace?.mark("memory_recall_join_begin");
++			const completedPromptHookResult = await joinQQClaudeLegacyRecall(qqDeferredRecall, qqPromptHookResult);
++			if (qqRecallWasDeferred) qqPrepTrace?.mark("memory_recall_join_ready");
++			qqPrepTrace?.mark("prompt_resolver_ready");
++			return completedPromptHookResult;
+ 		} catch (error) {
++			if (isQQClaudeLegacyRecallProofFailure(error)) throw error;
+ 			cliBackendLog.warn(`cli prompt-build hook preparation failed: ${String(error)}`);
+ 			return;
+ 		}
+ 	})();
++	qqPrepTrace?.mark("prompt_hooks_ready");
+ 	const promptBuildToolsAllow = mergeForcedEmbeddedAttemptToolsAllow(promptBuildHookResult?.toolsAllow, { forceMessageTool: messageToolOwnsVisibleReply({ sourceReplyDeliveryMode: bindingSourceReplyDeliveryMode }) });
+ 	const promptBuildRestrictsTools = promptBuildToolsAllow !== void 0 && !promptBuildToolsAllow.some((toolName) => normalizeToolPolicyName(toolName) === "*");
+ 	const isClaudeCli = isClaudeCliBackendId(params.provider);
+-	const requestedContextModelId = isClaudeCli ? resolveClaudeCliContextModelId(modelId) : modelId;
+-	const normalizedContextModelId = isClaudeCli ? resolveClaudeCliContextModelId(normalizedCatalogModel) : normalizedCatalogModel;
+-	const contextModelIds = [requestedContextModelId, ...normalizedContextModelId !== requestedContextModelId ? [normalizedContextModelId] : []];
++	if (qqDeferredContextModelFailed) throw qqDeferredContextModelError;
++	const requestedContextModelId = qqDeferredContextModelIds?.requestedContextModelId ?? (isClaudeCli ? resolveClaudeCliContextModelId(modelId) : modelId);
++	const normalizedContextModelId = qqDeferredContextModelIds?.normalizedContextModelId ?? (isClaudeCli ? resolveClaudeCliContextModelId(normalizedCatalogModel) : normalizedCatalogModel);
++	const contextModelIds = qqDeferredContextModelIds?.contextModelIds ?? [requestedContextModelId, ...normalizedContextModelId !== requestedContextModelId ? [normalizedContextModelId] : []];
+ 	const resolveContextModelTokens = (contextModelId) => resolveContextTokensForModel({
+ 		cfg: params.config,
+ 		provider: params.provider,
+@@ -1013,10 +1165,27 @@
+ 	} : resolvedContextWindowInfo;
+ 	const autoReseedHistoryChars = isClaudeCli ? resolveAutoCliSessionReseedHistoryChars(contextWindowInfo.tokens) : void 0;
+ 	const sessionLabel = params.sessionKey ?? params.sessionId;
++	const ownerPrivateBootstrapRequester = (() => {
++		try {
++			const bootstrapRequesterSourceCurrent = createQQClaudeMemoryPreparationCurrentAssertion(params);
++			return captureOwnerPrivateBootstrapRequester({
++				readParams: () => params,
++				assertSourceCurrent: () => { bootstrapRequesterSourceCurrent(); readRunOperatorAuthority(params)?.assertCurrent(); },
++				channel: normalizeMessageChannel(params.messageChannel ?? params.messageProvider),
++				chatType: runtimeChatType,
++				workspaceDir: params.bootstrapWorkspaceDir ?? workspaceDir,
++				agentId: sessionAgentId
++			});
++		} catch { return; }
++	})();
++	qqPrepTrace?.mark("bootstrap_begin");
+ 	const { bootstrapFiles, contextFiles: resolvedContextFiles } = skipsTurnPreparation ? {
+ 		bootstrapFiles: [],
+ 		contextFiles: []
+ 	} : await prepareDeps.resolveBootstrapContextForRun({
++		ownerPrivateBootstrapRequester,
++		runId: params.runId,
++		messageChannel: normalizeMessageChannel(params.messageChannel ?? params.messageProvider),
+ 		workspaceDir: params.bootstrapWorkspaceDir ?? workspaceDir,
+ 		config: params.config,
+ 		sessionKey: params.sessionKey,
+@@ -1035,6 +1204,7 @@
+ 	const canonicalWorkspace = resolveUserPath(resolveAgentWorkspaceDir(params.config ?? {}, workspaceResolution.agentId));
+ 	const selectedNativeToolsProvideFileAccess = params.cliToolAvailability === void 0 || params.cliToolAvailability.native.length > 0;
+ 	const hasBootstrapFileAccess = (backendResolved.nativeToolMode === "always-on" || backendResolved.nativeToolMode === "selectable") && selectedNativeToolsProvideFileAccess && params.disableTools !== true;
++	qqPrepTrace?.mark("bootstrap_ready");
+ 	const bootstrapRouting = skipsTurnPreparation || !canTransportSystemPrompt(backendResolved.config) ? void 0 : await resolveWorkspaceBootstrapRouting({
+ 		isWorkspaceBootstrapPending: prepareDeps.isWorkspaceBootstrapPending,
+ 		bootstrapFiles,
+@@ -1064,6 +1234,7 @@
+ 		previousSignature: params.bootstrapPromptWarningSignature
+ 	});
+ 	const bootstrapTruncationNotice = buildBootstrapPromptWarningNotice(bootstrapPromptWarning.lines);
++	qqPrepTrace?.mark("mcp_loopback_begin");
+ 	const systemAgentMcpConfig = internalParams.systemAgentTool ? buildSystemAgentToolsMcpServerConfig(internalParams.systemAgentTool) : void 0;
+ 	const bundleMcpEnabled = !nodeClaudePlacement && !skipsTurnPreparation && !systemAgentMcpConfig && backendResolved.bundleMcp && params.disableTools !== true;
+ 	let mcpLoopbackRuntime = bundleMcpEnabled ? prepareDeps.getActiveMcpLoopbackRuntime() : void 0;
+@@ -1076,6 +1247,7 @@
+ 		mcpLoopbackRuntime = prepareDeps.getActiveMcpLoopbackRuntime();
+ 	}
+ 	if (bundleMcpEnabled && !mcpLoopbackRuntime) throw new Error("Bundled MCP is enabled, but the OpenClaw MCP loopback server did not publish a runtime after startup.");
++	qqPrepTrace?.mark("mcp_loopback_ready");
+ 	const mcpDeliveryCaptureEnabled = bundleMcpEnabled && Boolean(mcpLoopbackRuntime);
+ 	const nodeWorkshopEnabled = nodeClaudePlacement && !skipsTurnPreparation && params.disableTools !== true && params.skillLibraryAuthoring !== void 0;
+ 	const shouldMaterializeRuntimePolicy = runtimeToolsAllowPolicy !== void 0 && !nodeClaudePlacement && !skipsTurnPreparation && !systemAgentMcpConfig && params.disableTools !== true;
+@@ -1090,7 +1262,9 @@
+ 		agentId: sessionAgentId,
+ 		runtimePolicyAgentId: params.runtimePolicySessionKey ? policyAgentId : void 0,
+ 		modelProvider,
+-		modelId
++		modelId,
++		// Host policy before per-sender names are materialized into the final grant.
++		qqDescriptorPolicy: { runtimeToolsAllowPolicy: runtimeToolsAllowPolicy ?? null, cliToolAvailability: params.cliToolAvailability ?? null, promptBuildToolsAllow: promptBuildToolsAllow ?? null }
+ 	}) : void 0;
+ 	const mcpToolAuthAgentDir = mcpContextBase ? resolveRuntimeAuthProfileAgentDir(agentDir) : void 0;
+ 	const mcpToolAuth = mcpContextBase ? {
+@@ -1100,9 +1274,11 @@
+ 	const requestedLoopbackToolsAllow = runtimeToolsAllowPolicy ?? (rootedExecution ? rootedToolsAllow : params.cliToolAvailability?.openClaw);
+ 	const resolveProjectedTools = runtimeToolsAllowPolicy !== void 0 || rootedExecution && rootedToolsAllow === void 0 ? prepareDeps.resolveMcpLoopbackPolicyTools : prepareDeps.resolveMcpLoopbackScopedTools;
+ 	params.assertCurrent?.();
++	qqPrepTrace?.mark("tool_projection_begin");
+ 	const projectedToolsBeforePromptBuild = (bundleMcpEnabled || shouldMaterializeRuntimePolicy || nodeWorkshopEnabled) && mcpContextBase ? (await resolveProjectedTools({
+ 		cfg: runConfig,
+ 		signal: params.abortSignal,
++		...(qqPrepTrace ? { qqLatencyProfile: { runId: params.runId, trigger: params.trigger } } : {}),
+ 		context: requestedLoopbackToolsAllow !== void 0 ? {
+ 			...mcpContextBase,
+ 			toolsAllow: [...requestedLoopbackToolsAllow]
+@@ -1114,6 +1290,7 @@
+ 		...mcpToolAuth?.agentDir ? { authProfileStoreAgentDir: mcpToolAuth.agentDir } : {}
+ 	})).tools : [];
+ 	params.assertCurrent?.();
++	qqPrepTrace?.mark("tool_projection_ready");
+ 	const hookFilteredProjectedTools = applyEmbeddedAttemptToolsAllow(projectedToolsBeforePromptBuild, promptBuildToolsAllow);
+ 	if (promptBuildRestrictsTools && (backendResolved.nativeToolMode === "always-on" || backendResolved.nativeToolMode === "selectable" && !canEnforceExactToolAvailability)) throw new Error(`CLI backend "${backendResolved.id}" cannot enforce before_prompt_build tool restrictions. Use a backend with exact tool availability or remove the hook restriction. OpenClaw did not start the run.`);
+ 	if (promptBuildRestrictsTools && params.cliToolAvailability === void 0 && backendResolved.nativeToolMode === "selectable" || runtimeToolsAllowPolicy !== void 0 && shouldMaterializeRuntimePolicy || rootedExecution) params = {
+@@ -1136,6 +1313,7 @@
+ 	const projectedTools = applyEmbeddedAttemptToolsAllow(hookFilteredProjectedTools, params.cliToolAvailability?.openClaw);
+ 	const nodeSkillWorkshop = nodeWorkshopEnabled ? projectedTools.find((tool) => tool.name === "skill_workshop") : void 0;
+ 	const promptTools = bundleMcpEnabled ? projectedTools : nodeSkillWorkshop ? [nodeSkillWorkshop] : [];
++	qqPrepTrace?.mark("authorized_hooks_begin");
+ 	const authorizedPromptBuildResult = await (async () => {
+ 		const toolAuthorityFingerprint = params.toolAuthorityFingerprint;
+ 		if (!promptBuildHookRunner || !toolAuthorityFingerprint) return;
+@@ -1158,10 +1336,12 @@
+ 		}
+ 	})();
+ 	params.assertCurrent?.();
++	qqPrepTrace?.mark("authorized_hooks_ready");
+ 	const messageToolAvailable = promptTools.some((tool) => normalizeToolPolicyName(tool.name) === "message");
+ 	const resultContentSourceByToolName = new Map(promptTools.flatMap((tool) => tool.resultContentSource ? [[tool.name, tool.resultContentSource]] : []));
+ 	const restrictedLoopbackToolsAllow = params.cliToolAvailability?.openClaw ?? (promptBuildRestrictsTools ? projectedTools.map((tool) => tool.name) : void 0);
+ 	const projectNativeToolAuthority = !skipsTurnPreparation && params.disableTools !== true && !nodeClaudePlacement ? backendResolved.projectNativeToolAuthority : void 0;
++	qqPrepTrace?.mark("grant_begin");
+ 	const mcpGrant = finalizeCliMcpGrant(mcpContextBase, restrictedLoopbackToolsAllow, Boolean(projectNativeToolAuthority), params.assertCurrent);
+ 	const extraSystemPromptHash = resolveCliBootstrapPromptHash({
+ 		baseHash: params.cliToolAvailability ? hashCliSessionText(JSON.stringify([
+@@ -1291,6 +1471,7 @@
+ 			inputProvenance: params.inputProvenance,
+ 			scheduledToolPolicy: params.scheduledToolPolicy
+ 		});
++		qqPrepTrace?.mark("backend_config_begin");
+ 		const preparedBackend = await prepareCliBundleMcpConfig({
+ 			enabled: bundleMcpEnabled || systemAgentMcpConfig !== void 0,
+ 			mode: backendResolved.bundleMcpMode,
+@@ -1313,6 +1494,7 @@
+ 				...runtimeToolsAllowPolicy !== void 0 ? { runtimeToolsAllow: runtimeToolsAllowPolicy } : {}
+ 			} } : {}
+ 		});
++		qqPrepTrace?.mark("backend_config_ready");
+ 		const cleanupPreparedBackend = preparedBackend.cleanup || cleanupMcpClientGrant ? async () => {
+ 			try {
+ 				await preparedBackend.cleanup?.();
+@@ -1348,6 +1530,7 @@
+ 				...privatePrepareExecutionContext,
+ 				authCredential
+ 			} : privatePrepareExecutionContext;
++			qqPrepTrace?.mark("backend_execution_begin");
+ 			preparedExecution = await backendResolved.prepareExecution?.(backendPrepareContext) ?? void 0;
+ 		} catch (error) {
+ 			if (error instanceof CliBackendAuthProfilePreparationError && effectiveAuthProfileId) throw new CliAuthProfilePreparationError({
+@@ -1359,6 +1542,7 @@
+ 			});
+ 			throw error;
+ 		}
++		qqPrepTrace?.mark("backend_execution_ready");
+ 		const pluginExecutionConsumer = retainCliPluginExecutionConsumer(preparedExecution?.execute);
+ 		const preparedBackendCleanup = cleanupPreparedBackend || preparedExecution?.cleanup || pluginExecutionConsumer ? async () => {
+ 			try {
+@@ -1382,12 +1566,14 @@
+ 			authCredential,
+ 			preparedExecution
+ 		});
++		qqPrepTrace?.mark("auth_epoch_begin");
+ 		const authEpoch = await resolveCliAuthEpoch({
+ 			provider: params.provider,
+ 			agentDir,
+ 			authProfileId: effectiveAuthProfileId,
+ 			skipLocalCredential: skipLocalCredentialEpoch
+ 		});
++		qqPrepTrace?.mark("auth_epoch_ready");
+ 		const authBindingFingerprint = params.onSuccessfulAuthBinding ? resolveCliAuthBindingFingerprint({
+ 			provider: params.provider,
+ 			config: runConfig,
+@@ -1404,6 +1590,7 @@
+ 			await preparedBackend.beforeExecution?.();
+ 			await preparedExecution?.beforeExecution?.();
+ 		} : void 0;
++		qqPrepTrace?.mark("skills_plugin_begin");
+ 		const claudeSkillsPlugin = rootedExecution || skipsTurnPreparation || nodeClaudePlacement ? {
+ 			args: [],
+ 			cleanup: async () => {}
+@@ -1411,6 +1598,7 @@
+ 			backendId: backendResolved.id,
+ 			skillsSnapshot: params.skillsSnapshot
+ 		});
++		qqPrepTrace?.mark("skills_plugin_ready");
+ 		let claudeSkillsPluginClaimed = false;
+ 		const claimLiveSessionResources = claudeSkillsPlugin.args.length > 0 ? () => {
+ 			if (claudeSkillsPluginClaimed) return;
+@@ -1451,7 +1639,22 @@
+ 			backendId: backendResolved.id,
+ 			execute: preparedExecution?.execute
+ 		});
+-		const promptToolNamesHash = bundleMcpEnabled && mcpLoopbackRuntime ? hashCliSessionText(JSON.stringify(promptTools.map((tool) => tool.name).toSorted())) : void 0;
++		const promptToolNamesHash = (() => {
++			const nativeHash = bundleMcpEnabled && mcpLoopbackRuntime ? hashCliSessionText(JSON.stringify(promptTools.map((tool) => tool.name).toSorted())) : void 0;
++			// HOSINO-TOOLFP v1: full-catalog QQ group -> hash the owner-captured catalog names (what the model is shown).
++			try {
++				if (!nativeHash) return nativeHash;
++				const hsGuard = globalThis[Symbol.for("openclaw.qqGroupOwnerGuard")];
++				const hsCat = globalThis[Symbol.for("hosino.toolcatNames")]?.get?.(params.sessionKey);
++				if (!hsCat || hsCat.guard !== hsGuard || hsGuard?.active !== true || hsGuard.isFullCatalogGroup?.(params.sessionKey) !== true) return nativeHash;
++				const hsSet = new Set(hsCat.names);
++				const hsOwn = promptTools.map((tool) => tool.name);
++				if (!hsOwn.every((name) => hsSet.has(name))) return nativeHash;
++				const hsUnified = hashCliSessionText(JSON.stringify(hsCat.names));
++				if (hsUnified !== nativeHash) console.info("[hosino-toolfp] " + JSON.stringify({ v: 1, unified: true, own: hsOwn.length, catalog: hsCat.names.length }));
++				return hsUnified;
++			} catch { return nativeHash; }
++		})();
+ 		const ignoreCliSessionCandidate = isSideQuestion || preparedBackendFinal.backend.sessionMode === "none";
+ 		const controlOperationCliSessionId = isControlOperation ? params.cliSessionBinding?.sessionId?.trim() || params.cliSessionId?.trim() : void 0;
+ 		const reusableCliSessionCandidate = ignoreCliSessionCandidate ? { mode: "none" } : controlOperationCliSessionId ? {
+@@ -1478,6 +1681,7 @@
+ 		} : reusableCliSessionCandidate;
+ 		const candidateClaudeCliSessionId = resolveCliSessionId(backendReusableCliSession)?.trim() || void 0;
+ 		const hasClaudeCliCandidate = !isControlOperation && !nodeClaudePlacement && candidateClaudeCliSessionId !== void 0 && isClaudeCliBackendId(params.provider);
++		qqPrepTrace?.mark("transcript_probe_begin");
+ 		const claudeCliTranscriptMissing = hasClaudeCliCandidate && !await prepareDeps.claudeCliSessionTranscriptHasContent({
+ 			sessionId: candidateClaudeCliSessionId,
+ 			workspaceDir: cwd
+@@ -1496,6 +1700,7 @@
+ 			workspaceDir: cwd
+ 		});
+ 		const claudeCliInvalidatedReason = claudeCliTranscriptMissing && !hasManagedClaudeLiveSession ? "missing-transcript" : claudeCliTranscriptOrphanedToolUse ? "orphaned-tool-use" : void 0;
++		qqPrepTrace?.mark("transcript_probe_ready");
+ 		const reusableCliSession = claudeCliInvalidatedReason ? {
+ 			mode: "invalidate",
+ 			invalidatedReason: claudeCliInvalidatedReason
+@@ -1521,6 +1726,7 @@
+ 			skillPreparationParams.abortSignal?.throwIfAborted();
+ 			skillPreparationParams.preparedRunAdmission?.assertSourceCurrent();
+ 		};
++		qqPrepTrace?.mark("skills_prompt_begin");
+ 		const preparedSkills = rootedExecution ? { prompt: params.skillsSnapshot?.prompt ?? "" } : skipsTurnPreparation || nodeClaudePlacement || claudeSkillsPlugin.args.length > 0 ? { prompt: "" } : await resolveCliSkillsPrompt({
+ 			assertCurrent: assertSkillsCurrent,
+ 			skillsSnapshot: params.skillsSnapshot,
+@@ -1531,6 +1737,7 @@
+ 			sessionKey: params.sessionKey?.trim() || params.sessionId
+ 		});
+ 		assertSkillsCurrent();
++		qqPrepTrace?.mark("skills_prompt_ready");
+ 		const systemPromptSkillsPrompt = preparedSkills.prompt;
+ 		const runtimeChannel = skipsTurnPreparation ? void 0 : normalizeMessageChannel(params.messageChannel ?? params.messageProvider);
+ 		const runtimeCapabilities = skipsTurnPreparation ? void 0 : collectRuntimeChannelCapabilities({
+@@ -1539,6 +1746,7 @@
+ 			accountId: params.agentAccountId
+ 		});
+ 		const requesterProfileId = readRunOperatorAuthority(params)?.profileId;
++		qqPrepTrace?.mark("system_prompt_begin");
+ 		const builtSystemPrompt = isControlOperation ? "" : isSideQuestion ? extraSystemPrompt : await prepareCliSystemPrompt({
+ 			requesterProfileId,
+ 			workspaceDir,
+@@ -1564,6 +1772,7 @@
+ 			sessionKey: params.sessionKey,
+ 			sessionId: params.sessionId
+ 		});
++		qqPrepTrace?.mark("system_prompt_ready");
+ 		const transformedSystemPrompt = !skipsTurnPreparation ? backendResolved.transformSystemPrompt?.({
+ 			config: params.config,
+ 			workspaceDir,
+@@ -1576,9 +1785,12 @@
+ 		const turnRuntimeFacts = params.runtimeFactsInTurn && !skipsTurnPreparation ? splitSystemPromptRelocatableBoundary(transformedSystemPrompt) : void 0;
+ 		let systemPrompt = turnRuntimeFacts?.remainingPrompt ?? transformedSystemPrompt;
+ 		const allowRawTranscriptReseed = backendResolved.config.reseedFromRawTranscriptWhenUncompacted === true;
++		qqPrepTrace?.mark("history_admission_begin");
+ 		const historyParams = params = await admitCliRunParams(params, workspaceResolution.agentId);
+ 		const cliHistoryWriter = !isSideQuestion ? await prepareCliHistoryBoundary(historyParams, { credential: authCredential }) : void 0;
++		qqPrepTrace?.mark("history_boundary_ready");
+ 		const rawTranscriptReseedReason = !(params.sessionManager !== void 0 || cliHistoryWriter !== void 0) ? "auth-unknown" : reusableCliSessionId ? "session-expired" : invalidatedReason ?? (ignoreCliSessionCandidate ? void 0 : "missing-transcript");
++		qqPrepTrace?.mark("session_prompt_context_begin");
+ 		const sessionPromptContext = skipsTurnPreparation || params.isolatedCompletion ? void 0 : await loadCliSessionPromptContext({
+ 			abortSignal: params.abortSignal,
+ 			sessionManager: params.sessionManager,
+@@ -1586,7 +1798,9 @@
+ 			allowRawTranscriptReseed,
+ 			rawTranscriptReseedReason
+ 		});
++		qqPrepTrace?.mark("session_prompt_context_ready");
+ 		const finalizedTranscriptPrompt = (params.finalizePromptForResolvedTools || sessionPromptContext?.durableContext) && params.transcriptPrompt === void 0 ? params.prompt : params.transcriptPrompt;
++		qqPrepTrace?.mark("turn_context_begin");
+ 		let promptContext;
+ 		let promptForHooks;
+ 		let preparedPrompt = isControlOperation ? params.prompt : params.finalizePromptForResolvedTools?.({
+@@ -1659,6 +1873,8 @@
+ 			prompt: historyPromptCurrentTurn,
+ 			maxHistoryChars: autoReseedHistoryChars
+ 		}) : void 0;
++		qqPrepTrace?.mark("turn_context_ready");
++		const qqDiagSystemAfterHooks = systemPrompt; // observer only
+ 		const systemPromptWithReplacements = skipsTurnPreparation ? systemPrompt : applyPluginTextReplacements(systemPrompt, backendResolved.textTransforms?.input);
+ 		systemPrompt = skipsTurnPreparation ? systemPromptWithReplacements : appendModelIdentitySystemPrompt({
+ 			systemPrompt: buildModelIdentityPromptLine(modelDisplay) && systemPromptWithReplacements.trim().length > 0 ? ensureSystemPromptCacheBoundary(systemPromptWithReplacements) : systemPromptWithReplacements,
+@@ -1762,6 +1978,7 @@
+ 				hadSessionFile: false
+ 			};
+ 		}
++		qqPrepTrace?.mark("context_engine_begin");
+ 		ensureContextEnginesInitialized();
+ 		const contextEngineAgentDir = resolveAgentDir(runConfig, sessionAgentId);
+ 		const contextEngineHostSupport = buildGenericCliContextEngineHostSupport({
+@@ -1821,10 +2038,16 @@
+ 			operation: "agent-run",
+ 			host: contextEngineHostSupport
+ 		});
++		qqPrepTrace?.mark("context_engine_ready");
++		qqPrepTrace?.mark("transcript_exists_begin");
+ 		const hadSessionFile = await hasCliSessionTranscript(params);
++		qqPrepTrace?.mark("transcript_exists_ready");
+ 		const contextEngineTurnPrompt = params.transcriptPrompt ?? params.prompt;
++		qqPrepTrace?.mark("final_admission_begin");
+ 		let preparedParams = await admitFinalParams();
+ 		bindPreparedParams(preparedParams);
++		qqPrepTrace?.mark("final_admission_ready");
++		qqPrepTrace?.mark("heartbeat_claim_begin");
+ 		const note = await claimHeartbeatContextForUserRun({
+ 			...preparedParams,
+ 			agentId: sessionAgentId,
+@@ -1832,6 +2055,7 @@
+ 			detached: Boolean(params.sessionManager || params.isolatedCompletion),
+ 			assertCurrent: createCliRunCurrentAssertion(preparedParams)
+ 		});
++		qqPrepTrace?.mark("heartbeat_claim_ready");
+ 		if (note) {
+ 			preparedParams = {
+ 				...preparedParams,
+@@ -1849,6 +2073,24 @@
+ 				if (openClawHistoryPrompt) openClawHistoryPrompt = append(openClawHistoryPrompt);
+ 			}
+ 		}
++		try {
++			rememberQQCliSystemParts(preparedParams, backendResolved.id, {
++				extraSystemInput: extraSystemPrompt,
++				bindingStaticExtraInput: typeof bindingExtraSystemPromptStatic === "string" ? bindingExtraSystemPromptStatic.trim() : void 0,
++				ownerListInput: JSON.stringify(params.ownerNumbers ?? []),
++				actualToolNamesInput: JSON.stringify(promptTools.map(tool => tool.name)),
++				builtSystem: builtSystemPrompt,
++				transformedSystem: transformedSystemPrompt,
++				remainingAfterRuntime: turnRuntimeFacts?.remainingPrompt ?? transformedSystemPrompt,
++				hookSystemOverride: promptBuildHookResult?.systemPrompt?.trim(),
++				hookSystemPrepend: promptBuildHookResult?.prependSystemContext,
++				hookSystemAppend: promptBuildHookResult?.appendSystemContext,
++				afterSystemHooks: qqDiagSystemAfterHooks,
++				afterTextReplacement: systemPromptWithReplacements,
++				finalRawSystem: systemPrompt
++			}, params.runtimeFactsInTurn, promptTools.length);
++		} catch { /* Observation cannot alter admission, context or execution. */ }
++		qqPrepTrace?.mark("prepared_context_ready");
+ 		return {
+ 			...buildPreparedContext(preparedParams),
+ 			...managedClaudeLiveSessionGeneration ? { requiredClaudeLiveSessionGeneration: managedClaudeLiveSessionGeneration } : {},
+@@ -1873,6 +2115,7 @@
+ 		}
+ 		throw err;
+ 	}
++	} finally { closeQQClaudeLegacyRecall(qqDeferredRecall); }
+ }
+ //#endregion
+ export { detectNodeClaudePlacement as n, prepareCliRunContext as t };

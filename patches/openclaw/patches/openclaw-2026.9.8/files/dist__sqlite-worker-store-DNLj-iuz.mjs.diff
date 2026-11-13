@@ -1,0 +1,313 @@
+diff -ruN a/dist/sqlite-worker-store-DNLj-iuz.mjs b/dist/sqlite-worker-store-DNLj-iuz.mjs
+--- a/dist/sqlite-worker-store-DNLj-iuz.mjs	2026-11-13 19:09:04.901063108 +0800
++++ b/dist/sqlite-worker-store-DNLj-iuz.mjs	2026-11-13 19:09:04.901063108 +0800
+@@ -1,3 +1,4 @@
++import { createQqWorkerPrepareAdmissionObserver, beginQqWorkerPrepareSpan, endQqWorkerPrepareSpan, noteQqWorkerPrepareCount, incrementQqWorkerPrepareCount, bindQqWorkerPrepareObserver, markQqWorkerPrepareJob, observeQqWorkerPrepareCacheEnv } from "./qq-host-latency-trace.mjs";
+ import { u as toErrorObject } from "./error-coercion-1P2One0X.mjs";
+ import { t as createDeferredCore } from "./deferred-D0La5CRk.mjs";
+ import { i as resolveGlobalSingleton } from "./global-singleton-BfHBYj6Y.mjs";
+@@ -11,7 +12,7 @@
+ import { i as assertStateDatabaseAccessAllowed, r as acquireStateDatabaseSchemaLease } from "./gateway-state-owner-CPG45dwV.mjs";
+ import { i as runtimeNeedsTypeScriptLoader, n as resolveRuntimeWorkerThreadExecArgv } from "./runtime-worker-url-S0NIVxUR.mjs";
+ import { n as createSqliteWorkerTransferOwner, r as createSqliteWorkerTransferReceiver } from "./sqlite-worker-transfer-DkuzGXT2.mjs";
+-import { h as SqliteWorkerError, n as createSqliteWorkerOperationAdmission, u as SQLITE_WORKER_MAX_MESSAGE_BYTES, v as retainSqliteWorkerErrorCode } from "./sqlite-worker-operation-admission-BB758RIN.mjs";
++import { bindSqliteWorkerOperationAdmissionObserver, h as SqliteWorkerError, n as createSqliteWorkerOperationAdmission, u as SQLITE_WORKER_MAX_MESSAGE_BYTES, v as retainSqliteWorkerErrorCode } from "./sqlite-worker-operation-admission-BB758RIN.mjs";
+ import { t as resolveRuntimeProcessEntrypointUrl } from "./runtime-process-url-Dp0Sw2Fd.mjs";
+ import { n as createCpuTrackedWorker } from "./worker-cpu-BnVPAXBa.mjs";
+ import { n as hydrateOpenClawStateWorkerError, r as retainOpenClawStateWorkerErrorPayload } from "./openclaw-state-worker-error-CvUWzlTD.mjs";
+@@ -160,6 +161,7 @@
+ //#endregion
+ //#region src/infra/sqlite-worker-broker-reply.ts
+ function dispatchSqliteWorkerJob(slot, job, onRejected) {
++	markQqWorkerPrepareJob(job, "dispatch");
+ 	const actor = [...slot.actors].find((candidate) => candidate.id === job.request.actor);
+ 	const assertCurrentJob = () => {
+ 		if (slot.failed || slot.current !== job) throw slot.failed ?? new SqliteWorkerError("SQLite worker job is no longer current", "closed");
+@@ -179,7 +181,9 @@
+ 		job.detach();
+ 		if (job.dispatchState) job.dispatchState.dispatched = true;
+ 		job.requestPosted = true;
++		markQqWorkerPrepareJob(job, "post_begin");
+ 		slot.worker.postMessage(request, request.operationAdmission ? [request.operationAdmission] : []);
++		markQqWorkerPrepareJob(job, "posted");
+ 	} catch (error) {
+ 		onRejected(error, job.requestPosted === true);
+ 	}
+@@ -238,6 +242,8 @@
+ 			...actor?.pathReferences.keys() ?? []
+ 		], () => retained.admission.service())
+ 	};
++	const qqAdmissionObserver = createQqWorkerPrepareAdmissionObserver(job);
++	if (qqAdmissionObserver) bindSqliteWorkerOperationAdmissionObserver(retained.admission, qqAdmissionObserver);
+ 	return retained.admission.port;
+ }
+ function prepareSqliteWorkerRequest(job) {
+@@ -339,7 +345,9 @@
+ 		owner.fail(/* @__PURE__ */ new Error("SQLite worker returned an unexpected response"));
+ 		return;
+ 	}
++	markQqWorkerPrepareJob(job, "reply");
+ 	if (!reply.ok) {
++		markQqWorkerPrepareJob(job, "reply_terminal");
+ 		if (reply.cleanupFailure && job.nativeDispatched && !reply.retire) {
+ 			const admission = job.operationAdmission?.admission;
+ 			const original = (admission?.failureSource === "domain" && !reply.admissionRefused ? void 0 : admission?.failure) ?? decodeSqliteWorkerReplyError(job, reply.error);
+@@ -378,9 +386,11 @@
+ 		}
+ 		value = result.value;
+ 	} catch (error) {
++		markQqWorkerPrepareJob(job, "reply_terminal");
+ 		owner.fail(error);
+ 		return;
+ 	}
++	markQqWorkerPrepareJob(job, "reply_terminal");
+ 	if (reply.cleanupFailure) {
+ 		const admission = job.operationAdmission?.admission;
+ 		const failure = admission?.failureSource === "domain" ? void 0 : admission?.failure;
+@@ -443,6 +453,7 @@
+ 	job.inputTransfer = void 0;
+ 	job.transfer = void 0;
+ 	job.detach();
++	markQqWorkerPrepareJob(job, "settle");
+ 	if (failure !== void 0) job.reject(failure);
+ 	else job.resolve(value);
+ }
+@@ -454,11 +465,20 @@
+ 	function createSlot(options, borrowedGenerationSlot, createReplyOwner) {
+ 		if (process.versions.bun && process.platform === "darwin") ensureSqliteLibrarySelected();
+ 		options.assertCurrent?.();
+-		const worker = runOutsideCaller(() => createCpuTrackedWorker(options.carrierUrl, {
+-			resourceLimits: { maxOldGenerationSizeMb: 512 },
+-			env: resolveNodeCompileCacheEnv(),
+-			execArgv: resolveRuntimeWorkerThreadExecArgv(options.carrierUrl)
+-		}));
++		const worker = runOutsideCaller(() => {
++			const qqWorkerCacheEnvironment = resolveNodeCompileCacheEnv();
++			observeQqWorkerPrepareCacheEnv(options, qqWorkerCacheEnvironment);
++			const qqWorkerConstructionOptions = {
++				resourceLimits: { maxOldGenerationSizeMb: 512 },
++				env: qqWorkerCacheEnvironment,
++				execArgv: resolveRuntimeWorkerThreadExecArgv(options.carrierUrl)
++			};
++			const qqWorkerConstructSpan = beginQqWorkerPrepareSpan(options, "broker_worker_construct");
++			const qqConstructedWorker = createCpuTrackedWorker(options.carrierUrl, qqWorkerConstructionOptions);
++			endQqWorkerPrepareSpan(options, qqWorkerConstructSpan);
++			noteQqWorkerPrepareCount(options, "brokerWorkerCreated", 1);
++			return qqConstructedWorker;
++		});
+ 		const exited = createDeferredCore();
+ 		const slot = {
+ 			runtimeGeneration: options.runtimeGeneration,
+@@ -607,6 +627,7 @@
+ 		pending: /* @__PURE__ */ new Set(),
+ 		...stateContext ? { stateContext: captureSqliteWorkerStateContext(stateContext) } : {}
+ 	};
++	bindQqWorkerPrepareObserver(scope, operation);
+ 	const released = createDeferredCore();
+ 	client.scopes.add(released.promise);
+ 	const untrack = track(released.promise);
+@@ -823,6 +844,7 @@
+ 		let snapshot;
+ 		try {
+ 			snapshot = captureSqliteWorkerOpen(options, stateContext, assertCurrent, custody);
++			bindQqWorkerPrepareObserver(snapshot, options);
+ 			const generation = options.runtimeGeneration;
+ 			generation?.retain(this, async () => {
+ 				await this.inputAdmission.joinOpens();
+@@ -832,14 +854,21 @@
+ 			this.clients.delete(client);
+ 			return Promise.reject(toErrorObject(error, "SQLite worker input could not be serialized"));
+ 		}
+-		return this.inputAdmission.open(sqliteWorkerRequestBytes(snapshot.input, snapshot.stateContext, snapshot.preparation), () => this.openAdmitted(snapshot, client)).catch((error) => {
++		const qqInputQueueSpan = beginQqWorkerPrepareSpan(snapshot, "broker_input_queue");
++		return this.inputAdmission.open(sqliteWorkerRequestBytes(snapshot.input, snapshot.stateContext, snapshot.preparation), () => {
++			endQqWorkerPrepareSpan(snapshot, qqInputQueueSpan);
++			return this.openAdmitted(snapshot, client);
++		}).catch((error) => {
+ 			this.clients.delete(client);
+ 			throw error;
+ 		});
+ 	}
+ 	async openAdmitted(options, client) {
++		const qqOpenAdmittedSpan = beginQqWorkerPrepareSpan(options, "broker_open_admitted");
+ 		options.assertCurrent?.();
++		const qqDatabaseAdmissionSpan = beginQqWorkerPrepareSpan(options, "broker_database_admission");
+ 		const { databasePath, inputHash, identity } = await prepareSqliteWorkerDatabaseAdmission(options);
++		endQqWorkerPrepareSpan(options, qqDatabaseAdmissionSpan);
+ 		options.assertCurrent?.();
+ 		assertStateDatabaseAccessAllowed(options.stateDatabasePath ?? databasePath, { maintenanceScope: options.maintenanceScope });
+ 		const input = options.input;
+@@ -847,30 +876,43 @@
+ 		const admittedPaths = captureSqliteWorkerAdmissionPaths(databasePath, identity, this.actors.values());
+ 		if (options.existingOnly && !key.startsWith("file:")) {
+ 			this.clients.delete(client);
++			endQqWorkerPrepareSpan(options, qqOpenAdmittedSpan);
+ 			return;
+ 		}
++		const qqModuleResolutionSpan = beginQqWorkerPrepareSpan(options, "broker_module_resolution");
+ 		const { modulePath, moduleUrl } = await resolveSqliteWorkerModuleUrl(options.moduleUrl);
++		endQqWorkerPrepareSpan(options, qqModuleResolutionSpan);
+ 		options.assertCurrent?.();
+ 		let actor = this.actors.get(key);
+ 		if (actor?.retirementRequested) {
+ 			if (actor.retirement) {
++				const qqActorRetirementSpan = beginQqWorkerPrepareSpan(options, "broker_actor_retirement_wait");
+ 				await actor.retirement;
++				endQqWorkerPrepareSpan(options, qqActorRetirementSpan);
++				endQqWorkerPrepareSpan(options, qqOpenAdmittedSpan);
+ 				return this.openAdmitted(options, client);
+ 			}
+ 			throw new SqliteWorkerError("SQLite actor retirement must finish before reopening", "closed");
+ 		}
+ 		if (actor?.cleanupState === "pending") {
+ 			if (actor.closing) {
++				const qqActorCloseSpan = beginQqWorkerPrepareSpan(options, "broker_actor_close_wait");
+ 				await actor.closing;
++				endQqWorkerPrepareSpan(options, qqActorCloseSpan);
++				endQqWorkerPrepareSpan(options, qqOpenAdmittedSpan);
+ 				return this.openAdmitted(options, client);
+ 			}
+ 			throw new SqliteWorkerError("SQLite worker cleanup is pending; retry close before reopening", "closed");
+ 		}
+ 		if (actor) {
++			noteQqWorkerPrepareCount(options, "brokerActorReused", 1);
+ 			assertSqliteWorkerActorReusable(actor, moduleUrl, inputHash, options.stateContext);
+ 			actor.references += 1;
+ 		} else {
++			noteQqWorkerPrepareCount(options, "brokerActorReused", 0);
++			const qqSlotAcquireSpan = beginQqWorkerPrepareSpan(options, "broker_slot_acquire");
+ 			const slot = await this.acquireSlot(options);
++			endQqWorkerPrepareSpan(options, qqSlotAcquireSpan);
+ 			try {
+ 				options.assertCurrent?.();
+ 			} catch (error) {
+@@ -900,6 +942,14 @@
+ 			slot.actors.add(actor);
+ 			slot.pendingOpens -= 1;
+ 			const opening = actor;
++			const qqOpenJobOptions = {
++				dispatchState: opening.openDispatch,
++				signal: options.signal,
++				assertCurrent: options.assertCurrent,
++				maintenanceScope: options.maintenanceScope,
++				createAdmission: options.createAdmission ?? options.createOpenAdmission
++			};
++			bindQqWorkerPrepareObserver(qqOpenJobOptions, options);
+ 			opening.opened = this.enqueue(slot, {
+ 				type: "open",
+ 				actor: actor.id,
+@@ -910,18 +960,14 @@
+ 				input,
+ 				...options.preparation ? { preparation: options.preparation } : {},
+ 				...runtimeNeedsTypeScriptLoader(modulePath) ? { sourceLoaderUrl: import.meta.resolve("tsx/esm/api") } : {}
+-			}, sqliteWorkerRequestBytes(input, options.stateContext, options.preparation), {
+-				dispatchState: opening.openDispatch,
+-				signal: options.signal,
+-				assertCurrent: options.assertCurrent,
+-				maintenanceScope: options.maintenanceScope,
+-				createAdmission: options.createAdmission ?? options.createOpenAdmission
+-			}).then(async () => {
++			}, sqliteWorkerRequestBytes(input, options.stateContext, options.preparation), qqOpenJobOptions).then(async () => {
+ 				opening.initialized = true;
++				const qqOpenedIdentitySpan = beginQqWorkerPrepareSpan(options, "broker_opened_identity");
+ 				const physical = await resolveOpenedSqliteWorkerIdentity(databasePath, identity, (id) => {
+ 					const existing = this.actors.get(id);
+ 					return existing !== void 0 && existing !== opening;
+ 				});
++				endQqWorkerPrepareSpan(options, qqOpenedIdentitySpan);
+ 				if (physical !== key) {
+ 					this.actors.delete(key);
+ 					opening.key = physical;
+@@ -933,11 +979,14 @@
+ 		try {
+ 			retainSqliteWorkerAdmissionCleanup(admittedActor, options.retainCleanup, () => this.lifecycle.closeActor(admittedActor, options.maintenanceScope));
+ 			options.onNativeStopped?.(actor.nativeStopped, () => admittedActor.closeReceipt);
++			const qqActorOpenedSpan = beginQqWorkerPrepareSpan(options, "broker_actor_opened_wait");
+ 			await actor.opened;
++			endQqWorkerPrepareSpan(options, qqActorOpenedSpan);
+ 			options.assertCurrent?.();
+ 			if (actor.retirementRequested) throw new SqliteWorkerError("SQLite actor retired during client admission", "closed");
+ 			if (actor.slot.failed) throw actor.slot.failed;
+ 		} catch (error) {
++			const qqOpenCleanupSpan = beginQqWorkerPrepareSpan(options, "broker_cleanup_after_open_failure");
+ 			this.lifecycle.releaseActorReference(actor);
+ 			if (!actor.references) {
+ 				const errors = [error];
+@@ -961,6 +1010,7 @@
+ 				}
+ 				if (errors.length > 1) throw new AggregateError(errors, "SQLite worker admission and cleanup failed", { cause: error });
+ 			}
++			endQqWorkerPrepareSpan(options, qqOpenCleanupSpan);
+ 			throw error;
+ 		}
+ 		const owned = actor;
+@@ -996,6 +1046,7 @@
+ 			}
+ 		});
+ 		this.stores.set(store, storeClient);
++		endQqWorkerPrepareSpan(options, qqOpenAdmittedSpan);
+ 		return store;
+ 	}
+ 	runOperation(store, operation, stateContext, assertCurrent, createAdmission) {
+@@ -1023,6 +1074,8 @@
+ 		await closeUnclaimedSharedStateActors(this.actors.values(), databasePath, (actor) => this.lifecycle.closeActor(actor));
+ 	}
+ 	async acquireSlot(options) {
++		noteQqWorkerPrepareCount(options, "brokerWorkerCreated", 0);
++		noteQqWorkerPrepareCount(options, "brokerSlotReused", 0);
+ 		options.assertCurrent?.();
+ 		const available = [...this.slots].filter((slot) => !slot.failed && !slot.retiring && slot.runtimeGeneration === options.runtimeGeneration);
+ 		const borrowedGenerationSlot = !process.versions.bun && options.runtimeGeneration !== void 0 && available.length === 0 && this.slots.size >= this.maxWorkers && ![...this.slots].some((slot) => slot.borrowedGenerationSlot);
+@@ -1030,13 +1083,16 @@
+ 			if (!available.length || process.versions.bun) {
+ 				const retiring = [...this.slots].filter((slot) => Boolean(slot.failed || slot.retiring));
+ 				if (retiring.length > 0) {
++					const qqSlotRetirementSpan = beginQqWorkerPrepareSpan(options, "broker_slot_retirement_wait");
+ 					await Promise.race(retiring.map(({ exit }) => exit));
++					endQqWorkerPrepareSpan(options, qqSlotRetirementSpan);
+ 					return this.acquireSlot(options);
+ 				}
+ 				if (process.versions.bun) throw new SqliteWorkerError("SQLite worker store capacity reached", "overloaded");
+ 				if (!available.length) throw new SqliteWorkerError("SQLite worker runtime capacity reached", "overloaded");
+ 			}
+ 			const selected = available.reduce((left, right) => left.actors.size <= right.actors.size ? left : right);
++			noteQqWorkerPrepareCount(options, "brokerSlotReused", 1);
+ 			selected.pendingOpens += 1;
+ 			return selected;
+ 		}
+@@ -1079,6 +1135,9 @@
+ 			reject: result.reject,
+ 			detach: () => signal?.removeEventListener("abort", abort)
+ 		};
++		bindQqWorkerPrepareObserver(job, options);
++		bindQqWorkerPrepareObserver(job, scope);
++		markQqWorkerPrepareJob(job, "enqueued");
+ 		const abort = () => {
+ 			const index = slot.queue.indexOf(job);
+ 			if (index >= 0) {
+@@ -1238,7 +1297,9 @@
+ }
+ /** Retain one actor through local reconciliation; the callback must not await its own close. */
+ function runSqliteWorkerStoreOperation(store, operation, stateContext, assertCurrent, createAdmission) {
+-	return withCallerErrors(resolveSqliteWorkerBroker().runOperation(store, (scope) => operation(bindCallerExecute(scope)), stateContext, assertCurrent, createAdmission));
++	const qqObservedOperation = (scope) => operation(bindCallerExecute(scope));
++	bindQqWorkerPrepareObserver(qqObservedOperation, operation);
++	return withCallerErrors(resolveSqliteWorkerBroker().runOperation(store, qqObservedOperation, stateContext, assertCurrent, createAdmission));
+ }
+ function resolveSqliteWorkerBroker() {
+ 	return resolveGlobalSingleton(Symbol.for("openclaw.sqliteWorkerBroker"), () => new SqliteWorkerBroker(), (broker) => withCallerErrors(broker.close()));
+@@ -1306,10 +1367,12 @@
+ /** Host-internal admission for the canonical shared-state actor. */
+ function openSharedStateSqliteWorkerStore(options, stateContext, assertCurrent, lifecycle) {
+ 	if (!isMainThread) return Promise.reject(new SqliteWorkerError("Shared-state admission requires the host broker", "unavailable"));
+-	return withCallerErrors(resolveSqliteWorkerBroker().open({
++	const qqSharedOpenOptions = {
+ 		...options,
+ 		input: void 0
+-	}, stateContext, assertCurrent, lifecycle)).then((store) => {
++	};
++	bindQqWorkerPrepareObserver(qqSharedOpenOptions, options);
++	return withCallerErrors(resolveSqliteWorkerBroker().open(qqSharedOpenOptions, stateContext, assertCurrent, lifecycle)).then((store) => {
+ 		if (store) {
+ 			const execute = store.execute.bind(store);
+ 			const close = store.close.bind(store);

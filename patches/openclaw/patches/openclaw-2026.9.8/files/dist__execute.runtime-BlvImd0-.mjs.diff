@@ -1,0 +1,205 @@
+diff -ruN a/dist/execute.runtime-BlvImd0-.mjs b/dist/execute.runtime-BlvImd0-.mjs
+--- a/dist/execute.runtime-BlvImd0-.mjs	2026-11-13 19:09:04.065020904 +0800
++++ b/dist/execute.runtime-BlvImd0-.mjs	2026-11-13 19:09:04.069021106 +0800
+@@ -1,3 +1,4 @@
++import { createQQClaudeHostPrepTrace } from "./qq-claude-host-prep-timing.mjs";
+ import { a as addTimerTimeoutGraceMs, p as clampPositiveTimerTimeoutMs } from "./number-coercion-Dq1l5muL.mjs";
+ import { u as toErrorObject } from "./error-coercion-1P2One0X.mjs";
+ import { c as isRecord } from "./record-coerce-TIsquoVR.mjs";
+@@ -1423,11 +1424,16 @@
+ 			}
+ 		}
+ 		const requester = {
++			// QQ-CLAUDE-NATIVE-REQUESTER v1: source facts come only from the admitted run.
++			...run.trigger ? { trigger: run.trigger } : {},
++			...run.currentMessageId ? { sourceMessageId: run.currentMessageId } : {},
++			...Array.isArray(run.inputAttachmentMedia ?? run.media) ? { readAssets: (run.inputAttachmentMedia ?? run.media).filter(file => typeof file?.path === "string" && !file.hydrationSuppressed).map(file => file.path).slice(0, 128) } : {},
+ 			...run.messageChannel ?? run.messageProvider ? { channel: run.messageChannel ?? run.messageProvider } : {},
+ 			...run.agentAccountId ? { accountId: run.agentAccountId } : {},
+ 			...run.senderId ? { senderId: run.senderId } : {},
+ 			...run.senderIsOwner !== void 0 ? { senderIsOwner: run.senderIsOwner } : {}
+ 		};
++		globalThis[Symbol.for("openclaw.qqGroupOwnerGuard")]?.registerReadContext?.({ sessionKey: run.sessionKey, runId: run.runId, requester });
+ 		const hookResult = await runBeforeToolCallHook({
+ 			toolName: canonicalToolName,
+ 			params: policyInput,
+@@ -1634,6 +1640,18 @@
+ }
+ /** Runs a prepared plugin transport while keeping cancellation and approvals host-owned. */
+ async function executePluginOwnedProcess(params) {
++	const qqPrepTrace = createQQClaudeHostPrepTrace(params.context.params, "plugin_dispatch");
++	let outcome = "completed";
++	try {
++		return await executePluginOwnedProcessTimed(params, qqPrepTrace);
++	} catch (error) {
++		outcome = params.context.params.abortSignal?.aborted ? "aborted" : "error";
++		throw error;
++	} finally {
++		qqPrepTrace?.finish(outcome);
++	}
++}
++async function executePluginOwnedProcessTimed(params, qqPrepTrace) {
+ 	const run = params.context.params;
+ 	const cwd = params.context.cwd ?? params.context.workspaceDir;
+ 	const executable = process.platform === "win32" ? resolveWindowsExecutablePath(params.executionCommand, params.env, cwd) : params.executionCommand;
+@@ -1641,6 +1659,7 @@
+ 		cwd,
+ 		env: params.env
+ 	});
++	qqPrepTrace?.mark("executable_resolution_ready");
+ 	if (!command) throw new Error(`CLI backend executable could not be resolved: ${params.executionCommand}`);
+ 	let executionArgs = params.executionArgs;
+ 	if (process.platform === "win32") {
+@@ -1708,6 +1727,8 @@
+ 	try {
+ 		assertCurrent();
+ 		watchdog.reset();
++		qqPrepTrace?.mark("live_session_begin");
++		qqPrepTrace?.flags({ useResume: params.useResume, forceNewSession: params.forceNewSession, managedLiveRequested: Boolean(params.liveSession), requiredGenerationPresent: Boolean(params.liveSession?.requiredGeneration) });
+ 		if (params.liveSession && (params.forceNewSession || Boolean(params.context.preparedBackend.backend.resumeArgs?.length) && !params.useResume)) {
+ 			if (params.liveSession.requiredGeneration) throw new Error("The required CLI live session cannot be replaced by a fresh process.");
+ 			await restartCliLiveSession(params.context, signal);
+@@ -1725,8 +1746,12 @@
+ 			claimResources: params.context.preparedBackend.claimLiveSessionResources
+ 		});
+ 		else params.mcpCapture?.beginCapture(params.mcpCapture.captureKey, assertCaptureCurrent);
++		qqPrepTrace?.mark("live_session_ready");
+ 		assertCurrent();
++		qqPrepTrace?.mark("native_iterator_invoke");
+ 		iterator = params.execute({
++			// QQ-CLAUDE-NATIVE-LATENCY v1: diagnostic custody, never authorization.
++			qqClaudeLatencyContext: { sessionKey: run.sessionKey, runId: run.runId, trigger: run.trigger },
+ 			command,
+ 			argv0: params.executionArgv0,
+ 			args: executionArgs,
+@@ -1756,7 +1781,9 @@
+ 				onPendingInput: updatePendingApproval
+ 			})
+ 		})[Symbol.asyncIterator]();
++		qqPrepTrace?.mark("native_iterator_ready");
+ 		for (;;) {
++			qqPrepTrace?.mark("native_iterator_next");
+ 			const next = await waitForIteratorValue(iterator, signal);
+ 			if (next.done) break;
+ 			if (!isRecord(next.value)) {
+@@ -3055,6 +3082,18 @@
+ 	});
+ }
+ async function executePreparedCliRun(inputContext, cliSessionIdToUse, options) {
++	const qqPrepTrace = createQQClaudeHostPrepTrace(inputContext.params, "prepared_execute");
++	let outcome = "completed";
++	try {
++		return await executePreparedCliRunTimed(inputContext, cliSessionIdToUse, options, qqPrepTrace);
++	} catch (error) {
++		outcome = inputContext.params.abortSignal?.aborted ? "aborted" : "error";
++		throw error;
++	} finally {
++		qqPrepTrace?.finish(outcome);
++	}
++}
++async function executePreparedCliRunTimed(inputContext, cliSessionIdToUse, options, qqPrepTrace) {
+ 	const context = !cliSessionIdToUse && inputContext.openClawHistoryPrompt && inputContext.cliHistoryWriter ? {
+ 		...inputContext,
+ 		params: {
+@@ -3087,6 +3126,7 @@
+ 		backend,
+ 		systemPrompt: systemPromptArg
+ 	}) : void 0;
++	qqPrepTrace?.mark("system_prompt_file_ready");
+ 	const nodeSystemPrompt = nodePlacement && shouldSendSystemPrompt ? systemPromptArg : void 0;
+ 	const basePrompt = cliSessionIdToUse ? params.prompt : context.openClawHistoryPrompt ?? params.prompt;
+ 	let prompt = params.controlOperation !== void 0 ? basePrompt : applyPluginTextReplacements(basePrompt, context.backendResolved.textTransforms?.input);
+@@ -3096,6 +3136,7 @@
+ 	} : void 0;
+ 	if (nodePlacement && ((params.images?.length ?? 0) > 0 || (params.mediaImageLayout ? params.mediaImageLayout.slots.length > 0 : hasHydratableMediaImages(params.media)) || (params.imagePrompt ? detectImageReferences(params.imagePrompt).length > 0 : false))) throw new Error("paired-node Claude CLI sessions do not support attachments or images");
+ 	const imageTurnEntryId = isClaudeCliBackendId(context.backendResolved.id) ? params.userTurnTranscriptRecorder?.getAdmissionReceipt()?.entryId : void 0;
++	qqPrepTrace?.mark("image_payload_begin");
+ 	const imagePayload = nodePlacement ? {
+ 		prompt,
+ 		imagePaths: [],
+@@ -3112,6 +3153,7 @@
+ 		media: params.media,
+ 		...imageTurnEntryId ? { imageTurnKey: hashCliImageTurnEntryId(imageTurnEntryId) } : {}
+ 	});
++	qqPrepTrace?.mark("image_payload_ready");
+ 	prompt = imagePayload.prompt;
+ 	const promptInputBackend = params.controlOperation === "compact" && context.backendResolved.manualCompaction ? {
+ 		...backend,
+@@ -3140,6 +3182,7 @@
+ 		cliSessionId: useResume ? resolvedSessionId : void 0,
+ 		ownerKey: cliLiveOwnerKey
+ 	});
++	qqPrepTrace?.mark("route_ready");
+ 	const useManagedClaudeLiveSession = usePluginOwnedExecution && acceptsCliLiveSession(context) && !params.onSuccessfulAuthBinding;
+ 	const diagnostics = createClaudeCliModelCallDiagnostics({
+ 		context,
+@@ -3185,9 +3228,12 @@
+ 		}
+ 	};
+ 	const executeAttempt = async () => {
++		qqPrepTrace?.mark("attempt_begin");
+ 		assertCurrent();
++		qqPrepTrace?.mark("before_execution_begin");
+ 		await context.preparedBackend.beforeExecution?.();
+ 		assertCurrent();
++		qqPrepTrace?.mark("before_execution_ready");
+ 		const cliTurnStartedAt = Date.now();
+ 		const restoreSkillEnv = params.skillsSnapshot && !params.controlOperation ? applySkillEnvOverridesFromSnapshot({
+ 			snapshot: params.skillsSnapshot,
+@@ -3227,6 +3273,7 @@
+ 			const logOutputText = isTruthyEnvValue(process.env[CLI_BACKEND_LOG_OUTPUT_ENV]);
+ 			const outputMode = useResume ? backend.resumeOutput ?? backend.output : backend.output;
+ 			const initialGatewayCaptureKey = nodePlacement || !context.mcpDeliveryCapture ? void 0 : crypto.randomUUID();
++			qqPrepTrace?.mark("capture_begin");
+ 			const mcpCaptureAttempt = nodePlacement ? {
+ 				env: {},
+ 				cleanup: void 0
+@@ -3236,6 +3283,7 @@
+ 				env: context.preparedBackend.env,
+ 				captureKey: initialGatewayCaptureKey
+ 			});
++			qqPrepTrace?.mark("capture_ready");
+ 			cleanupMcpCaptureAttempt = mcpCaptureAttempt.cleanup;
+ 			const preparedBackendEnv = context.preparedBackend.env ?? {};
+ 			const selectedClaudeClearEnv = Boolean(context.preparedBackend.secretInput) || [...CLAUDE_SELECTED_AUTH_ENV_KEYS].some((key) => Object.hasOwn(preparedBackendEnv, key)) ? new Set(backend.clearEnv ?? []) : void 0;
+@@ -3263,6 +3311,7 @@
+ 			}));
+ 			Object.assign(env, mcpCaptureAttempt.env, localProcessEnv);
+ 			delete env.CLAUDE_CODE_PROVIDER_MANAGED_BY_HOST;
++			qqPrepTrace?.mark("env_ready");
+ 			let executionCommand = backend.command;
+ 			let executionArgv0;
+ 			let executionLeadingArgv = [];
+@@ -3275,12 +3324,14 @@
+ 				message: `CLI backend ${context.backendResolved.id} cannot verify its exact tool-availability runtime on a paired node`
+ 			});
+ 			if ((params.onSuccessfulAuthBinding || exactToolAvailabilityVersionPolicy) && !nodePlacement) {
++				qqPrepTrace?.mark("executable_identity_begin");
+ 				const executableIdentity = await resolveCliExecutableIdentity({
+ 					command: backend.command,
+ 					cwd: context.cwd ?? context.workspaceDir,
+ 					env,
+ 					...context.backendResolved.runtimeArtifact ? { runtimeArtifact: context.backendResolved.runtimeArtifact } : {}
+ 				});
++				qqPrepTrace?.mark("executable_identity_ready");
+ 				if (!executableIdentity) throw exactToolAvailabilityError({
+ 					code: "runtime-unavailable",
+ 					isolatedCompletion: params.isolatedCompletion === true && exactToolAvailabilityVersionPolicy !== void 0,
+@@ -3379,6 +3430,7 @@
+ 				useResume,
+ 				trigger: params.trigger
+ 			});
++			qqPrepTrace?.mark("process_dispatch");
+ 			runOutput = await executeCliProcess({
+ 				context,
+ 				assertCurrent,
+@@ -3443,7 +3495,9 @@
+ 		});
+ 	};
+ 	try {
++		qqPrepTrace?.mark("queue_enqueue");
+ 		completedOutput = await enqueueCliRun(queueKey, () => {
++			qqPrepTrace?.mark("queue_enter");
+ 			const runQueuedAttempt = async () => {
+ 				assertCurrent();
+ 				if (params.lifecycleGeneration) assertAgentRunLifecycleGenerationCurrent(params.lifecycleGeneration);

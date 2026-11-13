@@ -1,0 +1,79 @@
+diff -ruN a/dist/agent-harness-runtime-CnrNnAqy.mjs b/dist/agent-harness-runtime-CnrNnAqy.mjs
+--- a/dist/agent-harness-runtime-CnrNnAqy.mjs	2026-11-13 19:09:03.997017469 +0800
++++ b/dist/agent-harness-runtime-CnrNnAqy.mjs	2026-11-13 19:09:04.001017676 +0800
+@@ -1,3 +1,4 @@
++import { resolveNativeWorkspaceBootstrapParams } from "./native-workspace-bootstrap-scope.mjs";
+ import "./utils-DUAwk2p5.mjs";
+ import "./errors-YPvSaqwO.mjs";
+ import { t as createSubsystemLogger } from "./subsystem-CeqVSEVi.mjs";
+@@ -55,7 +56,7 @@
+ import "./tool-replay-safety-DTN2fsoj.mjs";
+ import "./logger-CRHWOiHk.mjs";
+ import { n as buildCurrentInboundPrompt } from "./runtime-context-prompt-K3ClPtvW.mjs";
+-import { c as resolveBootstrapFilesForRun, n as buildBootstrapContextForFiles } from "./bootstrap-files-CnxP5PZe.mjs";
++import { c as resolveBootstrapFilesForRun, n as buildBootstrapContextForFiles, observeOwnerPrivateBootstrapInjection } from "./bootstrap-files-CnxP5PZe.mjs";
+ import "./sandbox-Ck63sGje.mjs";
+ import "./settled-turn-finalization-result-B8lL2uN5.mjs";
+ import { v as wrapPluginSystemContextSection } from "./context-engine-maintenance-DKbclwGZ.mjs";
+@@ -106,7 +107,11 @@
+ //#region src/agents/harness/workspace-context.ts
+ /** Prepares Gateway workspace facts; the harness owns their native carriers and lifetime. */
+ async function prepareAgentWorkspaceContext(params) {
++	const nativeBootstrap = resolveNativeWorkspaceBootstrapParams(params);
++	params = nativeBootstrap.params;
++	nativeBootstrap.assertCurrent?.();
+ 	const bootstrapFiles = await resolveBootstrapFilesForRun(params);
++	nativeBootstrap.assertCurrent?.();
+ 	const instructionsOnly = params.scope === "instructions-only";
+ 	const memoryToolRouted = !instructionsOnly && params.memoryToolRouted === true;
+ 	const memoryToolRoutedBootstrapFiles = memoryToolRouted ? prepareContextFilesForPrompt(bootstrapFiles.filter((file) => isRootMemoryPath(file.path, params.workspaceDir) && !file.missing && (file.content ?? "").trim().length > 0).map((file) => Object.assign(toContextFile(file), { bootstrapFile: file })), {
+@@ -116,8 +121,12 @@
+ 	}).map(({ file }) => file.bootstrapFile) : [];
+ 	const budgetFiles = instructionsOnly ? selectAgentWorkspaceInstructionFiles(bootstrapFiles, params.workspaceDir).filter((file) => !file.missing) : memoryToolRouted ? bootstrapFiles.filter((file) => !isRootMemoryPath(file.path, params.workspaceDir)) : bootstrapFiles;
+ 	const contextFiles = buildBootstrapContextForFiles(budgetFiles, params).map((file) => projectContextFile(file, params.projectPath));
++	nativeBootstrap.assertCurrent?.();
+ 	const instructionSnapshot = buildAgentWorkspaceInstructionSnapshot(contextFiles, params.workspaceDir);
+-	if (instructionsOnly) return {
++	if (instructionsOnly) {
++		nativeBootstrap.assertCurrent?.();
++		if (nativeBootstrap.assertCurrent) observeOwnerPrivateBootstrapInjection(contextFiles, params, "native-workspace-return");
++		return {
+ 		bootstrapFiles,
+ 		contextFiles,
+ 		instructionSnapshot,
+@@ -125,7 +134,8 @@
+ 		promptContextFiles: [],
+ 		memoryReferenceFiles: [],
+ 		memoryToolRoutedBootstrapFiles: []
+-	};
++		};
++	}
+ 	const personaFiles = sortContextFiles(contextFiles.filter((file) => PERSONA_FILE_BASENAMES.has(contextFileBasename(file.path)) && !isMissingContextFile(file) && file.content.trim().length > 0), params.contextFileOrder);
+ 	const promptContextFiles = sortContextFiles(contextFiles.filter((file) => {
+ 		const basename = contextFileBasename(file.path);
+@@ -143,6 +153,8 @@
+ 		if (params.onMemoryPreparationError) params.onMemoryPreparationError(error);
+ 		else params.warn?.(`failed to prepare workspace memory recall instructions: ${String(error)}`);
+ 	}) : void 0;
++	nativeBootstrap.assertCurrent?.();
++	if (nativeBootstrap.assertCurrent) observeOwnerPrivateBootstrapInjection(contextFiles, params, "native-workspace-return");
+ 	return {
+ 		bootstrapFiles,
+ 		contextFiles,
+@@ -266,6 +278,8 @@
+ 		prompt: inputPrompt,
+ 		...typeof currentUserMessageText === "string" ? { currentUserMessage: currentUserMessageText } : {},
+ 		...typeof currentUserMessageId === "string" ? { currentUserMessageId } : {},
++		/* OPENCLAW-MEMORY-DURABLE-ADMISSION v2: only the host recorder may prove commit. */
++		admissionCommitted: params.currentUserMessageAdmissionCommitted === true,
+ 		messages: hasPromptBuildHooks ? typeof params.messages === "function" ? await params.messages() : params.messages : []
+ 	};
+ 	const heartbeatResult = hasHeartbeatContribution && hookRunner ? await hookRunner.runHeartbeatPromptContribution({
+@@ -445,6 +459,7 @@
+ 		import("./media-core/constants.js")
+ 	]);
+ 	return detectAndLoadPromptImages({
++		allowPromptLocalImageRefs: params.allowPromptLocalImageRefs,
+ 		prompt: params.prompt,
+ 		workspaceDir: params.workspaceDir,
+ 		agentWorkspaceDir: params.agentWorkspaceDir,

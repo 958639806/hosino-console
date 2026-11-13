@@ -1,0 +1,79 @@
+diff -ruN a/dist/prepared-model-runtime-CiPCD0fr.mjs b/dist/prepared-model-runtime-CiPCD0fr.mjs
+--- a/dist/prepared-model-runtime-CiPCD0fr.mjs	2026-11-13 19:09:04.821059070 +0800
++++ b/dist/prepared-model-runtime-CiPCD0fr.mjs	2026-11-13 19:09:04.821059070 +0800
+@@ -36,6 +36,7 @@
+ import { a as markPreparedModelCatalogFull, c as mergePreparedNativeCatalog, d as retainPreparedModelCatalogPublication, f as selectPreparedModelCatalogInventory, i as isPreparedModelCatalogFull, l as prepareFullCatalogFacts, n as filterNativeModelCatalogScopes, o as materializePreparedModelCatalog, r as filterPreparedProviderCatalog, s as mergePreparedModelCatalogInventory, t as createPreparedModelRuntimeSnapshot, u as prepareModelCatalogPublication } from "./prepared-model-runtime.full-catalog-rANG1Oh1.mjs";
+ import { t as runAbortableTimeout } from "./with-timeout-C2KBO09B.mjs";
+ import { a as prepareWorkspaceBuildGroup, d as preparedModelRuntimeWorkspaceFactsKey, i as prepareConfiguredRuntimeFactsBatch, l as createPreparedInboundRegistryLoader, n as fingerprintPreparedRuntimeFacts, o as preparedModelInventoryKey, p as prepareConfiguredRuntimeFacts, r as prepareConfiguredModelFacts, s as preparedSyntheticAuthProviderScope } from "./prepared-model-runtime.facts-Pifkw2OK.mjs";
++import { capturePluginArtifactBuildOrigin, runWithPluginArtifactCaptureOrigin } from "./plugin-generation-artifact-Bm1J86Hz.mjs";
+ import { n as createPreparedModelCatalogWorker } from "./prepared-model-catalog-worker-CVNhHiZ3.mjs";
+ import { n as prepareModelCatalogAuthLabels } from "./model-catalog-auth-labels-CeYHOwrJ.mjs";
+ import { a as resetPreparedModelRuntimePublicationListenersForTest, n as notifyPreparedModelCatalogPublication, r as notifyPreparedModelRuntimePublication, t as createCatalogAttemptReporter } from "./prepared-model-runtime.publication-events-BUQJNDbK.mjs";
+@@ -718,6 +719,7 @@
+ 			};
+ 			const prepared = await prepareWorkspaceBuildGroup(groupCandidates.map(({ input }) => input), catalogMode, {
+ 				preferBuiltPluginArtifacts,
++				...groupCandidates[0].input.runtimePluginPurpose ? { purpose: groupCandidates[0].input.runtimePluginPurpose } : {},
+ 				includeCredentialProviders,
+ 				getConfiguredHarnessRuntimes,
+ 				getConfiguredModelFacts,
+@@ -850,6 +852,7 @@
+ 	}
+ }
+ function startSerializedSnapshotBuildBatch(candidates, agentBuildCompletions, buildTimeoutMs, catalogMode = "live", onBuildStats, pluginMetadataSnapshot, includeCredentialProviders = catalogMode === "live", progress, acquisitionSignal) {
++	const pluginArtifactBuildOrigin = capturePluginArtifactBuildOrigin(candidates, catalogMode);
+ 	const cancellation = new AbortController();
+ 	const signal = acquisitionSignal ? AbortSignal.any([acquisitionSignal, cancellation.signal]) : cancellation.signal;
+ 	const finished = createDeferredCore();
+@@ -872,7 +875,7 @@
+ 				assertPreparedModelRuntimeCandidatesCurrent(candidates);
+ 			}
+ 			signal.throwIfAborted();
+-			return await buildSnapshotBatch(candidates, registryResources, catalogMode, pluginMetadataSnapshot, onBuildStats, includeCredentialProviders, (nextStage) => {
++			return await runWithPluginArtifactCaptureOrigin(pluginArtifactBuildOrigin, () => buildSnapshotBatch(candidates, registryResources, catalogMode, pluginMetadataSnapshot, onBuildStats, includeCredentialProviders, (nextStage) => {
+ 				stage = nextStage;
+ 				progress?.onStage(nextStage);
+ 			}, progress ? (input, result) => {
+@@ -880,7 +883,7 @@
+ 				const remaining = remainingByAgent.get(input.agentDir) - 1;
+ 				remainingByAgent.set(input.agentDir, remaining);
+ 				if (remaining === 0) agentCompletions.get(input.agentDir).resolve();
+-			} : void 0, signal);
++			} : void 0, signal));
+ 		} catch (_) {
+ 			_usingCtx$2.e = _;
+ 		} finally {
+@@ -1063,6 +1066,7 @@
+ 	return dirname ? path.resolve(dirname) : void 0;
+ }
+ function normalizePreparedModelRuntimeInput(input) {
++	if (input.runtimePluginPurpose !== void 0 && input.runtimePluginPurpose !== "simple-completion") throw new Error("Unsupported prepared runtime plugin purpose");
+ 	const { inheritedAuthDir: _inheritedAuthDir, readOnly, runtimePluginSelections: _runtimePluginSelections, skipCredentials, workspaceDir: _workspaceDir, ...rest } = input;
+ 	const inheritedAuthDir = normalizeOptionalDir(input.inheritedAuthDir ?? resolveLegacyInheritedAuthDir(input.config, input.env));
+ 	const workspaceDir = normalizeOptionalDir(input.workspaceDir);
+@@ -1106,6 +1110,7 @@
+ 		inheritedAuthDir: input.inheritedAuthDir,
+ 		readOnly: input.readOnly === true,
+ 		loadRuntimePlugins: input.loadRuntimePlugins === true,
++		...input.runtimePluginPurpose ? { runtimePluginPurpose: input.runtimePluginPurpose } : {},
+ 		skipCredentials: input.skipCredentials === true,
+ 		workspaceDir: input.workspaceDir,
+ 		env: environmentFingerprint(input.env),
+@@ -1145,7 +1150,7 @@
+ 	const exact = owners.get(ownerKey(input));
+ 	if (exact) return exact;
+ 	if (!options.allowConfiguredWorkspaceFallback) return;
+-	const candidates = [...configuredOwnerCandidates(owners, input.agentId)].filter((owner) => owner.provenance === "configured" && (input.agentId === void 0 || owner.input.agentId === input.agentId) && owner.input.agentDir === input.agentDir && owner.input.inheritedAuthDir === input.inheritedAuthDir && owner.input.readOnly === input.readOnly && owner.input.loadRuntimePlugins === input.loadRuntimePlugins && owner.input.skipCredentials === input.skipCredentials && (input.allowGatewaySubagentBinding === void 0 || owner.input.allowGatewaySubagentBinding === input.allowGatewaySubagentBinding) && (input.runtimePluginSelections === void 0 || JSON.stringify(owner.input.runtimePluginSelections) === JSON.stringify(input.runtimePluginSelections)) && (input.env === void 0 || owner.environmentFingerprint === environmentFingerprint(input.env)) && (input.workspaceDir === void 0 || owner.input.workspaceDir === input.workspaceDir));
++	const candidates = [...configuredOwnerCandidates(owners, input.agentId)].filter((owner) => owner.provenance === "configured" && (input.agentId === void 0 || owner.input.agentId === input.agentId) && owner.input.agentDir === input.agentDir && owner.input.inheritedAuthDir === input.inheritedAuthDir && owner.input.readOnly === input.readOnly && owner.input.loadRuntimePlugins === input.loadRuntimePlugins && owner.input.runtimePluginPurpose === input.runtimePluginPurpose && owner.input.skipCredentials === input.skipCredentials && (input.allowGatewaySubagentBinding === void 0 || owner.input.allowGatewaySubagentBinding === input.allowGatewaySubagentBinding) && (input.runtimePluginSelections === void 0 || JSON.stringify(owner.input.runtimePluginSelections) === JSON.stringify(input.runtimePluginSelections)) && (input.env === void 0 || owner.environmentFingerprint === environmentFingerprint(input.env)) && (input.workspaceDir === void 0 || owner.input.workspaceDir === input.workspaceDir));
+ 	return candidates.length === 1 ? candidates[0] : void 0;
+ }
+ /** Reads an already-published generation without admitting discovery. */
+@@ -1157,7 +1162,7 @@
+ 	return owner.snapshot;
+ }
+ function hasSameLifecycleInput(left, right) {
+-	return left.config === right.config && left.agentId === right.agentId && left.inheritedAuthDir === right.inheritedAuthDir && left.readOnly === right.readOnly && left.loadRuntimePlugins === right.loadRuntimePlugins && left.skipCredentials === right.skipCredentials && left.workspaceDir === right.workspaceDir && environmentFingerprint(left.env) === environmentFingerprint(right.env) && left.preserveWorkspaceDirOnRefresh === right.preserveWorkspaceDirOnRefresh && left.allowGatewaySubagentBinding === right.allowGatewaySubagentBinding && JSON.stringify(left.runtimePluginSelections) === JSON.stringify(right.runtimePluginSelections);
++	return left.config === right.config && left.agentId === right.agentId && left.inheritedAuthDir === right.inheritedAuthDir && left.readOnly === right.readOnly && left.loadRuntimePlugins === right.loadRuntimePlugins && left.runtimePluginPurpose === right.runtimePluginPurpose && left.skipCredentials === right.skipCredentials && left.workspaceDir === right.workspaceDir && environmentFingerprint(left.env) === environmentFingerprint(right.env) && left.preserveWorkspaceDirOnRefresh === right.preserveWorkspaceDirOnRefresh && left.allowGatewaySubagentBinding === right.allowGatewaySubagentBinding && JSON.stringify(left.runtimePluginSelections) === JSON.stringify(right.runtimePluginSelections);
+ }
+ async function publishPreparedModelRuntimeOwnerBatch(params, settleSingleOwner) {
+ 	try {

@@ -1,0 +1,246 @@
+diff -ruN a/dist/qq-reply-admission-trace.mjs b/dist/qq-reply-admission-trace.mjs
+--- a/dist/qq-reply-admission-trace.mjs	1970-01-01 07:30:00.000000000 +0730
++++ b/dist/qq-reply-admission-trace.mjs	2026-11-13 19:09:04.841060079 +0800
+@@ -0,0 +1,242 @@
++// Optional QQ admission diagnostics. No authority, body reads, timers or async work.
++import { qqLatencyTraceHash, qqLatencyTraceNow } from './qq-latency-trace.mjs';
++import { createHash } from 'node:crypto';
++import { performance } from 'node:perf_hooks';
++
++const GROUPS = new Map([
++  ['agent:main:qqbot:group:__HS_GROUP_NEW_OPENID__', 'new'],
++  ['agent:main:qqbot:group:__HS_GROUP_OLD_OPENID__', 'old']
++]);
++const CAPSULES=new WeakMap(), LEASES=new WeakMap(), TAILS=new WeakMap(), TICKETS=new WeakMap(), OPERATIONS=new WeakMap(), ACTIVE_EDGES=new WeakMap();
++const pending=new Map();
++const MAX_PENDING=256, MAX_ANCESTORS=32, MAX_EVENTS_PER_WINDOW=256, MAX_SUMMARIES_PER_WINDOW=64, LOG_WINDOW_MS=60000, SLOW_MS=500;
++let sequence=0, activeSequence=0, emitted=0, dropped=0;
++// QQ-ADMISSION-BOUNDED-SUMMARY v1: observations only; no timers, awaits or operation-property reads.
++const METRICS=new WeakMap();
++const eventWindow={beganMonoMs:null,emitted:0},summaryWindow={beganMonoMs:null,emitted:0};
++let summaryDropped=0;
++const increment=n=>Math.min(65535,n+1);
++const rounded=n=>typeof n==='number'&&Number.isFinite(n)&&n>=0?Math.round(n*1000)/1000:null;
++function metrics(node){
++ let m=METRICS.get(node);if(m)return m;
++ m={waitBeganMonoMs:null,waitSettledMonoMs:null,waitOutcome:null,releaseMonoMs:null,tailReadyMonoMs:null,
++  activeStarted:0,activeEnded:0,activeOpen:0,activeMaxConcurrent:0,activeUnionStart:null,activeUnionMs:0,
++  clockErrors:0,eventsTruncated:0,eventOutputDropped:0,eventOutputFailed:0,summaryAttempted:false,
++  owners:new Map(),ownerOverflow:0,unknownOwnerStarted:0,outcomes:{settled:0,ready:0,'not-ready':0,error:0,aborted:0,unknown:0}};
++ METRICS.set(node,m);return m;
++}
++function takeBudget(window,limit){
++ const now=ms();if(now===null)return null;
++ if(window.beganMonoMs===null||now-window.beganMonoMs>=LOG_WINDOW_MS){window.beganMonoMs=now;window.emitted=0;}
++ if(now<window.beganMonoMs||window.emitted>=limit)return null;
++ window.emitted++;return {beganMonoMs:window.beganMonoMs,remaining:limit-window.emitted};
++}
++function metricEvent(node,stage,at){
++ const m=metrics(node);
++ if(stage==='wait'&&m.waitBeganMonoMs===null)m.waitBeganMonoMs=at;
++ if((stage==='ready'||stage==='aborted')&&m.waitSettledMonoMs===null){m.waitSettledMonoMs=at;m.waitOutcome=stage;}
++ if(stage==='release'&&m.releaseMonoMs===null)m.releaseMonoMs=at;
++ if(stage==='tail-ready'&&m.tailReadyMonoMs===null)m.tailReadyMonoMs=at;
++}
++function metricActiveStart(node,owner,at){
++ const m=metrics(node);m.activeStarted=increment(m.activeStarted);
++ if(m.activeOpen===0)m.activeUnionStart=at;
++ m.activeOpen++;m.activeMaxConcurrent=Math.max(m.activeMaxConcurrent,m.activeOpen);
++ if(!owner){m.unknownOwnerStarted=increment(m.unknownOwnerStarted);return;}
++ let row=m.owners.get(owner.ticketHash);
++ if(!row){
++  if(m.owners.size>=8){m.ownerOverflow=increment(m.ownerOverflow);return;}
++  row={owner,started:0,ended:0,spanDurationSumMs:0};m.owners.set(owner.ticketHash,row);
++ }
++ row.started=increment(row.started);
++}
++function metricActiveEnd(state,at,outcome){
++ const m=metrics(state.node);m.activeEnded=increment(m.activeEnded);m.outcomes[outcome]=increment(m.outcomes[outcome]);
++ if(m.activeOpen<=0){m.clockErrors=increment(m.clockErrors);return;}
++ m.activeOpen--;
++ if(at===null||at<state.beganMonoMs)m.clockErrors=increment(m.clockErrors);
++ if(m.activeOpen===0){
++  if(at!==null&&m.activeUnionStart!==null&&at>=m.activeUnionStart)m.activeUnionMs+=at-m.activeUnionStart;
++  else m.clockErrors=increment(m.clockErrors);
++  m.activeUnionStart=null;
++ }
++ const row=state.owner?m.owners.get(state.owner.ticketHash):null;
++ if(row){row.ended=increment(row.ended);if(at!==null&&at>=state.beganMonoMs)row.spanDurationSumMs+=at-state.beganMonoMs;}
++}
++function outputSummary(node){return safe(()=>{
++ const m=metrics(node);if(m.summaryAttempted)return;m.summaryAttempted=true;
++ const at=ms();if(at===null)return;
++ const age=at-node.reservedMonoMs;
++ if(!node.enabled&&age<SLOW_MS)return;
++ const budget=takeBudget(summaryWindow,MAX_SUMMARIES_PER_WINDOW);
++ if(!budget){summaryDropped=increment(summaryDropped);return;}
++ const duration=(a,b)=>a!==null&&b!==null&&b>=a?rounded(b-a):null;
++ const activeComplete=m.activeOpen===0&&m.activeStarted===m.activeEnded&&m.clockErrors===0;
++ const row={schema:'qq-reply-admission-summary-v1',stage:'terminal-summary',ticketHash:node.ticketHash,...node.context,
++  atMonoMs:at,reservedMonoMs:node.reservedMonoMs,waitBeganMonoMs:m.waitBeganMonoMs,waitSettledMonoMs:m.waitSettledMonoMs,
++  releaseMonoMs:m.releaseMonoMs,tailReadyMonoMs:m.tailReadyMonoMs,ticketLifetimeMs:duration(node.reservedMonoMs,m.tailReadyMonoMs),
++  ticketWaitMs:duration(m.waitBeganMonoMs,m.waitSettledMonoMs),waitOutcome:m.waitOutcome,
++  releaseAfterWaitMs:duration(m.waitSettledMonoMs,m.releaseMonoMs),tailReadyAfterReleaseMs:duration(m.releaseMonoMs,m.tailReadyMonoMs),
++  activeWaitCoveredMs:activeComplete?rounded(m.activeUnionMs):null,completedActiveWaitCoveredMs:rounded(m.activeUnionMs),
++  activeWaitStartedCount:m.activeStarted,activeWaitEndedCount:m.activeEnded,unfinishedActiveWaitCount:m.activeOpen,
++  maxConcurrentActiveWaits:m.activeMaxConcurrent,activeTimingComplete:activeComplete,activeWaitOutcomes:{...m.outcomes},
++  owners:[...m.owners.values()].map(item=>({...activeOwnerFields(item.owner),startedCount:item.started,endedCount:item.ended,spanDurationSumMs:rounded(item.spanDurationSumMs),countsSaturated:item.started>=65535||item.ended>=65535})),
++  ownerOverflowStartedCount:m.ownerOverflow,unknownOwnerStartedCount:m.unknownOwnerStarted,ownerDurationsAreSpanSums:true,
++  observedEventCount:node.eventCount,truncatedTicketEventCount:m.eventsTruncated,eventOutputDroppedCount:m.eventOutputDropped,
++  eventOutputFailedCount:m.eventOutputFailed,clockErrorCount:m.clockErrors,missingEventsAreUnknown:true,
++  countsSaturated:[m.activeStarted,m.activeEnded,m.eventsTruncated,m.eventOutputDropped,m.eventOutputFailed,m.clockErrors,m.ownerOverflow,m.unknownOwnerStarted,...Object.values(m.outcomes)].some(value=>value>=65535),
++  released:node.released,readyTailCount:node.readyTailCount,tailCount:node.tailCount,
++  summaryBudgetRemaining:budget.remaining,summaryBudgetWindowMs:LOG_WINDOW_MS,summaryWindowBeganMonoMs:budget.beganMonoMs,
++  droppedSummaryCount:summaryDropped,ownerDeliveryAndDatabasePhasesObserved:false};
++ try{console.info('[qq-reply-admission-summary] '+JSON.stringify(row));}catch{}
++});}
++const safe=f=>{try{return f();}catch{return null;}};
++const hash24=v=>typeof v==='string'&&/^[a-f0-9]{24}$/.test(v);
++const ms=()=>{const n=qqLatencyTraceNow();return typeof n==='number'&&Number.isFinite(n)&&n>=0?Math.round(n*1000)/1000:null;};
++const validId=v=>typeof v==='string'&&v.length>0&&v.length<=512&&!/[\x00-\x1f]/.test(v);
++const sourceHash=v=>createHash('sha256').update('qq-claude-native-run-v1\0').update(v).digest('hex').slice(0,24);
++
++export function mintQQReplyAdmissionTrace(ctx,options){return safe(()=>{
++ if(process.env.OPENCLAW_QQ_PREPARATION_PROFILE!=='1'||!GROUPS.has(ctx?.SessionKey)||options?.isHeartbeat||ctx.InternalTurnSource!=null||ctx.InputProvenance?.kind==='internal_system'||ctx.InboundEventKind!=null&&ctx.InboundEventKind!=='user_request')return null;
++ const channels=[ctx.Provider,ctx.OriginatingChannel].filter(v=>v!=null);
++ if(!channels.length||!channels.every(v=>typeof v==='string'&&v.trim().toLowerCase()==='qqbot'))return null;
++ const id=options?.runId,current=ctx.MessageSidFull??ctx.MessageSid,b=options?.qqLatencyTraceSdkBoundary,now=performance.now();
++ if(!validId(id)||id!==current||!Object.isFrozen(b)||b.schema!=='qq-latency-sdk-boundary-v1'||b.timeOrigin!==performance.timeOrigin||typeof b.atMonoMs!=='number'||!Number.isFinite(b.atMonoMs)||b.atMonoMs<0||b.atMonoMs>now||now-b.atMonoMs>300000)return null;
++ const account=typeof ctx.AccountId==='string'&&ctx.AccountId.trim()?ctx.AccountId.trim().toLowerCase():'default';
++ const scopeHash=qqLatencyTraceHash('scope',['qqbot',account,ctx.SessionKey]);
++ if(!hash24(scopeHash))return null;
++ const capsule=Object.freeze({});CAPSULES.set(capsule,Object.freeze({groupAlias:GROUPS.get(ctx.SessionKey),sourceRunHash:sourceHash(id),scopeHash}));return capsule;
++});}
++
++function ancestors(node){
++ const result=[],queue=[...node.parents],seen=new Set();let truncated=false;
++ for(let i=0;i<queue.length;i++){
++  const edge=queue[i];
++  if(result.length>=MAX_ANCESTORS){truncated=true;break;}
++  if(!edge){result.push({observed:false});continue;}
++  const edgeKey=edge.ticketHash+':'+edge.keyHash;
++  if(seen.has(edgeKey))continue;seen.add(edgeKey);
++  const p=pending.get(edge.ticketHash);
++  result.push({observed:true,ticketHash:edge.ticketHash,keyHash:edge.keyHash,tailReady:edge.ready,
++   sourceRunHash:edge.sourceRunHash,scopeHash:edge.scopeHash,groupAlias:edge.groupAlias,
++   released:p?p.released:null,reservedMonoMs:edge.reservedMonoMs});
++  // A multi-key ticket has separate per-key tails. Follow the actual tail's
++  // predecessor, never the ticket's unrelated key or its overall wait set.
++  if(!edge.ready&&edge.predecessor)queue.push(edge.predecessor);
++  else if(!edge.ready&&edge.unobservedPredecessor)queue.push(null);
++ }
++ return {predecessors:result,predecessorChainTruncated:truncated};
++}
++function output(row,node){
++ const budget=takeBudget(eventWindow,MAX_EVENTS_PER_WINDOW);
++ if(!budget){dropped=increment(dropped);if(node){const m=metrics(node);m.eventOutputDropped=increment(m.eventOutputDropped);}return;}
++ emitted=Math.min(Number.MAX_SAFE_INTEGER,emitted+1);
++ // Constructed fixed enums, hashes, booleans and finite numeric timestamps only.
++ try { console.info('[qq-reply-admission] '+JSON.stringify({...row,droppedEventCount:dropped,eventBudgetRemaining:budget.remaining,eventBudgetWindowMs:LOG_WINDOW_MS,eventWindowBeganMonoMs:budget.beganMonoMs})); }
++ catch {if(node){const m=metrics(node);m.eventOutputFailed=increment(m.eventOutputFailed);}}
++}
++function enable(node,seen=new Set()){
++ if(!node||seen.has(node.ticketHash))return;seen.add(node.ticketHash);
++ node.enabled=true;
++ for(const edge of node.parents)if(edge&&!edge.ready)enable(pending.get(edge.ticketHash),seen);
++ for(const row of node.buffer)output(row,node);node.buffer.length=0;
++}
++function event(node,stage,extra={}){
++ const atMonoMs=ms();if(atMonoMs===null){const m=metrics(node);m.clockErrors=increment(m.clockErrors);return;}
++ metricEvent(node,stage,atMonoMs);
++ if(node.eventCount>=8){
++  const m=metrics(node);m.eventsTruncated=increment(m.eventsTruncated);
++  if(!node.truncationReported){
++   node.truncationReported=true;
++   const notice={schema:'qq-reply-admission-v1',stage:'trace-truncated',ticketHash:node.ticketHash,...node.context,atMonoMs,atLeastDroppedTicketEvents:1,missingEventsAreUnknown:true};
++   if(node.enabled)output(notice,node);else node.buffer.push(notice);
++  }
++  return;
++ }
++ node.eventCount++;
++ const row={schema:'qq-reply-admission-v1',stage,ticketHash:node.ticketHash,...node.context,atMonoMs,
++  ageMs:Math.max(0,Math.round((atMonoMs-node.reservedMonoMs)*1000)/1000),...extra};
++ if(node.enabled)output(row,node);else node.buffer.push(row);
++}
++export function beginQQReplyAdmissionLease(capsule,keyCount){return safe(()=>{
++ const context=CAPSULES.get(capsule),reservedMonoMs=ms();
++ if(!context||!Number.isInteger(keyCount)||keyCount<1||keyCount>2||reservedMonoMs===null||pending.size>=MAX_PENDING||sequence>=Number.MAX_SAFE_INTEGER)return null;
++ const ticketHash=qqLatencyTraceHash('span',['qq-reply-admission-ticket',context.sourceRunHash,String(++sequence)]);
++ if(!hash24(ticketHash))return null;
++ const token=Object.freeze({}),node={context,ticketHash,reservedMonoMs,keyCount,parents:[],keys:[],tailCount:0,readyTailCount:0,released:false,waitStarted:false,waitSettled:false,enabled:false,eventCount:0,buffer:[]};
++ LEASES.set(token,node);pending.set(ticketHash,node);return token;
++});}
++export function bindQQReplyAdmissionKey(token,key,predecessor,tail){safe(()=>{
++ const node=LEASES.get(token);if(!node||node.tailCount>=2||typeof key!=='string'||key.length>4096||!tail||typeof tail!=='object')return;
++ const keyHash=qqLatencyTraceHash('span',['qq-reply-admission-key',key]);if(!hash24(keyHash))return;
++ const parent=predecessor?TAILS.get(predecessor)?.get(key):undefined;
++ if(predecessor)node.parents.push(parent??null);
++ const meta={ticketHash:node.ticketHash,keyHash,ready:false,reservedMonoMs:node.reservedMonoMs,predecessor:parent??null,unobservedPredecessor:Boolean(predecessor&&!parent),...node.context};
++ let byKey=TAILS.get(tail);if(!byKey){byKey=new Map();TAILS.set(tail,byKey);}byKey.set(key,meta);node.keys.push(keyHash);node.tailCount++;
++});}
++export function bindQQReplyAdmissionTicket(token,ticket){safe(()=>{
++ const node=LEASES.get(token);if(!node||!ticket||typeof ticket!=='object')return;
++ TICKETS.set(ticket,node);
++ event(node,'reserve',{keyHashes:[...node.keys],keyCount:node.keyCount,predecessorCount:node.parents.length,...ancestors(node)});
++});}
++export function traceQQReplyAdmissionWait(token,phase){safe(()=>{
++ const node=LEASES.get(token);if(!node||!['start','ready','aborted'].includes(phase))return;
++ if(phase==='start'){
++  if(node.waitStarted)return;node.waitStarted=true;
++  if(node.parents.length)enable(node);
++  event(node,'wait',{predecessorCount:node.parents.length,...ancestors(node)});return;
++ }
++ if(node.waitSettled)return;node.waitSettled=true;
++ event(node,phase==='ready'?'ready':'aborted',{...ancestors(node)});
++});}
++export function traceQQReplyAdmissionRelease(token){safe(()=>{
++ const node=LEASES.get(token);if(!node||node.released)return;node.released=true;
++ const now=ms();if(now!==null&&now-node.reservedMonoMs>=SLOW_MS)enable(node);
++ event(node,'release',{released:true,readyTailCount:node.readyTailCount,keyCount:node.keyCount,...ancestors(node)});
++});}
++export function traceQQReplyAdmissionTailReady(token,tail,key){safe(()=>{
++ const node=LEASES.get(token),meta=TAILS.get(tail)?.get(key);if(!node||!meta||meta.ticketHash!==node.ticketHash||meta.ready)return;
++ meta.ready=true;meta.predecessor=null;meta.unobservedPredecessor=false;node.readyTailCount++;
++ if(node.readyTailCount>=node.tailCount){
++  event(node,'tail-ready',{released:node.released,readyTailCount:node.readyTailCount});
++  outputSummary(node);
++  // A released-but-not-ready middle node stays until all actual tails settle.
++  // Ready tails retain only immutable hashes; no ancestor objects or promises.
++  node.parents.length=0;node.buffer.length=0;pending.delete(node.ticketHash);
++ }
++});}
++
++
++// Actual operation objects are only WeakMap keys. Their properties, contents,
++// authority and delivery state are never read or mutated by diagnostics.
++export function bindQQReplyAdmissionOperation(ticket,operation){safe(()=>{
++ const node=TICKETS.get(ticket);
++ if(!node||!operation||typeof operation!=='object'||OPERATIONS.has(operation))return;
++ const metadata=Object.freeze({ticketHash:node.ticketHash,...node.context});
++ OPERATIONS.set(operation,metadata);
++ event(node,'operation-owned',{operationSourceBound:true});
++});}
++function activeOwnerFields(owner){
++ return owner?{ownerObserved:true,ownerTicketHash:owner.ticketHash,ownerSourceRunHash:owner.sourceRunHash,ownerScopeHash:owner.scopeHash,ownerGroupAlias:owner.groupAlias}
++  :{ownerObserved:false,ownerTicketHash:null,ownerSourceRunHash:null,ownerScopeHash:null,ownerGroupAlias:null};
++}
++export function beginQQReplyAdmissionActiveWait(ticket,activeOperation){return safe(()=>{
++ const node=TICKETS.get(ticket),beganMonoMs=ms();
++ if(!node||beganMonoMs===null||activeSequence>=Number.MAX_SAFE_INTEGER)return null;
++ const owner=activeOperation&&typeof activeOperation==='object'?OPERATIONS.get(activeOperation):undefined;
++ const activeWaitHash=qqLatencyTraceHash('span',['qq-reply-admission-active-wait',node.ticketHash,String(++activeSequence)]);
++ if(!hash24(activeWaitHash))return null;
++ const edge=Object.freeze({});
++ ACTIVE_EDGES.set(edge,{node,beganMonoMs,activeWaitHash,owner,ended:false});
++ metricActiveStart(node,owner,beganMonoMs);
++ enable(node);event(node,'active-wait-start',{activeWaitHash,...activeOwnerFields(owner)});
++ return edge;
++});}
++export function endQQReplyAdmissionActiveWait(edge,outcome='settled'){safe(()=>{
++ const state=ACTIVE_EDGES.get(edge);if(!state||state.ended)return;state.ended=true;
++ const endedMonoMs=ms();
++ if(endedMonoMs===null||endedMonoMs<state.beganMonoMs){metricActiveEnd(state,null,'unknown');return;}
++ const waitOutcome=['settled','ready','not-ready','error','aborted','unknown'].includes(outcome)?outcome:'unknown';
++ metricActiveEnd(state,endedMonoMs,waitOutcome);
++ event(state.node,'active-wait-end',{activeWaitHash:state.activeWaitHash,beganMonoMs:state.beganMonoMs,waitDurationMs:Math.round((endedMonoMs-state.beganMonoMs)*1000)/1000,waitOutcome,...activeOwnerFields(state.owner)});
++});}

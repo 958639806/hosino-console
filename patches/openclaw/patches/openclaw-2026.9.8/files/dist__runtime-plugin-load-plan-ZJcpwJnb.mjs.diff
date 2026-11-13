@@ -1,0 +1,57 @@
+diff -ruN a/dist/runtime-plugin-load-plan-ZJcpwJnb.mjs b/dist/runtime-plugin-load-plan-ZJcpwJnb.mjs
+--- a/dist/runtime-plugin-load-plan-ZJcpwJnb.mjs	2026-11-13 19:09:04.849060483 +0800
++++ b/dist/runtime-plugin-load-plan-ZJcpwJnb.mjs	2026-11-13 19:09:04.849060483 +0800
+@@ -59,7 +59,7 @@
+ 	const runtimeIds = normalizeUniqueStringEntries(selections.map((selection) => resolveSelectedAgentHarnessRuntime(selection, params.config)).filter((runtime) => !isDefaultAgentRuntimeId(runtime) && runtime !== "openclaw"));
+ 	if (!lookup.hasAgentHarnessOwners(runtimeIds)) return;
+ 	lookup.addAgentHarnessOwners(pluginIds, runtimeIds);
+-	addConfiguredSlotPluginIds(pluginIds, {
++	if (params.purpose !== "simple-completion") addConfiguredSlotPluginIds(pluginIds, {
+ 		activationSourceConfig: params.config ?? {},
+ 		activationSourcePlugins: pluginsConfig,
+ 		lookup
+@@ -69,15 +69,18 @@
+ }
+ /** Narrows cold manifest preparation to candidates needed by one selected runtime generation. */
+ function createAgentRuntimeMetadataPluginIdScope(params) {
++	if (params.purpose !== void 0 && params.purpose !== "simple-completion" && params.purpose !== "model-catalog") throw new Error("Unsupported runtime plugin purpose");
+ 	return {
+ 		key: hashJson({
+ 			kind: "agent-runtime",
++			...params.purpose ? { purpose: params.purpose } : {},
+ 			config: params.config ?? null,
+ 			workspaceDir: params.workspaceDir,
+ 			selections: params.selections,
+ 			shorthandModelIds: params.shorthandModelIds ?? []
+ 		}),
+ 		resolve: ({ index }) => resolveAgentRuntimeMetadataPluginIds({
++			...params.purpose ? { purpose: params.purpose } : {},
+ 			config: params.config,
+ 			selections: params.selections,
+ 			shorthandModelIds: params.shorthandModelIds,
+@@ -155,12 +158,14 @@
+ /** Folds selected harness, memory, and context-engine owners into one deterministic load plan. */
+ function resolveAgentRuntimePluginLoadPlan(params) {
+ 	let config = params.config;
++	if (params.purpose !== void 0 && params.purpose !== "simple-completion" && params.purpose !== "model-catalog") throw new Error("Unsupported runtime plugin purpose");
+ 	const includeAgentOwners = params.purpose !== "model-catalog";
+-	const memoryPluginIds = includeAgentOwners ? resolveSelectedMemoryPluginIds({
++	const includeAgentSlots = includeAgentOwners && params.purpose !== "simple-completion";
++	const memoryPluginIds = includeAgentSlots ? resolveSelectedMemoryPluginIds({
+ 		config: params.config,
+ 		metadataSnapshot: params.metadataSnapshot
+ 	}) : [];
+-	const contextEnginePluginId = includeAgentOwners ? resolveSelectedContextEnginePluginId(params.config) : void 0;
++	const contextEnginePluginId = includeAgentSlots ? resolveSelectedContextEnginePluginId(params.config) : void 0;
+ 	const contextEnginePluginIds = contextEnginePluginId ? [contextEnginePluginId] : [];
+ 	const basePluginIds = (params.basePluginIds ?? []).filter((pluginId) => !restrictiveAllowlistOmitsPlugin(params.config, pluginId));
+ 	const pluginIds = [
+@@ -220,7 +225,7 @@
+ 	} else config = activatedConfig;
+ 	return {
+ 		...config ? { config } : {},
+-		...includeAgentOwners && params.basePluginIds === void 0 && scopedPluginIds.length === 0 ? {} : { pluginIds: scopedPluginIds }
++		...includeAgentOwners && params.purpose !== "simple-completion" && params.basePluginIds === void 0 && scopedPluginIds.length === 0 ? {} : { pluginIds: scopedPluginIds }
+ 	};
+ }
+ //#endregion

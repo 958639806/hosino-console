@@ -1,0 +1,35 @@
+diff -ruN a/dist/agent-tools.before-tool-call-BbipAsOC.mjs b/dist/agent-tools.before-tool-call-BbipAsOC.mjs
+--- a/dist/agent-tools.before-tool-call-BbipAsOC.mjs	2026-11-13 19:09:04.013018281 +0800
++++ b/dist/agent-tools.before-tool-call-BbipAsOC.mjs	2026-11-13 19:09:04.013018281 +0800
+@@ -2748,6 +2748,16 @@
+ 	});
+ }
+ async function runBeforeToolCallHook(args) {
++	// QQ-REQUIRED-EXECUTION-GUARD v1: plugin load failure cannot silently allow QQ tools, including direct messages.
++	if (/:qqbot:(?:[^:]+:)?(?:group|direct|c2c):/i.test(String(args.ctx?.sessionKey || "")) || String(args.ctx?.requester?.channel ?? args.ctx?.channelId ?? "").toLowerCase() === "qqbot") {
++		const guard = globalThis[Symbol.for("openclaw.qqGroupOwnerGuard")];
++		if (guard?.active !== true || guard?.unifiedToolsReady !== true || guard?.readScopesReady !== true) return {
++			blocked: true,
++			reason: "QQ execution guard is unavailable; QQ tools are temporarily blocked.",
++			kind: "veto",
++			deniedReason: "qq-required-execution-guard"
++		};
++	}
+ 	const toolName = normalizeToolPolicyName(args.toolName || "tool");
+ 	const params = args.params;
+ 	let loopWarning;
+@@ -2850,10 +2860,14 @@
+ 			...args.ctx?.sessionKey && { sessionKey: args.ctx.sessionKey },
+ 			...args.ctx?.sessionId && { sessionId: args.ctx.sessionId },
+ 			...args.ctx?.runId && { runId: args.ctx.runId },
++			// QQ-TOOL-HOOK-TRIGGER-PATCH v1: preserve the host's trusted run kind for execution guards.
++			...args.ctx?.trigger ? { trigger: args.ctx.trigger } : {},
+ 			...args.signal ? { abortSignal: args.signal } : {},
+ 			...args.ctx?.trace && { trace: freezeDiagnosticTraceContext(args.ctx.trace) },
+ 			...args.toolCallId && { toolCallId: args.toolCallId },
+ 			...args.ctx?.channelId && { channelId: args.ctx.channelId },
++			...args.ctx?.cwd ? { cwd: args.ctx.cwd } : {},
++			...args.ctx?.workspaceDir ? { workspaceDir: args.ctx.workspaceDir } : {},
+ 			...args.ctx?.requester ? { requester: args.ctx.requester } : {}
+ 		});
+ 		const toolContext = buildToolContext(toolIdentity);

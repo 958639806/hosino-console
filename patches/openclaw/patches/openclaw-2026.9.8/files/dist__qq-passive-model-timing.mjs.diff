@@ -1,0 +1,126 @@
+diff -ruN a/dist/qq-passive-model-timing.mjs b/dist/qq-passive-model-timing.mjs
+--- a/dist/qq-passive-model-timing.mjs	1970-01-01 07:30:00.000000000 +0730
++++ b/dist/qq-passive-model-timing.mjs	2026-11-13 19:09:04.837059877 +0800
+@@ -0,0 +1,122 @@
++// Passive natural embedded-model timing. No body, arguments, results or authority.
++import { qqHostLatencyTraceFromContext } from './qq-host-latency-trace.mjs';
++import { qqLatencyTraceHash, qqLatencyTraceNow } from './qq-latency-trace.mjs';
++
++const RUNS = new WeakMap();
++const CALL_LIMIT = 64;
++const EVENT_LIMIT = 320;
++const HASH = /^[a-f0-9]{24}$/;
++const KINDS = new Set('start text_start text_delta text_end thinking_start thinking_delta thinking_end toolcall_start toolcall_delta toolcall_end done error'.split(' '));
++const APIS = new Set('openai-completions openai-responses openai-codex-responses anthropic-messages google-generative-ai google-vertex bedrock-converse-stream'.split(' '));
++const PROVIDERS = new Set('openai openai-codex anthropic google google-vertex amazon-bedrock deepseek xai grok mimo xiaomi moonshot minimax qwen'.split(' '));
++const TRANSPORTS = new Set(['http', 'sse', 'websocket', 'auto', 'stream']);
++const REASONS = new Set(['stop', 'length', 'toolUse', 'error', 'aborted']);
++const LOG = Object.freeze({ info(line) { console.info(line); } });
++const validId = value => typeof value === 'string' && value.length > 0 && value.length <= 4096 && !/[\x00-\x1f]/.test(value);
++const time = value => typeof value === 'number' && Number.isFinite(value) && value >= 0 && value <= Number.MAX_SAFE_INTEGER / 1000 ? Math.round(value * 1000) / 1000 : null;
++const inc = (object, key) => { object[key] = Math.min(65535, object[key] + 1); };
++
++export function createQqPassiveModelTiming(ctx, eventBase) {
++  try {
++    // eventBase was already materialized by the original lifecycle. Never reread
++    // route/run getters on ctx or evaluate an accessor for the new capsule.
++    const descriptor = Object.getOwnPropertyDescriptor(ctx, 'qqLatencyTraceContext');
++    const context = descriptor && 'value' in descriptor ? descriptor.value : null;
++    const { runId, callId, provider, model, api: modelApi, transport: modelTransport } = eventBase;
++    // This factory checks the original private minted WeakSet, not a copied shape.
++    // A capsule from another run is never accepted as this call's source proof.
++    if (!qqHostLatencyTraceFromContext(context, 'embedded', LOG) ||
++        !validId(runId) || !validId(callId) ||
++        context.runHash !== qqLatencyTraceHash('run', [runId]) ||
++        !['new', 'old'].includes(context.groupAlias) ||
++        ![context.runHash, context.scopeHash, context.sourceHash].every(v => typeof v === 'string' && HASH.test(v))) return null;
++    const modelCallHash = qqLatencyTraceHash('span', ['embedded-model-call', context.sourceHash, callId]);
++    if (!modelCallHash) return null;
++    let run = RUNS.get(context);
++    if (!run) {
++      run = { calls: 0, droppedCalls: 0, emitted: 0, droppedEvents: 0, failedEvents: 0 };
++      RUNS.set(context, run);
++    }
++    if (run.calls >= CALL_LIMIT) { inc(run, 'droppedCalls'); return null; }
++    const callOrdinal = ++run.calls;
++    const providerFamily = PROVIDERS.has(provider) ? provider : 'other';
++    const api = APIS.has(modelApi) ? modelApi : 'other';
++    const transport = TRANSPORTS.has(modelTransport) ? modelTransport : 'other';
++    const modelRouteHash = validId(provider) && validId(model) ? qqLatencyTraceHash('span', ['embedded-model-route', provider, model]) : null;
++    const at = { dispatch: null, firstEvent: null, firstText: null, terminalEvent: null, settlement: null };
++    const sent = { firstEvent: false, firstText: false, terminalEvent: false };
++    let firstEventKind = 'unknown', terminalEventKind = 'unknown', chunkCount = 0, clockErrors = 0, settled = false;
++    let dispatchSeen = false, textSeen = false, terminalSeen = false;
++    const stamp = () => {
++      const value = time(qqLatencyTraceNow());
++      if (value === null || at.dispatch !== null && value < at.dispatch) { clockErrors = Math.min(65535, clockErrors + 1); return null; }
++      return value;
++    };
++    const emit = (stage, extra = {}) => {
++      try {
++        if (run.emitted >= EVENT_LIMIT) { inc(run, 'droppedEvents'); return; }
++        run.emitted++;
++        const relative = value => value !== null && at.dispatch !== null && value >= at.dispatch ? time(value - at.dispatch) : null;
++        LOG.info('[qq-passive-model-timing] ' + JSON.stringify({
++          schema: 'qq-passive-model-timing-v1', stage,
++          bindingKind: 'minted-qq-context-matching-run-and-actual-model-call',
++          observationPath: 'embedded-provider-consumer',
++          dispatchBoundary: 'host-streamFn-invoke-not-network-write',
++          settlementBoundary: 'existing-model-lifecycle-ended-not-provider-stop-proof',
++          clockKind: 'qq-shared-performance-now-monotonic-ms',
++          firstTextBoundary: 'first-consumed-nonempty-text_delta',
++          groupAlias: context.groupAlias, sourceHash: context.sourceHash,
++          scopeHash: context.scopeHash, runHash: context.runHash,
++          modelCallHash, modelRouteHash, callOrdinal, providerFamily, api, transport,
++          dispatchMonoMs: at.dispatch, firstEventMonoMs: at.firstEvent,
++          firstTextMonoMs: at.firstText, terminalEventMonoMs: at.terminalEvent,
++          settlementMonoMs: at.settlement,
++          dispatchToFirstEventMs: relative(at.firstEvent),
++          dispatchToFirstTextMs: relative(at.firstText),
++          dispatchToTerminalEventMs: relative(at.terminalEvent),
++          dispatchToSettlementMs: relative(at.settlement),
++          firstEventKind, terminalEventKind, consumedChunkCount: chunkCount,
++          nonemptyTextDeltaObserved: textSeen, terminalProtocolEventObserved: terminalSeen,
++          clockErrorCount: clockErrors, perRunDroppedCallCount: run.droppedCalls,
++          perRunDroppedEventCount: run.droppedEvents, perRunFailedEventCount: run.failedEvents,
++          callLimit: CALL_LIMIT, eventLimit: EVENT_LIMIT,
++          missingFieldsAreUnknown: true, ...extra
++        }));
++      } catch { inc(run, 'failedEvents'); }
++    };
++    const flush = () => {
++      if (chunkCount > 0 && !sent.firstEvent) { sent.firstEvent = true; emit('first_event'); }
++      if (textSeen && !sent.firstText) { sent.firstText = true; emit('first_text'); }
++      if (terminalSeen && !sent.terminalEvent) { sent.terminalEvent = true; emit('terminal_event'); }
++    };
++    return Object.freeze({
++      dispatch() {
++        try { if (settled || dispatchSeen) return; dispatchSeen = true; at.dispatch = stamp(); emit('dispatch'); } catch {}
++      },
++      chunk() {
++        try { if (settled) return; chunkCount = Math.min(65535, chunkCount + 1); if (chunkCount === 1) at.firstEvent = stamp(); } catch {}
++      },
++      protocol(type) {
++        try {
++          if (settled) return;
++          if (chunkCount === 1) firstEventKind = KINDS.has(type) ? type : 'other';
++          if ((type === 'done' || type === 'error') && !terminalSeen) { terminalSeen = true; at.terminalEvent = stamp(); terminalEventKind = type; }
++        } catch {}
++      },
++      textDelta(byteLength) {
++        try { if (!settled && !textSeen && typeof byteLength === 'number' && Number.isFinite(byteLength) && byteLength > 0) { textSeen = true; at.firstText = stamp(); } } catch {}
++      },
++      flushChunk() { try { if (!settled) flush(); } catch {} },
++      finish(failed, reason) {
++        try {
++          if (settled) return;
++          at.settlement = stamp(); flush(); settled = true;
++          emit('model_settlement', { settlementOutcome: failed === true ? 'error' : 'completed',
++            terminalReason: REASONS.has(reason) ? reason : 'unknown',
++            terminalEventObserved: terminalSeen,
++            timingComplete: at.dispatch !== null && at.settlement !== null && clockErrors === 0 && run.droppedEvents === 0 && run.failedEvents === 0 });
++        } catch { settled = true; }
++      }
++    });
++  } catch { return null; }
++}

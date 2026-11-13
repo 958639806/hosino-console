@@ -1,0 +1,50 @@
+diff -ruN a/dist/images-B_8zJlPf.mjs b/dist/images-B_8zJlPf.mjs
+--- a/dist/images-B_8zJlPf.mjs	2026-11-13 19:09:04.097022520 +0800
++++ b/dist/images-B_8zJlPf.mjs	2026-11-13 19:09:04.101022721 +0800
+@@ -124,6 +124,22 @@
+ function rawAliasDedupeKey(alias) {
+ 	return path.isAbsolute(alias) || /^[A-Za-z]:[\\/]/.test(alias) || /^[a-z][a-z0-9+.-]*:/i.test(alias) ? normalizeRefForDedupe(alias) : void 0;
+ }
++/* IMAGE-REPLAY-CACHE-PATCH v1 */
++async function __ocLoadPromptImageForResizeCache(mediaUrl, options) {
++ if (process.env.OPENCLAW_IMAGE_RESIZE_CACHE === "0") return loadWebMedia(mediaUrl, options);
++ const normalized = typeof options === "number" ? { maxBytes: options } : { ...options };
++ try {
++  // Preserve original bytes so the final model sanitizer can reuse A1's exact output.
++  return await loadWebMedia(mediaUrl, { ...normalized, optimizeImages: false });
++ } catch (err) {
++  // Keep the old optimized loader for images exceeding its raw read/byte/dimension cap.
++  // Access, SSRF, cancellation and other failures must retain their original behavior.
++  const msg = String(err?.message ?? "");
++  if (err?.cause?.code !== "too-large" && !/^(?:Media|Image|GIF) (?:exceeds|dimensions? exceed)/i.test(msg)) throw err;
++  return await loadWebMedia(mediaUrl, options);
++ }
++}
++/* /IMAGE-REPLAY-CACHE-PATCH v1 */
+ async function loadMediaFromRef(ref, workspaceDir, options) {
+ 	options?.signal?.throwIfAborted();
+ 	const redactedRef = redactSensitiveText(ref.raw || ref.resolved);
+@@ -145,11 +161,11 @@
+ 			return null;
+ 		}
+ 		else if (!path.isAbsolute(targetPath)) targetPath = path.resolve(workspaceDir, targetPath);
+-		const media = options?.sandbox ? await loadWebMedia(targetPath, {
++		const media = options?.sandbox ? await __ocLoadPromptImageForResizeCache(targetPath, {
+ 			maxBytes: options.maxBytes,
+ 			sandboxValidated: true,
+ 			readFile: createSandboxBridgeReadFile({ sandbox: options.sandbox })
+-		}) : await loadWebMedia(targetPath, options?.workspaceOnly || options?.localRoots ? {
++		}) : await __ocLoadPromptImageForResizeCache(targetPath, options?.workspaceOnly || options?.localRoots ? {
+ 			maxBytes: options.maxBytes,
+ 			localRoots: options.localRoots ?? [workspaceDir]
+ 		} : options?.maxBytes);
+@@ -213,7 +229,8 @@
+ 	const attachmentRefs = slots.flatMap((slot) => slot.kind === "offloaded" && slot.factIndex !== void 0 ? refsByFact.get(slot.factIndex) ?? [] : []);
+ 	const attachmentKeys = new Set(attachmentRefs.map((ref) => refDedupeKey(ref, ref.workspaceDir ?? params.workspaceDir)));
+ 	const attachmentRawKeys = new Set(attachmentRefs.flatMap((ref) => ref.aliases.flatMap((alias) => rawAliasDedupeKey(alias) ?? [])));
+-	const promptRefs = detectImageReferences(params.prompt).filter((ref) => !attachmentRawKeys.has(rawAliasDedupeKey(ref.raw) ?? "") && !attachmentKeys.has(refDedupeKey(ref, params.workspaceDir)));
++	// QQ-DECLARED-PROMPT-IMAGES v1: host may disable body-authored local paths while retaining media facts.
++	const promptRefs = (params.allowPromptLocalImageRefs === false ? [] : detectImageReferences(params.prompt)).filter((ref) => !attachmentRawKeys.has(rawAliasDedupeKey(ref.raw) ?? "") && !attachmentKeys.has(refDedupeKey(ref, params.workspaceDir)));
+ 	const detectedRefs = [...availableRefs.flatMap(({ detect, hydrate, raw, type, resolved }) => detect !== false && (hydrate || !resolved.startsWith("http://") && !resolved.startsWith("https://")) ? [{
+ 		raw,
+ 		type,

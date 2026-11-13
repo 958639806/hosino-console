@@ -1,0 +1,73 @@
+diff -ruN a/dist/session-boundary-prompt-cache-key-Daa6qS1e.mjs b/dist/session-boundary-prompt-cache-key-Daa6qS1e.mjs
+--- a/dist/session-boundary-prompt-cache-key-Daa6qS1e.mjs	2026-11-13 19:09:04.869061493 +0800
++++ b/dist/session-boundary-prompt-cache-key-Daa6qS1e.mjs	2026-11-13 19:09:04.869061493 +0800
+@@ -1,3 +1,4 @@
++import { createQqPassiveModelTiming } from './qq-passive-model-timing.mjs';
+ import { t as hasNonEmptyString } from "./string-coerce-6kR-86XC.mjs";
+ import { p as clampPositiveTimerTimeoutMs } from "./number-coercion-Dq1l5muL.mjs";
+ import { n as captureAsyncWorkTracker } from "./async-work-scope-ClifbwQr.mjs";
+@@ -309,6 +310,7 @@
+ 	if (observer.state.terminalEventEmitted) return;
+ 	observer.state.terminalEventEmitted = true;
+ 	const terminalAtMs = Date.now();
++	observer.state.qqPassiveModelTiming?.finish(failure !== void 0, observer.state.terminalReason);
+ 	const durationMs = terminalAtMs - startedAt;
+ 	const sizeTimingFields = observer.sizeTimingFields();
+ 	const fields = failure ? modelCallErrorFields(failure.error) : void 0;
+@@ -395,6 +397,7 @@
+ 		...observer.promptStats ? { promptStats: observer.promptStats } : {},
+ 		trace
+ 	};
++	observer.state.qqPassiveModelTiming = createQqPassiveModelTiming(params.ctx, eventBase);
+ 	emitCoreModelRequestStartedDiagnosticEvent(eventBase, params.ctx.ownerGeneration, params.requestTimeoutMs, modelContentPrivateData(observer.modelContent));
+ 	if (params.ctx.suppressPluginHooks !== true) dispatchModelCallStartedHook(eventBase);
+ 	params.ctx.onStarted?.();
+@@ -462,11 +465,15 @@
+ function jsonCharLength(value, promptStringLengths) {
+ 	return jsonLength(value, false, promptStringLengths);
+ }
+-function responseStreamChunkByteLength(chunk) {
++function responseStreamChunkByteLength(chunk, qqPassiveModelTiming) {
+ 	try {
+ 		if (!isRecord(chunk)) return utf8JsonByteLength(chunk);
+ 		const type = chunk.type;
+-		if ((type === "text_delta" || type === "thinking_delta" || type === "toolcall_delta") && typeof chunk.delta === "string") return Buffer.byteLength(chunk.delta, "utf8");
++		if ((type === "text_delta" || type === "thinking_delta" || type === "toolcall_delta") && typeof chunk.delta === "string") {
++			const bytes = Buffer.byteLength(chunk.delta, "utf8");
++			if (type === "text_delta") qqPassiveModelTiming?.textDelta(bytes);
++			return bytes;
++		}
+ 		if (!("partial" in chunk)) return utf8JsonByteLength(chunk);
+ 		const { partial: _partial, ...snapshotlessChunk } = chunk;
+ 		return utf8JsonByteLength(snapshotlessChunk);
+@@ -554,6 +561,7 @@
+ 	} catch {
+ 		return;
+ 	}
++	state.qqPassiveModelTiming?.protocol(type);
+ 	if (message !== void 0) {
+ 		observeModelCallTerminalMessage(state, message);
+ 		if (state.contentCapture?.outputMessages) state.outputMessages = [cloneDiagnosticContentValue(message)];
+@@ -592,11 +600,13 @@
+ 	});
+ }
+ function observeResponseChunk(state, startedAt, chunk) {
++	state.qqPassiveModelTiming?.chunk();
+ 	if (!state.terminalEventEmitted) state.lastProviderActivityAtMs = Date.now();
+ 	state.timeToFirstByteMs ??= Math.max(0, Date.now() - startedAt);
+ 	observeOutputMessageContent(state, chunk);
+-	const bytes = responseStreamChunkByteLength(chunk);
++	const bytes = responseStreamChunkByteLength(chunk, state.qqPassiveModelTiming);
+ 	if (bytes !== void 0) state.responseStreamBytes += bytes;
++	state.qqPassiveModelTiming?.flushChunk();
+ }
+ function createModelObserver(params) {
+ 	const modelContent = streamContextModelContentFields(params.contentCapture, params.streamContext);
+@@ -795,6 +805,7 @@
+ 			})
+ 		});
+ 		try {
++			lifecycle.observer.state.qqPassiveModelTiming?.dispatch();
+ 			const result = streamFn(model, streamContext, lifecycle.propagatedOptions);
+ 			if (isPromiseLike(result)) return result.then((resolved) => observeModelCallResult(resolved, lifecycle), (err) => {
+ 				lifecycle.emitError(err);

@@ -1,0 +1,27 @@
+diff -ruN a/dist/simple-completion-runtime-SCvr0cFK.mjs b/dist/simple-completion-runtime-SCvr0cFK.mjs
+--- a/dist/simple-completion-runtime-SCvr0cFK.mjs	2026-11-13 19:09:04.893062703 +0800
++++ b/dist/simple-completion-runtime-SCvr0cFK.mjs	2026-11-13 19:09:04.897062906 +0800
+@@ -579,6 +579,7 @@
+ 		agentDir,
+ 		workspaceDir: requestedWorkspaceDir,
+ 		loadRuntimePlugins: true,
++		runtimePluginPurpose: "simple-completion",
+ 		runtimePluginSelections: runtimePluginSelections.map((selection) => ({
+ 			...selection,
+ 			agentId
+@@ -612,6 +613,7 @@
+ 	const tentativeSelection = tentativeRequest.selection;
+ 	const workspaceDir = resolveAgentWorkspaceDir(params.cfg, agentId);
+ 	const pluginIdScope = createAgentRuntimeMetadataPluginIdScope({
++		purpose: "simple-completion",
+ 		config: params.cfg,
+ 		workspaceDir,
+ 		selections: [{
+@@ -638,6 +640,7 @@
+ 	let selection = resolveSelection();
+ 	if (!selection) return { error: `No model configured for agent ${agentId}.` };
+ 	const canonicalPluginIdScope = createAgentRuntimeMetadataPluginIdScope({
++		purpose: "simple-completion",
+ 		config: params.cfg,
+ 		workspaceDir,
+ 		selections: [{

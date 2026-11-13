@@ -1,0 +1,27 @@
+diff -ruN a/dist/dispatch-DiXuntoC.mjs b/dist/dispatch-DiXuntoC.mjs
+--- a/dist/dispatch-DiXuntoC.mjs	2026-11-13 19:09:04.053020298 +0800
++++ b/dist/dispatch-DiXuntoC.mjs	2026-11-13 19:09:04.053020298 +0800
+@@ -1,3 +1,4 @@
++import { createQqHostLatencyTrace, qqHostLatencyTraceFromContext, withQQClaudeCoreRouteTrace, qqClaudeCoreRoutePoint } from "./qq-host-latency-trace.mjs";
+ import { l as normalizeOptionalString } from "./string-coerce-6kR-86XC.mjs";
+ import { i as resolveGlobalSingleton } from "./global-singleton-BfHBYj6Y.mjs";
+ import { t as escapeRegExp } from "./regexp-BZyMFTlj.mjs";
+@@ -535,6 +536,8 @@
+ }
+ /** Dispatches one finalized inbound message through reply resolution and queued delivery. */
+ async function dispatchInboundMessage(params) {
++	qqClaudeCoreRoutePoint(params.ctx, params.replyOptions, "core_dispatch_enter");
++	createQqHostLatencyTrace(params.ctx, params.replyOptions, "dispatch", log, params.replyOptions?.runId)?.point("core_dispatch_enter");
+ 	const replyOptions = applyRuntimeToolsAllow(params.replyOptions, params.toolsAllow);
+ 	const replyPayloadRunState = params.replyPayloadRunState ?? { runId: replyOptions?.runId };
+ 	const replyOptionsWithRunState = bindReplyPayloadRunState(replyOptions, replyPayloadRunState);
+@@ -581,6 +584,9 @@
+ 	} : result;
+ }
+ async function dispatchInboundMessageWithBufferedDispatcherCore(params, ownership) {
++	return await withQQClaudeCoreRouteTrace(params.ctx, params.replyOptions, () => dispatchInboundMessageWithBufferedDispatcherCoreObserved(params, ownership));
++}
++async function dispatchInboundMessageWithBufferedDispatcherCoreObserved(params, ownership) {
+ 	const finalized = finalizeInboundContext(params.ctx);
+ 	const foregroundReplyLease = reserveForegroundReplyLease(finalized, params.cfg);
+ 	const replyOperationRunState = resolveReplyOperationRunState(params.replyOptions) ?? {};

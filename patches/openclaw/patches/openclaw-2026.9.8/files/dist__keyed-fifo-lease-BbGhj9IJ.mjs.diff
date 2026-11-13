@@ -1,0 +1,64 @@
+diff -ruN a/dist/keyed-fifo-lease-BbGhj9IJ.mjs b/dist/keyed-fifo-lease-BbGhj9IJ.mjs
+--- a/dist/keyed-fifo-lease-BbGhj9IJ.mjs	2026-11-13 19:09:04.109023125 +0800
++++ b/dist/keyed-fifo-lease-BbGhj9IJ.mjs	2026-11-13 19:09:04.113023327 +0800
+@@ -1,3 +1,4 @@
++import { beginQQReplyAdmissionLease, bindQQReplyAdmissionKey, bindQQReplyAdmissionTicket, traceQQReplyAdmissionWait, traceQQReplyAdmissionRelease, traceQQReplyAdmissionTailReady } from './qq-reply-admission-trace.mjs';
+ import { t as createDeferredCore } from "./deferred-D0La5CRk.mjs";
+ import { i as resolveGlobalSingleton } from "./global-singleton-BfHBYj6Y.mjs";
+ //#region src/shared/keyed-fifo-lease.ts
+@@ -10,9 +11,10 @@
+ 		for (const release of current.releases) release();
+ 		current.tails.clear();
+ 	}, "close-only");
+-	return { reserve(inputKeys) {
++	return { reserve(inputKeys, traceCapsule) {
+ 		const keys = [...new Set(inputKeys)].toSorted();
+ 		if (keys.length === 0) return;
++		const qqLeaseTrace = beginQQReplyAdmissionLease(traceCapsule, keys.length);
+ 		const { promise: completed, resolve: complete } = createDeferredCore();
+ 		const predecessors = [];
+ 		const owned = keys.map((key) => {
+@@ -20,6 +22,7 @@
+ 			if (predecessor) predecessors.push(predecessor);
+ 			const tail = predecessor?.then(() => completed) ?? completed;
+ 			state.tails.set(key, tail);
++			bindQQReplyAdmissionKey(qqLeaseTrace, key, predecessor, tail);
+ 			return {
+ 				key,
+ 				tail
+@@ -28,16 +31,21 @@
+ 		const release = () => {
+ 			if (!state.releases.delete(release)) return;
+ 			complete();
+-			for (const { key, tail } of owned) tail.then(() => state.tails.get(key) === tail && state.tails.delete(key));
++			traceQQReplyAdmissionRelease(qqLeaseTrace);
++			for (const { key, tail } of owned) tail.then(() => {
++				traceQQReplyAdmissionTailReady(qqLeaseTrace, tail, key);
++				return state.tails.get(key) === tail && state.tails.delete(key);
++			});
+ 		};
+ 		state.releases.add(release);
+-		return {
++		const ticket = {
+ 			async wait(signal) {
+-				if (signal?.aborted) return false;
+-				const ready = Promise.all(predecessors).then(() => true);
++				if (signal?.aborted) { traceQQReplyAdmissionWait(qqLeaseTrace, "aborted"); return false; }
++				traceQQReplyAdmissionWait(qqLeaseTrace, "start");
++				const ready = Promise.all(predecessors).then(() => { traceQQReplyAdmissionWait(qqLeaseTrace, "ready"); return true; });
+ 				if (!signal) return await ready;
+ 				return await new Promise((resolve) => {
+-					const abort = () => resolve(false);
++					const abort = () => { traceQQReplyAdmissionWait(qqLeaseTrace, "aborted"); resolve(false); };
+ 					signal.addEventListener("abort", abort, { once: true });
+ 					if (signal.aborted) abort();
+ 					ready.then((value) => {
+@@ -48,6 +56,8 @@
+ 			},
+ 			release
+ 		};
++		bindQQReplyAdmissionTicket(qqLeaseTrace, ticket);
++		return ticket;
+ 	} };
+ }
+ //#endregion

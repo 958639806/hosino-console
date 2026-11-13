@@ -1,0 +1,51 @@
+diff -ruN a/dist/mcp-http-CM8OLJ7U.mjs b/dist/mcp-http-CM8OLJ7U.mjs
+--- a/dist/mcp-http-CM8OLJ7U.mjs	2026-11-13 19:09:04.125023933 +0800
++++ b/dist/mcp-http-CM8OLJ7U.mjs	2026-11-13 19:09:04.125023933 +0800
+@@ -207,6 +207,29 @@
+ 	const clientCaps = [...new Set((value ?? "").split(",").map((cap) => cap.trim()))].filter(Boolean);
+ 	return clientCaps.length > 0 ? clientCaps : void 0;
+ }
++// QQ-CLAUDE-MCP-REQUESTER v1. Only an active, host-minted per-turn grant carries QQ authority.
++// Bare bearer tokens, attach grants, headers and JSON-RPC arguments cannot supply a requester.
++function buildQQMcpHookFacts(requestContext, boundClientGrant) {
++	try {
++		const source = boundClientGrant?.context;
++		const valid = value => typeof value === "string" && value.length > 0 && value.length <= 512 && !/[\u0000-\u001f\u007f]/.test(value);
++		if (!source || boundClientGrant.isCurrent() !== true || source.messageProvider !== "qqbot" || requestContext.messageProvider !== source.messageProvider) return {};
++		for (const key of ["sessionKey", "sessionId", "runId", "accountId", "currentMessageId", "trigger"]) if (!valid(source[key]) || source[key] !== requestContext[key]) return {};
++		const senderId = source.channelContext?.sender?.id;
++		if (!valid(senderId) || senderId !== requestContext.channelContext?.sender?.id || typeof source.senderIsOwner !== "boolean" || source.senderIsOwner !== requestContext.senderIsOwner) return {};
++		const requester = Object.freeze({
++			trigger: source.trigger,
++			channel: "qqbot",
++			accountId: source.accountId,
++			senderId,
++			senderIsOwner: source.senderIsOwner,
++			sourceMessageId: source.currentMessageId,
++			...Array.isArray(source.readAssets) ? { readAssets: Object.freeze(source.readAssets.filter(file => typeof file === "string").slice(0, 128)) } : {}
++		});
++		return Object.freeze({ trigger: source.trigger, requester });
++	} catch { return {}; }
++}
++
+ function resolveMcpRequestContext(req, cfg, auth) {
+ 	if (auth.boundClientGrant) return structuredClone(auth.boundClientGrant.context);
+ 	if (auth.boundSessionKey) return {
+@@ -368,6 +391,8 @@
+ 				}
+ 				const cfg = getRuntimeConfig();
+ 				const requestContext = resolveMcpRequestContext(req, cfg, auth);
++				const qqHookFacts = buildQQMcpHookFacts(requestContext, boundClientGrant);
++				if (qqHookFacts.requester) globalThis[Symbol.for("openclaw.qqGroupOwnerGuard")]?.registerReadContext?.({ sessionKey: requestContext.sessionKey, runId: requestContext.runId, requester: qqHookFacts.requester });
+ 				const authorizeToolCall = () => !work.isClosing && getActiveMcpLoopbackRuntime()?.ownerToken === ownerToken && (boundClientGrant?.isCurrent() ?? true);
+ 				const harnessEntry = isAgentHarnessSessionKey(requestContext.sessionKey) ? resolveSessionEntryAccessTarget({
+ 					cfg,
+@@ -439,6 +464,8 @@
+ 							hookContext: {
+ 								agentId: scopedTools.agentId,
+ 								config: cfg,
++								...qqHookFacts,
++								...requestContext.cwd ?? scopedTools.workspaceDir ? { cwd: requestContext.cwd ?? scopedTools.workspaceDir } : {},
+ 								...scopedTools.workspaceDir ? { workspaceDir: scopedTools.workspaceDir } : {},
+ 								sessionKey: requestContext.sessionKey,
+ 								sessionId: requestContext.sessionId,

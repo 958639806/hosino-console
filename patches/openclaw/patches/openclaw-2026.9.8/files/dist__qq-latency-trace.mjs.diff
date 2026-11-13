@@ -1,0 +1,43 @@
+diff -ruN a/dist/qq-latency-trace.mjs b/dist/qq-latency-trace.mjs
+--- a/dist/qq-latency-trace.mjs	1970-01-01 07:30:00.000000000 +0730
++++ b/dist/qq-latency-trace.mjs	2026-11-13 19:09:04.833059675 +0800
+@@ -0,0 +1,39 @@
++// QQ-LATENCY-TRACE shared hash/clock contract v1. Diagnostics only; no I/O or permissions.
++import { createHmac, randomBytes } from 'node:crypto';
++import { performance } from 'node:perf_hooks';
++
++const STATE_KEY = Symbol.for('openclaw.qqLatencyTraceState.v1');
++const DOMAINS = new Set(['source', 'run', 'scope', 'native-turn', 'span']);
++
++function traceState() {
++  try {
++    const previous = globalThis[STATE_KEY];
++    if (previous !== undefined) return previous?.schema === 1 && typeof previous.hash === 'function' && typeof previous.now === 'function' ? previous : undefined;
++    const secret = randomBytes(32);
++    const state = Object.freeze({
++      schema: 1,
++      hash(domain, parts) {
++        return createHmac('sha256', secret).update('openclaw:qq-latency-trace:v1\0').update(domain).update('\0').update(JSON.stringify(parts)).digest('hex').slice(0, 24);
++      },
++      now() { return performance.now(); }
++    });
++    Object.defineProperty(globalThis, STATE_KEY, { value: state, enumerable: false, writable: false, configurable: false });
++    return state;
++  } catch { return; }
++}
++
++/** Raw inputs exist only in this call; no raw identifier map, output or persistence. */
++export function qqLatencyTraceHash(domain, partsArray) {
++  try {
++    if (!DOMAINS.has(domain) || !Array.isArray(partsArray) || !partsArray.length || partsArray.length > 8 || partsArray.some(part => typeof part !== 'string' || !part.length || part.length > 4096 || /[\x00-\x1f]/.test(part))) return null;
++    const value = traceState()?.hash(domain, partsArray);
++    return typeof value === 'string' && /^[a-f0-9]{24}$/.test(value) ? value : null;
++  } catch { return null; }
++}
++
++export function qqLatencyTraceNow() {
++  try {
++    const value = traceState()?.now();
++    return typeof value === 'number' && Number.isFinite(value) && value >= 0 ? value : null;
++  } catch { return null; }
++}

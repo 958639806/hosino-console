@@ -1,0 +1,11 @@
+diff -ruN a/dist/session-entry-slot-keys-CUiZdkL7.mjs b/dist/session-entry-slot-keys-CUiZdkL7.mjs
+--- a/dist/session-entry-slot-keys-CUiZdkL7.mjs	2026-11-13 19:09:04.881062099 +0800
++++ b/dist/session-entry-slot-keys-CUiZdkL7.mjs	2026-11-13 19:09:04.881062099 +0800
+@@ -141,6 +141,7 @@
+ 	"restartRecoveryDeliveryToolCallId",
+ 	"restartRecoveryRequesterAccountId",
+ 	"restartRecoveryRequesterSenderId",
++	"restartRecoveryQQRequesterAuthority",
+ 	"restartRecoverySameChannelThreadRequired",
+ 	"restartRecoverySourceIngress",
+ 	"restartRecoverySourceReplyDeliveryMode",

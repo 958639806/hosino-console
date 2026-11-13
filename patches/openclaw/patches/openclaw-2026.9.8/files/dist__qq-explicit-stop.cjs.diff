@@ -1,0 +1,102 @@
+diff -ruN a/dist/qq-explicit-stop.cjs b/dist/qq-explicit-stop.cjs
+--- a/dist/qq-explicit-stop.cjs	1970-01-01 07:30:00.000000000 +0730
++++ b/dist/qq-explicit-stop.cjs	2026-11-13 19:09:04.829059473 +0800
+@@ -0,0 +1,98 @@
++// Explicit same-source cancellation only. No queue clearing, model call or history edit.
++'use strict';
++const { createHash, randomBytes, createHmac } = require('node:crypto');
++const SYMBOL = Symbol.for('openclaw.qqExplicitStop.v1');
++const SCHEMA = 'qq-explicit-stop-v1';
++function createState() {
++  const capabilities = new WeakMap(), active = new Map(), secret = randomBytes(32);
++  const groups = new Map([['agent:main:qqbot:group:__HS_GROUP_OLD_OPENID__','old'],['agent:main:qqbot:group:__HS_GROUP_NEW_OPENID__','new']]);
++  let sequence = 0;
++  const safe = run => { try { return run(); } catch { return undefined; } };
++  const text = value => typeof value === 'string' && value.length > 0 && value.length <= 4096 && !/[\u0000-\u001f]/u.test(value) ? value : null;
++  const account = value => text(value)?.trim().toLowerCase() || 'default';
++  const digest = (domain, value) => createHmac('sha256', secret).update(domain + '\0' + value).digest('hex').slice(0,24);
++  const messageHash = value => createHash('sha256').update(value).digest('hex').slice(0,16);
++  const keyFor = b => JSON.stringify([b.accountId,b.sessionKey,b.scope,b.target]);
++  const log = (binding, record) => safe(() => binding.log?.info?.('[qq-explicit-stop] ' + JSON.stringify({ schema:SCHEMA, groupAlias:binding.alias, atMonoMs:Math.round(performance.now()*1000)/1000, scopeHash:digest('scope',keyFor(binding)), sourceHash:digest('source',binding.messageId), messageHash:messageHash(binding.messageId), ...record })));
++  const explicit = raw => {
++    if (typeof raw !== 'string' || raw.length > 4096) return false;
++    const value = raw.trim();
++    if (/^(?:停止|停下|停|stop)[。.!！\s]*$/iu.test(value)) return true;
++    const chinese=/^(?:请)?(?:立即|立刻|马上|先)?(?:停止|停下|取消|终止)(?:(?:当前|刚才|上一个|上一条|之前|旧)(?:的)?)?(?:回答|回复|生成|输出|长?故事|任务)(.*)$/u.exec(value);
++    if (chinese) {
++      const tail=chinese[1];
++      if (/^[。.!！\s]*$/u.test(tail)) return true;
++      if (/^[，,。.!！:：;；]\s*(?:只(?:回复|回答|输出)|改为|改成|重新(?:回复|回答|输出)|然后(?:只)?(?:回复|回答|输出))[^\r\n]+$/u.test(tail)) return true;
++    }
++    const english=/^(?:please\s+)?(?:stop|cancel|abort)\s+(?:the\s+)?(?:(?:current|previous|old|last)\s+)?(?:answer|reply|response|generation|story|task)\b(.*)$/iu.exec(value);
++    if (english) {
++      const tail=english[1];
++      if (/^[.!\s]*$/u.test(tail)) return true;
++      if (/^(?:\s*[,.;:]\s*|\s+and\s+)(?:only\s+(?:reply|answer|output)|instead\s+(?:reply|answer|output)|then\s+(?:only\s+)?(?:reply|answer|output))\b[^\r\n]+$/iu.test(tail)) return true;
++    }
++    return false;
++  };
++  const api = {
++    schema:SCHEMA,
++    isExplicitStop: explicit,
++    mint(input) { return safe(() => {
++      if (!input || input.channel !== 'qqbot' || !input.ctx || input.ctx.stopped || input.ctx.signal?.aborted || typeof input.ctx.abort !== 'function') return;
++      const sessionKey=text(input.sessionKey), senderId=text(input.senderId), target=text(input.target), messageId=text(input.messageId);
++      const scope=input.scope;
++      if (!sessionKey || !senderId || !target || !messageId || (scope !== 'group' && scope !== 'c2c') || scope === 'group' && !groups.has(sessionKey)) return;
++      const token=Object.freeze({});
++      capabilities.set(token,{accountId:account(input.accountId),sessionKey,senderId,target,messageId,scope,alias:scope==='group'?groups.get(sessionKey):'owner_dm',ctx:input.ctx,log:input.log,aliases:new Set([messageId]),qualified:false});
++      return token;
++    }); },
++    qualify(token, input) { return safe(() => {
++      const b=capabilities.get(token);
++      if (!b || b.ctx.stopped || b.ctx.signal?.aborted || input.sessionKey!==b.sessionKey || account(input.accountId)!==b.accountId || input.senderId!==b.senderId || input.target!==b.target) return false;
++      if (!Array.isArray(input.sourceAliases) || !input.sourceAliases.includes(b.messageId) || input.sourceAliases.length > 4) return false;
++      for (const alias of input.sourceAliases) if (text(alias)) b.aliases.add(alias);
++      b.qualified=true;
++      return true;
++    }) ?? false; },
++    activate(token, proof) { return safe(() => {
++      const b=capabilities.get(token);
++      if (!b?.qualified || b.ctx.signal?.aborted || b.ctx.stopped || !proof || proof.channel!=='qqbot' || proof.sessionKey!==b.sessionKey || account(proof.accountId)!==b.accountId || proof.senderId!==b.senderId || !b.aliases.has(proof.sourceMessageId) || proof.scope!==b.scope || b.scope==='c2c' && proof.senderIsOwner!==true || typeof proof.assertCurrent!=='function' || typeof proof.cancel!=='function' || !(proof.settled instanceof Promise)) return false;
++      proof.assertCurrent();
++      const key=keyFor(b), prior=active.get(key);
++      if (prior) { try { prior.proof.assertCurrent(); return prior.token===token; } catch {} }
++      if (!prior && active.size>=128 || sequence>=Number.MAX_SAFE_INTEGER) return false;
++      const entry={token,binding:b,proof,operationHash:digest('operation',String(++sequence))};
++      active.set(key,entry);
++      log(b,{stage:'active_source',operationHash:entry.operationHash});
++      Promise.resolve(proof.settled).then(() => { if (active.get(key)===entry) active.delete(key); }, () => { if (active.get(key)===entry) active.delete(key); });
++      return true;
++    }) ?? false; },
++    pendingSettlement(token) { return safe(() => {
++      const incoming=capabilities.get(token);
++      if (!incoming || incoming.ctx.signal?.aborted || incoming.ctx.stopped) return;
++      const entry=active.get(keyFor(incoming));
++      // Observation of the captured owner's settlement grants no cancellation
++      // authority. Other senders only wait; never look up a future operation.
++      if (!entry?.stopRequested || !(entry.proof.settled instanceof Promise)) return;
++      return entry.proof.settled;
++    }); },
++    request(token, raw) { return safe(() => {
++      const incoming=capabilities.get(token);
++      if (!incoming || incoming.ctx.signal?.aborted || incoming.ctx.stopped || !explicit(raw)) return false;
++      const entry=active.get(keyFor(incoming));
++      if (!entry || entry.stopRequested || entry.token===token || entry.binding.senderId!==incoming.senderId || entry.binding.accountId!==incoming.accountId || entry.binding.target!==incoming.target || entry.binding.scope!==incoming.scope || entry.binding.messageId===incoming.messageId) return false;
++      try { entry.proof.assertCurrent(); } catch { if (active.get(keyFor(incoming))===entry) active.delete(keyFor(incoming)); return false; }
++      entry.stopRequested=true;
++      log(incoming,{stage:'stop_requested',operationHash:entry.operationHash,stoppedSourceHash:digest('source',entry.binding.messageId),stoppedMessageHash:messageHash(entry.binding.messageId),ownerReleased:false});
++      const reason=Object.assign(new Error('QQ source explicitly stopped by its original sender'),{name:'AbortError',code:'QQ_EXPLICIT_SOURCE_STOP'});
++      // The caller's original source signal gates queued sends and pending streaming frames.
++      try { entry.binding.ctx.abort(reason); }
++      finally {
++        // Always cancel the already captured operation, never rediscover a same-key successor.
++        entry.proof.cancel();
++      }
++      return true;
++    }) ?? false; },
++  };
++  return Object.freeze(api);
++}
++if (!globalThis[SYMBOL]) Object.defineProperty(globalThis,SYMBOL,{value:createState(),enumerable:false,configurable:false,writable:false});
++module.exports=globalThis[SYMBOL]?.schema===SCHEMA?globalThis[SYMBOL]:Object.freeze({schema:SCHEMA,mint(){},qualify(){return false;},activate(){return false;},pendingSettlement(){},request(){return false;},isExplicitStop(){return false;}});

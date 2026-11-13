@@ -1,0 +1,93 @@
+diff -ruN a/dist/commentary-progress-owner-B_Ulr6Rd.mjs b/dist/commentary-progress-owner-B_Ulr6Rd.mjs
+--- a/dist/commentary-progress-owner-B_Ulr6Rd.mjs	2026-11-13 19:09:04.041019693 +0800
++++ b/dist/commentary-progress-owner-B_Ulr6Rd.mjs	2026-11-13 19:09:04.041019693 +0800
+@@ -30,8 +30,8 @@
+ const REPLY_ADMISSION_TICKET = Symbol("openclaw.replyAdmissionTicket");
+ const replyAdmissionTickets = createKeyedFifoLeaseRegistry(Symbol.for("openclaw.replyAdmissionTickets"));
+ /** Briefly orders queue publication across a command's source and target sessions. */
+-function reserveReplyAdmissionTicket(sessionKeys) {
+-	return replyAdmissionTickets.reserve(normalizeStringifiedEntries(sessionKeys));
++function reserveReplyAdmissionTicket(sessionKeys, traceCapsule) {
++	return replyAdmissionTickets.reserve(normalizeStringifiedEntries(sessionKeys), traceCapsule);
+ }
+ //#endregion
+ //#region src/auto-reply/reply/agent-runner-failure-reply.ts
+@@ -330,6 +330,30 @@
+ 	});
+ 	return didRetire ? retired ?? void 0 : void 0;
+ }
++// QQ-RESTART-OWNER-SOURCE v1. Only a live source-keyed channel admission can mint this record.
++function buildQQRestartRequesterAuthority(params) {
++	const trim = value => typeof value === "string" ? value.trim() : "";
++	const sender = value => trim(value).replace(/^qqbot:/i, "").replace(/^(?:id|channel:qqbot):/i, "").toUpperCase();
++	const source = params.sourceMessage;
++	const metadata = source?.["__openclaw"];
++	const delivery = params.deliveryContext;
++	const accountId = trim(params.accountId);
++	const senderId = sender(params.senderId);
++	const target = trim(delivery?.to);
++	const peer = target.match(/^qqbot:(?:c2c|direct):([^:]+)$/i);
++	const sourceTurnId = trim(params.sourceTurnId);
++	const sourceMessageId = trim(params.sourceMessageId);
++	if (params.ownerAdmitted !== true || typeof params.assertOwnerCurrent !== "function" || !trim(params.sessionId) || !trim(params.sessionKey) || /:qqbot:group:|:cron:|:heartbeat:|:subagent:/i.test(params.sessionKey) || delivery?.channel !== "qqbot" || !accountId || (trim(delivery.accountId) || "default") !== accountId || !senderId || !peer || sender(peer[1]) !== senderId || !sourceTurnId || !sourceMessageId || trim(source?.idempotencyKey) !== sourceTurnId || source?.provenance && source.provenance.kind !== "external_user" || metadata?.senderIsOwner !== true || sender(metadata?.senderId) !== senderId) return;
++	params.assertOwnerCurrent();
++	const proof = {
++		version: 1, sessionId: params.sessionId, sourceTurnId, sourceMessageId,
++		channel: "qqbot", accountId, senderId, target,
++		ownerAdmitted: true, capturedAtUnixMs: Date.now()
++	};
++	params.assertOwnerCurrent();
++	return proof;
++}
++// /QQ-RESTART-OWNER-SOURCE v1
+ function createReplyRestartRecoveryClaimController(params) {
+ 	let recoveryRunId = randomUUID();
+ 	let recoverySourceRunId;
+@@ -353,7 +377,7 @@
+ 				expectedSessionState,
+ 				sessionLifecyclePatch: options.patch
+ 			});
+-			if (!result?.sessionEntry) throw new Error("session changed before durable user-turn admission");
++			if (!result?.sessionEntry) throw Object.assign(new Error("session changed before durable user-turn admission [ADMISSION_DURABLE_RESULT_MISSING]"), { code: "ADMISSION_DURABLE_RESULT_MISSING" });
+ 			return result.sessionEntry;
+ 		}
+ 		const persisted = await updateSessionEntry({
+@@ -380,7 +404,7 @@
+ 			target,
+ 			expectedSessionId: sessionId
+ 		});
+-		if (!result) throw new Error("session changed before durable user-turn admission");
++		if (!result) throw Object.assign(new Error("session changed before durable user-turn admission [ADMISSION_USER_TURN_RESULT_MISSING]"), { code: "ADMISSION_USER_TURN_RESULT_MISSING" });
+ 		if (result.sessionEntry) params.setEntry(result.sessionEntry);
+ 	};
+ 	const admitUserTurn = async (recorder) => {
+@@ -395,7 +419,7 @@
+ 			sessionKey: params.sessionKey
+ 		}, assertReadCurrent) ?? params.getEntry();
+ 		assertReadCurrent();
+-		if (!entry || entry.sessionId !== sessionId || params.getSessionId() !== sessionId) throw new Error("session changed before durable user-turn admission");
++		if (!entry || entry.sessionId !== sessionId || params.getSessionId() !== sessionId) throw Object.assign(new Error("session changed before durable user-turn admission [ADMISSION_SESSION_CHANGED]"), { code: "ADMISSION_SESSION_CHANGED" });
+ 		const admissionRunId = normalizeOptionalString(params.admissionRunId);
+ 		const sourceTurnId = normalizeOptionalString(params.sourceTurnId);
+ 		const activeClaimRunId = normalizeOptionalString(entry.restartRecoveryDeliveryRunId);
+@@ -449,10 +473,12 @@
+ 		}
+ 		const deliveryContext = params.resolveDeliveryContext(entry);
+ 		const recoverableDeliveryContext = deliveryContext && sourceTurnId ? deliveryContext : void 0;
++		let qqRequesterAuthority;
+ 		if (recoverableDeliveryContext) {
+ 			const sourceMessage = recorder?.getPersistedMessage?.() ?? await recorder?.resolveMessage();
+ 			const persistedSourceTurnId = normalizeOptionalString(sourceMessage?.idempotencyKey);
+ 			if (!recorder || persistedSourceTurnId !== sourceTurnId) throw new Error("channel restart recovery requires source-keyed user-turn admission");
++			qqRequesterAuthority = buildQQRestartRequesterAuthority({ sourceMessage, sessionId, sessionKey: params.sessionKey, sourceTurnId, sourceMessageId: admissionRunId, deliveryContext: recoverableDeliveryContext, accountId: params.requesterAccountId, senderId: params.requesterSenderId, ownerAdmitted: params.requesterSenderIsOwner, assertOwnerCurrent: params.assertRequesterOwnerCurrent });
+ 		}
+ 		if (!recoverableDeliveryContext && !activeClaimRunId) {
+ 			await persistUserTurnOnly(recorder, sessionId);
+@@ -478,6 +504,7 @@
+ 			restartRecoveryDeliverySourceRunId: sourceTurnId,
+ 			restartRecoveryRequesterAccountId: sourceTurnId ? normalizeOptionalString(params.requesterAccountId) : void 0,
+ 			restartRecoveryRequesterSenderId: sourceTurnId ? normalizeOptionalString(params.requesterSenderId) : void 0,
++			restartRecoveryQQRequesterAuthority: qqRequesterAuthority,
+ 			restartRecoverySameChannelThreadRequired: sourceTurnId && params.sameChannelThreadRequired === true ? true : void 0,
+ 			restartRecoverySourceIngress: sourceTurnId ? "channel" : void 0,
+ 			restartRecoverySourceReplyDeliveryMode: params.sourceReplyDeliveryMode,

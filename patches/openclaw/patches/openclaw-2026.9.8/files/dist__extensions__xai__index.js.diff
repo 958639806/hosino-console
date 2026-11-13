@@ -1,0 +1,14 @@
+diff -ruN a/dist/extensions/xai/index.js b/dist/extensions/xai/index.js
+--- a/dist/extensions/xai/index.js	2026-11-13 19:09:04.077021510 +0800
++++ b/dist/extensions/xai/index.js	2026-11-13 19:09:04.077021510 +0800
+@@ -176,6 +176,10 @@
+ 		...buildProviderReplayFamilyHooks({ family: "openai-compatible" }),
+ 		prepareExtraParams: (ctx) => defaultToolStreamExtraParams(ctx.extraParams),
+ 		wrapStreamFn: (ctx) => wrapXaiProviderStream(ctx, { clientVersion: pluginApi.runtime.version }),
++		wrapSimpleCompletionStreamFn: (ctx) => {
++			if ((ctx.auth?.mode !== "oauth" && ctx.auth?.mode !== "token") || !isXaiProviderId(ctx.model?.provider) || !isXaiGrokProxyBaseUrl(ctx.model?.baseUrl)) return void 0;
++			return wrapXaiProviderStream(ctx, { clientVersion: pluginApi.runtime.version });
++		},
+ 		resolveSyntheticAuth: ({ config }) => {
+ 			const fallbackAuth = resolveFallbackXaiAuth(config);
+ 			if (!fallbackAuth) return;

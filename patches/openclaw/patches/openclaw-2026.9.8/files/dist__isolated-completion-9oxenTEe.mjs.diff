@@ -1,0 +1,12 @@
+diff -ruN a/dist/isolated-completion-9oxenTEe.mjs b/dist/isolated-completion-9oxenTEe.mjs
+--- a/dist/isolated-completion-9oxenTEe.mjs	2026-11-13 19:09:04.109023125 +0800
++++ b/dist/isolated-completion-9oxenTEe.mjs	2026-11-13 19:09:04.109023125 +0800
+@@ -270,6 +270,8 @@
+ 		agentId,
+ 		agentDir: requestAgentDir,
+ 		workspaceDir: requestedWorkspaceDir,
++		// Prompt-only internal callers may opt into the existing provider/harness scope.
++		...input.runtimePluginPurpose === "simple-completion" ? { loadRuntimePlugins: true, runtimePluginPurpose: "simple-completion" } : {},
+ 		preserveWorkspaceDirOnRefresh: input.workspaceDir !== void 0
+ 	}, {
+ 		catalogMode: "static",

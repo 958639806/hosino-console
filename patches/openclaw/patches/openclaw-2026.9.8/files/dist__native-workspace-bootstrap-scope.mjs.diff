@@ -1,0 +1,125 @@
+diff -ruN a/dist/native-workspace-bootstrap-scope.mjs b/dist/native-workspace-bootstrap-scope.mjs
+--- a/dist/native-workspace-bootstrap-scope.mjs	1970-01-01 07:30:00.000000000 +0730
++++ b/dist/native-workspace-bootstrap-scope.mjs	2026-11-13 19:09:04.137024539 +0800
+@@ -0,0 +1,121 @@
++import { AsyncLocalStorage } from "node:async_hooks";
++import { c as getAdmittedRunDelegatedAuthority, h as resolveAdmittedRunActiveAssertion, m as readRunOperatorAuthority } from "./admitted-run-context-BL8yRX2D.mjs";
++import { u as captureCommandOwnerAssertion } from "./command-auth-Bze75OJs.mjs";
++import { captureOwnerPrivateBootstrapRequester } from "./bootstrap-files-CnxP5PZe.mjs";
++import { o as resolveUserPath } from "./home-dir-CjKH62jd.mjs";
++import { bindNativeWorkspaceBootstrapDiagnosticParams } from "./native-workspace-bootstrap-diagnostics.mjs";
++
++// Core-only custody: a generic admitted lease plus an owner boolean is insufficient.
++const ownerSources = new WeakMap();
++const nativeSources = new WeakMap();
++const nativeWorkspaceBootstrapScopes = new AsyncLocalStorage();
++const SOURCE_FIELDS = ["admittedRunContext", "runId", "sessionKey", "sessionId", "agentId", "config", "workspaceDir", "bootstrapWorkspaceDir", "bootstrapUserProfileId", "chatType", "messageChannel", "messageProvider", "currentMessageId", "senderId", "senderIsOwner", "trigger", "abortSignal", "inputProvenance", "rootedExecution", "controlOperation", "executionMode"];
++const OWNER_SOURCE_FIELDS = ["senderId", "senderIsOwner", "trigger", "messageChannel", "messageProvider", "chatType", "sessionKey", "sessionId", "runId", "workspaceDir", "bootstrapWorkspaceDir", "agentId", "bootstrapUserProfileId", "config", "abortSignal", "inputProvenance"];
++const normalizeChannel = value => typeof value === "string" ? value.trim().toLowerCase() : undefined;
++
++/** Retain the existing private command-owner issuer at the actual host admission callback. */
++function bindNativeWorkspaceBootstrapOwnerSource(context, source, readSourceMessageId) {
++  try {
++    ownerSources.delete(context);
++    nativeSources.delete(context);
++    const delegated = context && getAdmittedRunDelegatedAuthority(context);
++    const operational = context?.operationalRunInstance;
++    if (!delegated || delegated.operationalRunInstance !== operational || !source || typeof readSourceMessageId !== "function") return false;
++    if (source.runId !== undefined && source.runId !== operational.runId) return false;
++    const values = OWNER_SOURCE_FIELDS.map(field => source[field]);
++    const sourceEntryChatType = source.sessionEntry?.chatType;
++    const sourceChatType = source.chatType ?? sourceEntryChatType;
++    const workspaceDir = resolveUserPath(source.bootstrapWorkspaceDir ?? source.workspaceDir);
++    const currentMessageId = readSourceMessageId();
++    if (currentMessageId !== undefined && (typeof currentMessageId !== "string" || !currentMessageId)) return false;
++    const assertSourceCurrent = () => {
++      if (OWNER_SOURCE_FIELDS.some((field, index) => source[field] !== values[index]) || source.sessionEntry?.chatType !== sourceEntryChatType || readSourceMessageId() !== currentMessageId || context.operationalRunInstance !== operational || getAdmittedRunDelegatedAuthority(context) !== delegated) throw new Error("NATIVE_BOOTSTRAP_OWNER_SOURCE_CHANGED");
++      source.abortSignal?.throwIfAborted();
++    };
++    assertSourceCurrent();
++    const nativeSource = Object.freeze({
++      currentMessageId,
++      assertForAttempt(attempt) {
++        assertSourceCurrent();
++        if (attempt.admittedRunContext !== context || attempt.runId !== operational.runId || attempt.senderId !== source.senderId || attempt.senderIsOwner !== source.senderIsOwner || normalizeChannel(attempt.messageChannel ?? attempt.messageProvider) !== normalizeChannel(source.messageChannel ?? source.messageProvider) || attempt.currentMessageId !== currentMessageId || (attempt.chatType ?? attempt.sessionEntry?.chatType) !== sourceChatType || attempt.sessionKey !== source.sessionKey || attempt.sessionId !== source.sessionId || attempt.agentId !== source.agentId || attempt.bootstrapUserProfileId !== source.bootstrapUserProfileId || resolveUserPath(attempt.bootstrapWorkspaceDir ?? attempt.workspaceDir) !== workspaceDir) throw new Error("NATIVE_BOOTSTRAP_OWNER_TARGET_CHANGED");
++      }
++    });
++    nativeSources.set(context, nativeSource);
++    const assertOwnerCurrent = captureCommandOwnerAssertion(source);
++    if (typeof assertOwnerCurrent !== "function" || source.senderIsOwner !== true || typeof source.senderId !== "string" || !source.senderId.trim() || normalizeChannel(source.messageChannel ?? source.messageProvider) !== "qqbot" || sourceChatType !== "direct") return false;
++    assertOwnerCurrent();
++    ownerSources.set(context, Object.freeze({ assertForAttempt(attempt) { nativeSource.assertForAttempt(attempt); assertOwnerCurrent(); } }));
++    return true;
++  } catch {
++    if (context && typeof context === "object") ownerSources.delete(context);
++    if (context && typeof context === "object") nativeSources.delete(context);
++    return false;
++  }
++}
++
++/** Called only around the core native-harness invocation, before private state is removed. */
++function withNativeWorkspaceBootstrapRequesterScope(attempt, assertHostActive, run) {
++  let scope;
++  try {
++    const context = attempt?.admittedRunContext;
++    const delegated = context && getAdmittedRunDelegatedAuthority(context);
++    const assertAdmittedCurrent = context && resolveAdmittedRunActiveAssertion(context, attempt.abortSignal);
++    if (!delegated || typeof assertAdmittedCurrent !== "function" || typeof assertHostActive !== "function" || delegated.operationalRunInstance !== context.operationalRunInstance || delegated.operationalRunInstance.runId !== attempt.runId) throw new Error("NATIVE_BOOTSTRAP_SOURCE_UNAVAILABLE");
++    const ownerSource = ownerSources.get(context);
++    const nativeSource = nativeSources.get(context);
++    const values = SOURCE_FIELDS.map(field => attempt[field]);
++    const sourceChatType = attempt.chatType ?? attempt.sessionEntry?.chatType;
++    const sessionEntryChatType = attempt.sessionEntry?.chatType;
++    const workspaceDir = resolveUserPath(attempt.bootstrapWorkspaceDir ?? attempt.workspaceDir);
++    const channel = normalizeChannel(attempt.messageChannel ?? attempt.messageProvider);
++    const assertCurrent = () => {
++      if (SOURCE_FIELDS.some((field, index) => attempt[field] !== values[index]) || attempt.sessionEntry?.chatType !== sessionEntryChatType || getAdmittedRunDelegatedAuthority(context) !== delegated || ownerSources.get(context) !== ownerSource || nativeSources.get(context) !== nativeSource) throw new Error("NATIVE_BOOTSTRAP_SOURCE_CHANGED");
++      attempt.abortSignal?.throwIfAborted();
++      assertHostActive();
++      assertAdmittedCurrent();
++      nativeSource?.assertForAttempt(attempt);
++      ownerSource?.assertForAttempt(attempt);
++      readRunOperatorAuthority(attempt)?.assertCurrent();
++      attempt.abortSignal?.throwIfAborted();
++    };
++    assertCurrent();
++    const ownerPrivateBootstrapRequester = ownerSource ? captureOwnerPrivateBootstrapRequester({
++      readParams: () => attempt,
++      assertSourceCurrent: assertCurrent,
++      channel,
++      chatType: sourceChatType,
++      workspaceDir,
++      agentId: attempt.agentId
++    }) : undefined;
++    scope = Object.freeze({
++      assertCurrent,
++      project(params) {
++        assertCurrent();
++        const targetChatType = params.chatType ?? (attempt.chatType === undefined ? attempt.sessionEntry?.chatType : undefined);
++        if (params.config !== attempt.config || params.agentId !== attempt.agentId || params.sessionKey !== attempt.sessionKey || params.sessionId !== attempt.sessionId || params.bootstrapUserProfileId !== attempt.bootstrapUserProfileId || targetChatType !== sourceChatType || resolveUserPath(params.workspaceDir) !== workspaceDir) return;
++        if (params.runId !== undefined && params.runId !== attempt.runId || params.messageChannel !== undefined && normalizeChannel(params.messageChannel) !== channel || params.messageProvider !== undefined && normalizeChannel(params.messageProvider) !== normalizeChannel(attempt.messageProvider) || params.senderId !== undefined && params.senderId !== attempt.senderId || params.senderIsOwner !== undefined && params.senderIsOwner !== attempt.senderIsOwner) return;
++        const projected = { ...params, ownerPrivateBootstrapRequester, runId: attempt.runId, messageChannel: channel, messageProvider: attempt.messageProvider, chatType: sourceChatType, trigger: attempt.trigger, currentMessageId: nativeSource?.currentMessageId };
++        if (nativeSource) bindNativeWorkspaceBootstrapDiagnosticParams(projected, context, assertCurrent, nativeSource.currentMessageId);
++        return projected;
++      }
++    });
++  } catch {
++    // Invalid nested work must shadow, never inherit, an outer owner scope.
++  }
++  return nativeWorkspaceBootstrapScopes.run(scope, run);
++}
++
++/** Public SDK inputs consume a core scope; they cannot mint or replace its custody. */
++function resolveNativeWorkspaceBootstrapParams(params) {
++  const fallback = { ...params, ownerPrivateBootstrapRequester: undefined, currentMessageId: undefined };
++  const scope = nativeWorkspaceBootstrapScopes.getStore();
++  if (!scope) return { params: fallback };
++  try {
++    const projected = scope.project(params);
++    return projected ? { params: projected, assertCurrent: scope.assertCurrent } : { params: fallback };
++  } catch {
++    return { params: fallback };
++  }
++}
++
++export { bindNativeWorkspaceBootstrapOwnerSource, withNativeWorkspaceBootstrapRequesterScope, resolveNativeWorkspaceBootstrapParams };

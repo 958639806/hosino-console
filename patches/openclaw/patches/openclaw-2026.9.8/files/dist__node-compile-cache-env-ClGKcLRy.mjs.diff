@@ -1,0 +1,26 @@
+diff -ruN a/dist/node-compile-cache-env-ClGKcLRy.mjs b/dist/node-compile-cache-env-ClGKcLRy.mjs
+--- a/dist/node-compile-cache-env-ClGKcLRy.mjs	2026-11-13 19:09:04.137024539 +0800
++++ b/dist/node-compile-cache-env-ClGKcLRy.mjs	2026-11-13 19:09:04.141024741 +0800
+@@ -132,6 +132,16 @@
+ 		maintainOpenClawCompileCache(baseDirectory);
+ 	}
+ }
++/** Initialize the existing worker base without enabling the foreground isolate. */
++function initializeOwnedWorkerCompileCache(directory) {
++	if (!isMainThread || process.env.NODE_DISABLE_COMPILE_CACHE !== void 0 || typeof directory !== "string" || !directory) return false;
++	const baseDirectory = path.resolve(directory);
++	if (!resolveSafeNodeCompileCacheDirectory(baseDirectory)) return false;
++	const owner = compileCacheOwner();
++	owner.baseDirectory ??= baseDirectory;
++	maintainOpenClawCompileCache(owner.baseDirectory);
++	return true;
++}
+ function resolveNodeCompileCacheEnv(env = process.env) {
+ 	if (env.NODE_DISABLE_COMPILE_CACHE !== void 0) return env;
+ 	const directory = env.NODE_COMPILE_CACHE ?? compileCacheOwner().baseDirectory;
+@@ -150,4 +160,4 @@
+ 	} : env;
+ }
+ //#endregion
+-export { resolveNodeCompileCacheEnv as n, resolveOpenClawCompileCacheDirectory as r, enableOwnedNodeCompileCache as t };
++export { resolveNodeCompileCacheEnv as n, resolveOpenClawCompileCacheDirectory as r, enableOwnedNodeCompileCache as t, initializeOwnedWorkerCompileCache as u };

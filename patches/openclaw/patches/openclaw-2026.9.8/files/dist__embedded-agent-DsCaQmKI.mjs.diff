@@ -1,0 +1,267 @@
+diff -ruN a/dist/embedded-agent-DsCaQmKI.mjs b/dist/embedded-agent-DsCaQmKI.mjs
+--- a/dist/embedded-agent-DsCaQmKI.mjs	2026-11-13 19:09:04.061020702 +0800
++++ b/dist/embedded-agent-DsCaQmKI.mjs	2026-11-13 19:09:04.065020904 +0800
+@@ -1,3 +1,4 @@
++import { createQqHostLatencyTrace, qqHostLatencyTraceFromContext } from "./qq-host-latency-trace.mjs";
+ import { l as normalizeOptionalString } from "./string-coerce-6kR-86XC.mjs";
+ import "./number-coercion-Dq1l5muL.mjs";
+ import { u as toErrorObject } from "./error-coercion-1P2One0X.mjs";
+@@ -180,7 +181,7 @@
+ import { n as registerAgentRunCapacityWait } from "./agent-run-capacity-wait-DOurjC0Y.mjs";
+ import { r as mergeAcceptedSessionSpawnsForRun } from "./accepted-session-spawn-D1kxYBSr.mjs";
+ import "./fast-mode-Jt-DccPV.mjs";
+-import { n as getCoreTtsAttemptResultMediaUrls, t as copyCoreTtsAttemptResultProvenance } from "./tts-tool-result-provenance-z42MPFVT.mjs";
++import { c as inspectCoreTtsAttemptResultIdentity, n as getCoreTtsAttemptResultMediaUrls, t as copyCoreTtsAttemptResultProvenance } from "./tts-tool-result-provenance-z42MPFVT.mjs";
+ import { t as log$3 } from "./logger-CRHWOiHk.mjs";
+ import { $ as isEmbeddedRunTerminalTimeout, A as resolveIncompleteTurnPayloadText, B as shouldTreatEmptyAssistantReplyAsSilent, C as clearProviderPromptState, D as TRUNCATED_REPLY_NOTICE_TEXT, E as createAttemptCarryover, F as resolveEmptyResponseRetryInstruction, H as isStrictAgenticExecutionContractActive, I as resolveReasoningOnlyRetryInstruction, L as resolveSettledToolBatchEvidence, M as resolveRunLivenessState, N as resolveSilentToolResultReplyPayload, O as YIELD_DIAGNOSTIC_TEXT, P as shouldRetryMissingAssistantTurn, Q as isEmbeddedRunTerminalInterrupted, R as resolveSettledToolTerminalContinuationInstruction, T as markLastProviderPromptContextRejected, U as prepareEmbeddedAttemptPromptExecution, V as countSettledTurnDeliveryPayloads, W as applyResolvedToolPromptFinalizer, Z as isEmbeddedRunTerminalAbort, at as isCurrentAttemptReplaySafe, b as measureEmbeddedAgentPreparation, bt as runBestEffortCallback, ct as createEmbeddedRunReplayState, et as isEmbeddedRunTimeoutFinal, gt as formatEmbeddedRunStageSummary, ht as createEmbeddedRunStageTracker, i as resolveAgentRunSessionTarget, it as hasAttemptTerminalState, j as resolveReplayInvalidFlag, k as hasYieldContinuationEvidence, lt as observeReplayMetadata, mt as createEmbeddedRunStageSummaryEmitter, nt as resolveEmbeddedRunAttemptTerminalState, o as resolveEmbeddedSessionContextLimits, ot as resolveCurrentAttemptAssistant, pt as EMBEDDED_RUN_ATTEMPT_DISPATCH_STAGE, r as applyAgentRunSessionTargetIdentity, rt as hasAsyncActivity, st as shouldContinueInteractiveAcceptedSessionSpawns, tt as resolveEmbeddedRunAttemptTerminalOutcome, ut as createToolTerminalObserver, w as getProviderPromptState, x as resolveProviderRefusal, yt as prepareEmbeddedSkills, z as shouldRetrySilentErrorAssistantTurn } from "./builtin-openclaw-DEib7rq9.mjs";
+ import { i as remapSkillReferencePaths } from "./runtime-capabilities-BEvxgbPN.mjs";
+@@ -233,7 +234,7 @@
+ import path from "node:path";
+ import { AsyncLocalStorage } from "node:async_hooks";
+ import fs from "node:fs/promises";
+-import { randomBytes } from "node:crypto";
++import { randomBytes, createHash as qqTtsArtifactCreateHash } from "node:crypto";
+ import { isContextOverflow } from "@openclaw/ai/internal/runtime";
+ import { CompactionReplayRefreshRequiredError, isCompactionReplayCheckpoint } from "@openclaw/ai/transports";
+ import { isResponsesOutputLimitToolCallError } from "@openclaw/ai/diagnostics";
+@@ -1963,7 +1964,7 @@
+ 				reason: params.failoverReason
+ 			};
+ 		}
+-		if (!params.profileRotated && shouldRotatePrompt(params)) return {
++		if (!params.profileRotated && params.skipAuthProfileRotation !== true && shouldRotatePrompt(params)) return {
+ 			action: "rotate_profile",
+ 			reason: params.failoverReason
+ 		};
+@@ -2535,6 +2536,7 @@
+ 		activeErrorContext,
+ 		resolveReplayInvalidForAttempt,
+ 		assistantErrorText,
++		qqCapacityAttemptEvidenceComplete: hasQqCapacityAttemptEvidence(dispatchedAttempt.rawAttempt),
+ 		canRestartForLiveSwitch: !hasOutboundDeliveryEvidence(attempt) && !attempt.didSendDeterministicApprovalPrompt && !attempt.lastToolError && (attempt.toolMetas?.length ?? 0) === 0 && (attempt.assistantTexts?.length ?? 0) === 0
+ 	};
+ }
+@@ -3536,6 +3538,7 @@
+ 		failoverReason: promptFailoverReason,
+ 		harnessOwnsTransport: input.pluginHarnessOwnsTransport,
+ 		promptTimeoutFallbackSafe,
++		skipAuthProfileRotation: input.capacityNoSameModelRetry === true && promptFailoverReason === "overloaded",
+ 		timedOutByRunBudget: input.timedOutByRunBudget,
+ 		profileRotated
+ 	});
+@@ -3740,6 +3743,30 @@
+ }
+ //#endregion
+ //#region src/agents/embedded-agent-runner/run/attempt-recovery.ts
++// QQ capacity policy narrows recovery only; the existing outer fallback guard remains authoritative.
++function hasQqCapacityAttemptEvidence(attempt) {
++	return Boolean(attempt && Array.isArray(attempt.assistantTexts) && Array.isArray(attempt.toolMetas) && attempt.itemLifecycle && ["startedCount", "completedCount", "activeCount"].every((key) => Number.isSafeInteger(attempt.itemLifecycle[key]) && attempt.itemLifecycle[key] >= 0));
++}
++function shouldFastFallbackQqCapacity(input) {
++	const { runInput, preparedRuntime, runtime, normalizedAttempt } = input;
++	const params = runInput.runParams;
++	const sessionKey = runInput.resolvedSessionKey;
++	if (sessionKey !== "agent:main:qqbot:group:__HS_GROUP_OLD_OPENID__" && sessionKey !== "agent:main:qqbot:group:__HS_GROUP_NEW_OPENID__") return false;
++	if (params.sessionKey !== void 0 && params.sessionKey !== sessionKey || params.trigger !== "user" || preparedRuntime.provider !== "openai" || preparedRuntime.modelId !== "gpt-6-luna" || runtime.agentHarness?.id !== "codex" || runInput.fallbackConfigured !== true) return false;
++	if (params.trustedInternalHandoff || params.inputProvenance?.kind !== void 0 && params.inputProvenance.kind !== "external_user") return false;
++	if (input.promptErrorSource !== "prompt" || !input.promptError || input.retryFailure?.kind !== "reason") return false;
++	const capacityFailure = input.retryFailure.reason === "overloaded" && formatErrorMessage(input.promptError).trim() === "Selected model is at capacity. Please try a different model.";
++	if (!capacityFailure && input.retryFailure.reason !== "rate_limit") return false;
++	if (input.aborted || input.externalAbort || input.timedOut || input.timedOutDuringCompaction || input.timedOutDuringToolExecution || input.timedOutByRunBudget || input.terminalInterrupted || normalizedAttempt.terminalState.signalOwnedInterruption || input.attemptCompactionCount !== 0 || input.currentAttemptReplaySafe !== true || normalizedAttempt.qqCapacityAttemptEvidenceComplete !== true) return false;
++	const attempt = normalizedAttempt.attempt;
++	if (!hasQqCapacityAttemptEvidence(attempt) || attempt.assistantTexts.length !== 0 || attempt.toolMetas.length !== 0 || ["startedCount", "completedCount", "activeCount"].some((key) => attempt.itemLifecycle[key] !== 0)) return false;
++	if (input.retryFailure.reason === "rate_limit" && (attempt.sourceReplyDelivered === true || attempt.didDeliverSourceReplyViaMessageTool === true || resolveSourceReplyDelivery(attempt) !== "missing" || Array.isArray(attempt.messagingToolSentTargets) && attempt.messagingToolSentTargets.length > 0 || Array.isArray(attempt.messagingToolSourceReplyPayloads) && attempt.messagingToolSourceReplyPayloads.length > 0)) return false;
++	if (attempt.hasSuccessfulModelResponse === true || attempt.runtimeContinuationStarted || attempt.asyncWorkStarted || attempt.yieldDetected || attempt.clientToolCalls || attempt.codexAppServerFailure || attempt.didSendDeterministicApprovalPrompt || attempt.lastToolError || attempt.successfulCronAdds || attempt.acceptedSessionSpawns?.length || attempt.successfulNestedToolNames?.length || hasOutboundDeliveryEvidence(attempt) || findCliTerminalStopError(input.promptError)) return false;
++	const assistant = normalizedAttempt.currentAttemptAssistant;
++	if (assistant && (assistant.stopReason !== "error" || !Array.isArray(assistant.content) || assistant.content.length !== 0) || isTerminalAssistantError(normalizedAttempt.attemptAssistant)) return false;
++	return true;
++}
++
+ async function recoverEmbeddedRunAttempt(input) {
+ 	const { runInput, preparedRuntime, normalizedAttempt, runtimePlan, sessionPromptState, failoverRetryController, compactionRuntime } = input;
+ 	const params = runInput.runParams;
+@@ -3892,8 +3919,13 @@
+ 		recordRecoveryDecision("accepted", "timeout_recovery");
+ 		return retry();
+ 	}
++	const capacityNoSameModelRetry = shouldFastFallbackQqCapacity({
++		runInput, preparedRuntime, runtime, normalizedAttempt, retryFailure, promptError, promptErrorSource,
++		aborted, externalAbort, timedOut, timedOutDuringCompaction, timedOutDuringToolExecution, timedOutByRunBudget, terminalInterrupted,
++		currentAttemptReplaySafe, attemptCompactionCount
++	});
+ 	const recoveryReason = outputLimitFailure ? "output_limit" : failureReason;
+-	if (!externalAbort && !terminalState.signalOwnedInterruption && !timedOutByRunBudget && !timedOutDuringCompaction && !timedOutDuringToolExecution && (!terminalInterrupted || !runtime.pluginHarnessOwnsTransport && (currentAttemptReplaySafe || canContinueSettledIdleTimeout)) && !attempt.yieldDetected && !attempt.clientToolCalls && !attempt.codexAppServerFailure && !findCliTerminalStopError(promptError) && (!promptError || promptErrorSource === "prompt") && !isTerminalAssistantError(attemptAssistant) && (!outputLimitFailure || canContinueOutputLimit) && (retryFailure?.kind !== "reason" || retryFailure.sameModelRetry !== false) && recoveryReason && await failoverRetryController.maybeRetryTransient({
++	if (!externalAbort && !terminalState.signalOwnedInterruption && !timedOutByRunBudget && !timedOutDuringCompaction && !timedOutDuringToolExecution && (!terminalInterrupted || !runtime.pluginHarnessOwnsTransport && (currentAttemptReplaySafe || canContinueSettledIdleTimeout)) && !attempt.yieldDetected && !attempt.clientToolCalls && !attempt.codexAppServerFailure && !findCliTerminalStopError(promptError) && (!promptError || promptErrorSource === "prompt") && !isTerminalAssistantError(attemptAssistant) && (!outputLimitFailure || canContinueOutputLimit) && (retryFailure?.kind !== "reason" || retryFailure.sameModelRetry !== false) && !capacityNoSameModelRetry && recoveryReason && await failoverRetryController.maybeRetryTransient({
+ 		reason: recoveryReason,
+ 		code: promptError ? getFailoverErrorCode(promptError) : assistantSignal?.code,
+ 		message: promptError ? formatErrorMessage(promptError) : assistantSignal?.message,
+@@ -3998,6 +4030,7 @@
+ 			attempt,
+ 			promptError,
+ 			promptErrorSource,
++			capacityNoSameModelRetry,
+ 			activeErrorContext,
+ 			provider: preparedRuntime.provider,
+ 			modelId: preparedRuntime.modelId,
+@@ -5164,6 +5197,7 @@
+ 		},
+ 		prepareAssistantTranscriptMessage: params.prepareAssistantTranscriptMessage
+ 	};
++	attemptParams.qqLatencyTraceContext = params.qqLatencyTraceContext;
+ 	const rawAttempt = await withPreparedEmbeddedGatewayTools(attemptParams, attemptControls.isCurrent, () => runEmbeddedAttemptWithBackend(attemptParams, nativeSessionRuntime, params.media)).catch((err) => {
+ 		throw input.getPostCompactionAbortError() ?? err;
+ 	}).finally(() => {
+@@ -6823,6 +6857,13 @@
+ 		toolTrustedLocalMedia: attempt.toolTrustedLocalMedia,
+ 		sourceReplyDeliveryMode: runParams.sourceReplyDeliveryMode
+ 	}, runParams.admittedRunContext?.operationalRunInstance);
++	try {
++  const privateIdentity=inspectCoreTtsAttemptResultIdentity(attempt,runParams.admittedRunContext?.operationalRunInstance);
++  const auto=getCoreTtsAttemptResultMediaUrls(attempt,attempt.toolMediaUrls,runParams.admittedRunContext?.operationalRunInstance);
++  qqTtsArtifactPassive('attempt-payload',runParams,{...privateIdentity,toolMediaCount:attempt.toolMediaUrls?.length??0,
++   eligiblePrivateMediaCount:auto?.length??0,audioAsVoice:attempt.toolAudioAsVoice===true,
++   payloadCount:payloadsWithToolMedia?.length??0,mediaPayloadCount:payloadsWithToolMedia?.filter(p=>Boolean(p.mediaUrl||p.mediaUrls?.length)).length??0});
++ } catch {}
+ 	const recoveredFinalAssistantTextAfterPromptTimeout = timedOutDuringPrompt && !timeoutFinal && [
+ 		"completed",
+ 		"end_turn",
+@@ -7807,6 +7848,8 @@
+ //#region src/agents/embedded-agent-runner/run-loop.ts
+ async function runPreparedEmbeddedLoop(refresh, input) {
+ 	let { runParams: params, provider, modelId } = input;
++	const qqPreparationTrace = qqHostLatencyTraceFromContext(params.qqLatencyTraceContext, "embedded", log$3);
++	qqPreparationTrace?.point("runtime_prepare_begin");
+ 	const { agentDir, workspaceDir: resolvedWorkspace, globalLane, hookRunner, hookContext: hookCtx, fallbackConfigured, isProbeSession, resolvedSessionKey, startedAtMs: started, startupStages, lifecycleGeneration, suspendForFailure } = input;
+ 	const { notifyExecutionPhase } = input.progressController;
+ 	let startupStagesEmitted = false;
+@@ -7826,6 +7869,7 @@
+ 		fallbackConfigured,
+ 		preparedModelRuntime: input.preparedModelRuntime
+ 	}), { config: params.config });
++	qqPreparationTrace?.point("runtime_prepare_ready");
+ 	const abortSignal = input.laneController.abortSignal;
+ 	params = {
+ 		...params,
+@@ -7889,6 +7933,7 @@
+ 	let lastRetryFailoverReason = null;
+ 	let codexAppServerRecoveryRetries = 0;
+ 	let emptyErrorRetries = 0;
++	qqPreparationTrace?.point("session_prompt_state_begin");
+ 	const sessionPromptState = await createEmbeddedRunSessionPromptState({
+ 		runParams: params,
+ 		sessionAgentId,
+@@ -7896,6 +7941,7 @@
+ 		lifecycleGeneration,
+ 		onInterrupt: (reason) => input.laneController.laneTaskAbortController.abort(reason)
+ 	});
++	qqPreparationTrace?.point("session_prompt_state_ready");
+ 	const providerReview = createProviderReviewRun({
+ 		run: admittedRunInput,
+ 		runtime: preparedRuntime,
+@@ -7921,7 +7967,9 @@
+ 		getApiKeyInfo,
+ 		advanceAuthProfile: preparedRuntime.advanceAttemptAuthProfile
+ 	});
++	qqPreparationTrace?.point("context_engine_admit_begin");
+ 	const { contextEngine, contextEngineLogicalTurnLease, ownsContextEngineLogicalTurnLease } = await admitEmbeddedContextEngine(admittedRunInput, agentHarness);
++	qqPreparationTrace?.point("context_engine_admit_ready");
+ 	startupStages.mark("context-engine");
+ 	notifyExecutionPhase("context_engine", {
+ 		provider,
+@@ -8524,7 +8572,10 @@
+ 				};
+ 				options.setParams(params);
+ 			}
++			const qqWriterTrace = qqHostLatencyTraceFromContext(params.qqLatencyTraceContext, "embedded", log$3);
++			qqWriterTrace?.point("writer_claim_begin");
+ 			const writerClaim = await claimAgentSessionWriter(params);
++			qqWriterTrace?.point("writer_claim_ready");
+ 			if (writerClaim) {
+ 				params = {
+ 					...params,
+@@ -8536,6 +8587,7 @@
+ 				};
+ 				options.setParams(params);
+ 			}
++			qqWriterTrace?.point("placement_admission_begin");
+ 			return await withAgentRunLifecycleGeneration(lifecycleGeneration, () => withSessionPlacementTurnAdmission({
+ 				sessionId: params.sessionId,
+ 				...params.agentId ? { agentId: params.agentId } : {},
+@@ -8543,6 +8595,7 @@
+ 				runId: params.runId
+ 			}, params, () => {
+ 				assertPlacementCurrent = resolveSessionPlacementTurnSettlementAssertion();
++				qqWriterTrace?.point("placement_admission_ready");
+ 				return task();
+ 			}, () => {
+ 				throwIfAborted();
+@@ -8840,6 +8893,8 @@
+ 	}));
+ }
+ async function runEmbeddedAgentInternal(paramsInput) {
++	const qqLatencyTrace = qqHostLatencyTraceFromContext(paramsInput.qqLatencyTraceContext, "embedded", log$3);
++	qqLatencyTrace?.point("embedded_enter");
+ 	const contextEngineAgentId = normalizeOptionalString(paramsInput.sessionTarget?.agentId) ?? normalizeOptionalString(paramsInput.agentId);
+ 	const paramsBase = applyAgentRunSessionTargetIdentity(paramsInput);
+ 	const skillWorkshopProposalMutationBudget = paramsBase.skillWorkshopProposalOnly ? paramsBase.skillWorkshopProposalMutationBudget ?? { remaining: 1 } : void 0;
+@@ -8860,6 +8915,7 @@
+ 		missingSessionKey: "create",
+ 		sessionKey: effectiveSessionKey
+ 	});
++	qqLatencyTrace?.point("session_target_ready");
+ 	let params = withExecutionPhaseDiagnostics({
+ 		...paramsBase,
+ 		sessionManager: paramsBase.sessionManager ?? (paramsBase.sessionPersistence === "detached" ? SessionManager.inMemory(paramsBase.cwd ?? paramsBase.workspaceDir) : void 0),
+@@ -8908,7 +8964,9 @@
+ 		...params,
+ 		messageActionTurnCapability: recoveryMessageActionTurnCapability
+ 	};
++	qqLatencyTrace?.point("session_lane_enqueue");
+ 	return enqueueSession(async () => {
++		qqLatencyTrace?.point("session_lane_enter");
+ 		throwIfAborted();
+ 		if (!params.sessionManager || params.sessionManager.getSessionTarget()) {
+ 			params.replyOperation?.markWaitingForDeferredMaintenance();
+@@ -8919,7 +8977,9 @@
+ 			}
+ 		}
+ 		throwIfAborted();
++		qqLatencyTrace?.point("global_lane_enqueue");
+ 		return enqueueGlobal(async () => {
++			qqLatencyTrace?.point("global_lane_enter");
+ 			const started = Date.now();
+ 			const refresh = createEmbeddedAgentPluginRuntimeRefresh(params);
+ 			const usage = createUsageAccumulator();
+@@ -9010,6 +9070,7 @@
+ 				let initialWriterCleanup = Promise.resolve();
+ 				const runPreparedCandidate = async () => {
+ 					laneController.setLaneTaskDeadline({ kind: "unlimited" });
++					qqLatencyTrace?.point("prepared_runtime_begin");
+ 					const preparedModelRuntimeLease = await (params.preparedModelRuntimeMode === "isolated-read-only" ? acquireReadOnlyPreparedModelRuntime(preparedInput, {
+ 						abortSignal: laneController.abortSignal,
+ 						catalogMode: "static"
+@@ -9022,6 +9083,7 @@
+ 						noteLaneTaskProgress();
+ 						laneController.setLaneTaskDeadline(void 0);
+ 					});
++					qqLatencyTrace?.point("prepared_runtime_ready");
+ 					preparedRuntimeResource = preparedModelRuntimeLease;
+ 					startupStages.mark("prepared-runtime");
+ 					const preparedModelRuntimeOwnerSnapshot = preparedModelRuntimeLease.snapshot;
+@@ -9305,3 +9367,16 @@
+ }
+ //#endregion
+ export { compactEmbeddedAgentSession as n, runEmbeddedAgent as t };
++
++// QQ-TTS-ARTIFACT-PASSIVE v1. Counts/booleans only; never path-based authority.
++function qqTtsArtifactPassive(stage, run, fields) {
++ try {
++  const sessionKey=run?.sessionKey;
++  const groupAlias=sessionKey==='agent:main:qqbot:group:__HS_GROUP_NEW_OPENID__'?'new':sessionKey==='agent:main:qqbot:group:__HS_GROUP_OLD_OPENID__'?'old':null;
++  const runId=run?.runId;
++  if(!groupAlias||typeof runId!=='string'||runId.length<1||runId.length>512||/[\x00-\x1f]/.test(runId))return;
++  console.info('[qq-tts-artifact] '+JSON.stringify({schema:'qq-tts-artifact-v1',stage,groupAlias,
++   nativeRunHash:qqTtsArtifactCreateHash('sha256').update('qq-claude-native-run-v1\0'+runId).digest('hex').slice(0,24),
++   bindingKind:'current-host-run-hash-only-requires-explicit-sdk-bridge',hasCallProvenance:false,...fields}));
++ }catch{}
++}

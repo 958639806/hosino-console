@@ -1,0 +1,105 @@
+diff -ruN a/dist/drain-Da2fh6J9.mjs b/dist/drain-Da2fh6J9.mjs
+--- a/dist/drain-Da2fh6J9.mjs	2026-11-13 19:09:04.057020499 +0800
++++ b/dist/drain-Da2fh6J9.mjs	2026-11-13 19:09:04.061020702 +0800
+@@ -1,3 +1,4 @@
++import { qqQueueDiagnostic, qqQueuedWaitFields } from "./qq-queue-diagnostics.mjs";
+ import { l as normalizeOptionalString } from "./string-coerce-6kR-86XC.mjs";
+ import { i as resolveGlobalSingleton, n as resolveGlobalMap } from "./global-singleton-BfHBYj6Y.mjs";
+ import "./src-SskUVPJG.mjs";
+@@ -21,7 +22,7 @@
+ import { n as runAgentHarnessBeforeMessageWriteHook } from "./hook-helpers-CP-hOKld.mjs";
+ import { t as createUserTurnTranscriptRecorder } from "./user-turn-transcript-Cu1ZcrNh.mjs";
+ import { r as buildPersistedUserTurnMediaInputsFromFields } from "./user-turn-transcript.message-Bb1TX1Le.mjs";
+-import { C as previewQueueSummaryPrompt, E as waitForQueueDebounce, S as hasCrossChannelItems, _ as beginQueueDrain, a as followupQueueSources, b as drainCollectQueueStep, d as admitFollowupRunLifecycle, f as completeFollowupRunLifecycle, m as retireFollowupRunCancellation, n as FOLLOWUP_QUEUES, r as clearFollowupQueue, u as trimSummaryElisionsToCap, v as buildCollectPrompt, w as removeQueuedItemsByRef, x as drainNextQueueItem } from "./state-D7Sqv4oU.mjs";
++import { y as countPendingQueueItems, C as previewQueueSummaryPrompt, E as waitForQueueDebounce, S as hasCrossChannelItems, _ as beginQueueDrain, a as followupQueueSources, b as drainCollectQueueStep, d as admitFollowupRunLifecycle, f as completeFollowupRunLifecycle, m as retireFollowupRunCancellation, n as FOLLOWUP_QUEUES, r as clearFollowupQueue, u as trimSummaryElisionsToCap, v as buildCollectPrompt, w as removeQueuedItemsByRef, x as drainNextQueueItem } from "./state-D7Sqv4oU.mjs";
+ import { t as isRoutableChannel } from "./route-reply-DEgSqkug.mjs";
+ import { n as combineGatewayLocalUserIngress } from "./local-user-ingress-DEnxvxDH.mjs";
+ import { a as resolveReplyScreenToolTarget, i as resolveReplyOperatorAuthorityKey, o as resolveReplyThemeProfileId } from "./reply-tool-authority-50EKGL7j.mjs";
+@@ -218,6 +219,7 @@
+ 		abortSignal,
+ 		queueAbortSignal: items.find((item) => item.queueAbortSignal)?.queueAbortSignal,
+ 		deliveryCorrelations: deliveryCorrelations.length > 0 ? deliveryCorrelations : void 0,
++		qqExplicitStopSource: items.length === 1 ? items[0]?.qqExplicitStopSource : void 0,
+ 		turnAdoptionLifecycle: items.length === 1 ? items[0]?.turnAdoptionLifecycle : void 0,
+ 		replyOperationRunStates: items.flatMap((item) => item.replyOperationRunStates ?? []),
+ 		queuedFollowupReplyDisposition: items.at(-1)?.queuedFollowupReplyDisposition
+@@ -242,11 +244,14 @@
+ 		images: source.images,
+ 		imageOrder: source.imageOrder,
+ 		media: source.media,
++		currentTurnImagesPrepared: source.currentTurnImagesPrepared,
++		mediaImageLayout: source.mediaImageLayout,
+ 		channelAdmissionEvidence: source.channelAdmissionEvidence,
+ 		gatewayLocalUserIngress: source.gatewayLocalUserIngress,
+ 		messageId: source.messageId,
+ 		summaryLine: source.summaryLine,
+ 		enqueuedAt: source.enqueuedAt,
++		qqQueueEnteredAt: source.qqQueueEnteredAt,
+ 		originatingChannel: source.originatingChannel,
+ 		originatingTo: source.originatingTo,
+ 		originatingAccountId: source.originatingAccountId,
+@@ -777,9 +782,13 @@
+ 		params.source.originatingReplyToMode ?? "",
+ 		normalizeChatType(params.source.originatingChatType) ?? ""
+ 	])).digest("hex");
++	const summaryMedia = collectQueuedPromptMedia(params.visibleSources ?? params.sources);
++	if (params.source.originatingChannel === "qqbot" || params.source.run?.messageProvider === "qqbot") qqQueueDiagnostic(params.source.run?.sessionKey,"drain-start", { ...qqQueuedWaitFields(params.sources), resolvedDisposition:"summarize", mediaCount:summaryMedia.media?.length ?? 0, mediaRetained:true });
+ 	const userTurnTranscriptRecorder = createUserTurnTranscriptRecorder({
+ 		input: {
+ 			text: params.prompt,
++			...summaryMedia.media?.length ? { media:summaryMedia.media } : {},
++			...summaryMedia.mediaImageLayout ? { mediaImageLayout:summaryMedia.mediaImageLayout } : {},
+ 			idempotencyKey: `followup-overflow:${params.source.run.sessionId}:${routeHash}:${params.source.messageId ?? params.source.enqueuedAt}:${promptHash}`,
+ 			senderIsOwner: params.source.run.senderIsOwner,
+ 			provenance: params.source.run.inputProvenance
+@@ -799,6 +808,7 @@
+ 		transcriptPrompt: params.prompt,
+ 		messageId: params.source.messageId,
+ 		userTurnTranscriptRecorder,
++		...summaryMedia,
+ 		run: resolveCollectedRun(params.sources, params.source.run),
+ 		enqueuedAt: Date.now(),
+ 		abortSignal: params.abortSignal,
+@@ -853,6 +863,7 @@
+ 		await runSyntheticOverflowSummary({
+ 			source,
+ 			sources: [...elidedSources, ...retainedSources],
++			visibleSources: [...elidedSources, ...retainedSources].slice(-params.queue.cap),
+ 			prompt,
+ 			abortSignal,
+ 			onAdmitted,
+@@ -900,6 +911,7 @@
+ 		await runSyntheticOverflowSummary({
+ 			source,
+ 			sources: delivery.sources,
++			visibleSources: delivery.sources.slice(-params.queue.cap),
+ 			prompt: delivery.prompt,
+ 			abortSignal,
+ 			onAdmitted,
+@@ -936,7 +948,10 @@
+ 					waitingForSteer = true;
+ 					break;
+ 				}
++				const qqDiagnostic = key.includes(":qqbot:") || queue.items.some(item=>item.originatingChannel === "qqbot" || item.run?.messageProvider === "qqbot");
++				const debounceStarted = performance.now();
+ 				await waitForQueueDebounce(queue, queue.abortController.signal);
++				if (qqDiagnostic) qqQueueDiagnostic(key,"debounce", { waitMs:performance.now()-debounceStarted, queueDepth:countPendingQueueItems(queue.items,queue.inFlight), inFlight:queue.inFlight.size, summarySources:queue.summarySources.length, droppedCount:queue.droppedCount, debounceMs:queue.debounceMs, cap:queue.cap, queueMode:queue.mode });
+ 				await dropAbortedFollowups(queue, effectiveRunFollowup);
+ 				if (queue.items.length === 0 && queue.droppedCount === 0) break;
+ 				if (queue.items.some((item) => item.steerPending)) {
+@@ -1005,6 +1020,7 @@
+ 							for (const item of activeGroupItems) completeFollowupRunLifecycle(item);
+ 						};
+ 						const drainGroup = async () => {
++							if (qqDiagnostic) qqQueueDiagnostic(key,"drain-start", { ...qqQueuedWaitFields(activeGroupItems), queueDepth:countPendingQueueItems(queue.items,queue.inFlight), inFlight:queue.inFlight.size, resolvedDisposition:"collect" });
+ 							await effectiveRunFollowup({
+ 								prompt,
+ 								transcriptPrompt,
+@@ -1054,6 +1070,7 @@
+ 					}
+ 					continue;
+ 				}
++				if (qqDiagnostic) qqQueueDiagnostic(key,"drain-start", { ...qqQueuedWaitFields(queue.items.slice(0,1)), queueDepth:countPendingQueueItems(queue.items,queue.inFlight), inFlight:queue.inFlight.size, resolvedDisposition:"followup" });
+ 				if (!await drainNextQueueItem(queue.items, effectiveRunFollowup, reserveOptions)) break;
+ 			}
+ 		} catch (err) {

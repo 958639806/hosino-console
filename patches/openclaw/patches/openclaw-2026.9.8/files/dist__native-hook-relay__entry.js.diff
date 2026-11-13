@@ -1,0 +1,143 @@
+diff -ruN a/dist/native-hook-relay/entry.js b/dist/native-hook-relay/entry.js
+--- a/dist/native-hook-relay/entry.js	2026-11-13 19:09:04.133024337 +0800
++++ b/dist/native-hook-relay/entry.js	2026-11-13 19:09:04.133024337 +0800
+@@ -40,23 +40,46 @@
+ 	});
+ }
+ //#endregion
++// Passive failure metadata only; never changes the hook response or permission decision.
++function createNativeHookRelayTiming() {
++	try { return { started: performance.now(), stage: "stdin", marks: {} }; } catch {}
++}
++function markNativeHookRelayTiming(timing, stage) {
++	try {
++		if (!timing) return;
++		timing.stage = stage;
++		if (Object.keys(timing.marks).length < 16 && timing.marks[stage] === void 0) timing.marks[stage] = Math.max(0, Math.round(performance.now() - timing.started));
++	} catch {}
++}
++function writeNativeHookRelayFailureTiming(stderr, timing) {
++	try {
++		if (!timing) return;
++		const row = { schema: "native-hook-relay-client-timing-v1", stage: timing.stage, elapsedMs: Math.max(0, Math.round(performance.now() - timing.started)), processUptimeMs: Math.max(0, Math.round(process.uptime() * 1e3)), marks: timing.marks };
++		stderr.write(`[native-hook-relay-timing] ${JSON.stringify(row)}\n`);
++	} catch {}
++}
+ //#region src/agents/harness/native-hook-relay-client-store.ts
+ /** Read one native relay locator without loading the shared-state writer lifecycle. */
+ async function readNativeHookRelayClientBridgeRecord(params) {
+ 	const pathname = path.resolve(params.stateDbPath ?? resolveOpenClawStateSqlitePath());
++	markNativeHookRelayTiming(params.timing, "locator_pool_create");
+ 	const pool = new WorkerTaskPool({
+ 		workerUrl: resolveRuntimeProcessEntrypointUrl("nativeHookRelayClient"),
+ 		maxWorkers: 1
+ 	});
+ 	try {
++		markNativeHookRelayTiming(params.timing, "locator_worker_wait");
+ 		const result = await pool.run({
+ 			relayId: params.relayId,
+ 			stateDbPath: pathname
+ 		}, { inputBytes: 2 * (params.relayId.length + pathname.length) });
++		markNativeHookRelayTiming(params.timing, "locator_worker_ready");
+ 		if (!result.ok) throw result.newerSchema ? new SqliteSchemaVersionError(result.error.message) : restoreNativeErrorResponse(result.error);
+ 		return result.record;
+ 	} finally {
++		markNativeHookRelayTiming(params.timing, "locator_worker_close");
+ 		await pool.close();
++		markNativeHookRelayTiming(params.timing, "locator_closed");
+ 	}
+ }
+ //#endregion
+@@ -135,14 +158,17 @@
+ 	while (Date.now() - startedAt < timeoutMs) try {
+ 		const record = await readNativeHookRelayClientBridgeRecord({
+ 			relayId,
+-			stateDbPath: params.stateDbPath
++			stateDbPath: params.stateDbPath,
++			timing: params.timing
+ 		});
+ 		if (!record) throw new Error("native hook relay bridge not found");
+ 		if (isPidDefinitelyDead(record.pid)) throw new Error("native hook relay bridge not found");
+ 		if (Date.now() > record.expiresAtMs) throw new Error("native hook relay bridge expired");
+ 		const remainingMs = timeoutMs - (Date.now() - startedAt);
+ 		if (remainingMs <= 0) throw new Error("native hook relay bridge timed out");
++		markNativeHookRelayTiming(params.timing, "bridge_http_begin");
+ 		return await postNativeHookRelayBridgeRecord({
++			timing: params.timing,
+ 			record,
+ 			timeoutMs: remainingMs,
+ 			payload: {
+@@ -193,6 +219,7 @@
+ 				"content-length": Buffer.byteLength(body)
+ 			}
+ 		}, (res) => {
++			markNativeHookRelayTiming(params.timing, "bridge_http_headers");
+ 			let responseText = "";
+ 			let responseBytes = 0;
+ 			res.setEncoding("utf8");
+@@ -208,6 +235,7 @@
+ 			});
+ 			res.on("error", rejectOnce);
+ 			res.on("end", () => {
++				markNativeHookRelayTiming(params.timing, "bridge_http_end");
+ 				if (settled) return;
+ 				try {
+ 					const parsed = JSON.parse(responseText);
+@@ -225,6 +253,7 @@
+ 			req.destroy(/* @__PURE__ */ new Error("native hook relay bridge timed out"));
+ 		});
+ 		req.on("error", rejectOnce);
++		markNativeHookRelayTiming(params.timing, "bridge_http_wait");
+ 		req.end(body);
+ 	});
+ }
+@@ -337,6 +366,7 @@
+ 		writeText(stderr, formatRelayCliError("invalid native hook timeout", error));
+ 		return 1;
+ 	}
++	const timing = createNativeHookRelayTiming();
+ 	const deadline = createNativeHookRelayDeadline(timeoutMs);
+ 	const writeResponse = (response) => {
+ 		writeText(stdout, response.stdout);
+@@ -351,6 +381,7 @@
+ 	}));
+ 	const timedOut = (error) => {
+ 		writeText(stderr, formatRelayCliError("native hook relay timed out", error));
++		writeNativeHookRelayFailureTiming(stderr, timing);
+ 		return unavailable("Native hook relay timed out");
+ 	};
+ 	try {
+@@ -365,6 +396,7 @@
+ 		}
+ 		try {
+ 			const remainingMs = remainingNativeHookRelayDeadlineMs(deadline);
++			markNativeHookRelayTiming(timing, "bridge_invoke");
+ 			return writeResponse(await withNativeHookRelayDeadline(deadline, invokeBridge({
+ 				provider,
+ 				relayId,
+@@ -373,7 +405,8 @@
+ 				event,
+ 				rawPayload,
+ 				registrationTimeoutMs: Math.min(100, remainingMs),
+-				timeoutMs: remainingMs
++				timeoutMs: remainingMs,
++				timing
+ 			})));
+ 		} catch (error) {
+ 			if (isNativeHookRelayDeadlineError(error)) return timedOut(error);
+@@ -383,6 +416,7 @@
+ 			}
+ 		}
+ 		try {
++			markNativeHookRelayTiming(timing, "gateway_fallback");
+ 			return writeResponse(await withNativeHookRelayDeadline(deadline, callGatewayFn({
+ 				method: "nativeHook.invoke",
+ 				params: {
+@@ -399,6 +433,7 @@
+ 		} catch (error) {
+ 			if (isNativeHookRelayDeadlineError(error)) return timedOut(error);
+ 			writeText(stderr, formatRelayCliError("native hook relay unavailable", error));
++			writeNativeHookRelayFailureTiming(stderr, timing);
+ 			return unavailable();
+ 		}
+ 	} finally {

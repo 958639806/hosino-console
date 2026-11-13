@@ -1,0 +1,39 @@
+diff -ruN a/dist/session-lifecycle-admission-6HF8YqSN.mjs b/dist/session-lifecycle-admission-6HF8YqSN.mjs
+--- a/dist/session-lifecycle-admission-6HF8YqSN.mjs	2026-11-13 19:09:04.881062099 +0800
++++ b/dist/session-lifecycle-admission-6HF8YqSN.mjs	2026-11-13 19:09:04.885062300 +0800
+@@ -1,3 +1,4 @@
++import { beginQqAdmissionSpan, endQqAdmissionSpan, noteQqAdmissionCount } from "./qq-host-latency-trace.mjs";
+ import { t as createDeferredCore } from "./deferred-D0La5CRk.mjs";
+ import { i as resolveGlobalSingleton } from "./global-singleton-BfHBYj6Y.mjs";
+ import { t as safeParseJson } from "./json-coercion-pfKbZnCJ.mjs";
+@@ -664,22 +665,30 @@
+ 			signal.addEventListener("abort", onAbort, { once: true });
+ 			if (signal.aborted) onAbort();
+ 		});
++		const qqLifecycleQueueSpan = beginQqAdmissionSpan(params.qqAdmissionTrace, "lifecycle_queue");
+ 		const acquired = runExclusiveSessionLifecycle({
+ 			scope: params.scope,
+ 			identities: rawIdentities,
+ 			signal,
+ 			run: async () => {
++				endQqAdmissionSpan(params.qqAdmissionTrace, qqLifecycleQueueSpan);
+ 				const current = new Set(CURRENT_SESSION_WORK_ADMISSIONS.getStore());
+ 				current.add(admission);
++				const qqInitialSpan = beginQqAdmissionSpan(params.qqAdmissionTrace, "initial_assert_allowed");
+ 				await CURRENT_SESSION_WORK_ADMISSIONS.run(current, params.assertAllowed, signal);
++				endQqAdmissionSpan(params.qqAdmissionTrace, qqInitialSpan);
+ 				if (isGatewaySubordinateWorkAdmissionClosed()) throw new GatewayDrainingError();
+ 				signal.throwIfAborted();
+ 				admission.phase = "acquired";
++				const qqWriterQueueSpan = beginQqAdmissionSpan(params.qqAdmissionTrace, "store_writer_queue");
+ 				await runExclusiveSessionStoreWrite(params.scope, async () => {
++					endQqAdmissionSpan(params.qqAdmissionTrace, qqWriterQueueSpan);
+ 					writerBarrierStarted = true;
+ 					signal.throwIfAborted();
+ 					const revalidate = params.revalidateAllowed ?? (() => params.assertAllowed(signal));
++					const qqRevalidateSpan = beginQqAdmissionSpan(params.qqAdmissionTrace, "revalidate_allowed");
+ 					await lease.run(async () => await revalidate());
++					endQqAdmissionSpan(params.qqAdmissionTrace, qqRevalidateSpan);
+ 				}, {
+ 					reentrant: true,
+ 					identities: params.storeWriterIdentities

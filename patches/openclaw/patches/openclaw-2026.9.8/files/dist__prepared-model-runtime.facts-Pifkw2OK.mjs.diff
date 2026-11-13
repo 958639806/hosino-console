@@ -1,0 +1,45 @@
+diff -ruN a/dist/prepared-model-runtime.facts-Pifkw2OK.mjs b/dist/prepared-model-runtime.facts-Pifkw2OK.mjs
+--- a/dist/prepared-model-runtime.facts-Pifkw2OK.mjs	2026-11-13 19:09:04.821059070 +0800
++++ b/dist/prepared-model-runtime.facts-Pifkw2OK.mjs	2026-11-13 19:09:04.825059272 +0800
+@@ -182,6 +182,7 @@
+ 			allowWorkspaceScopedCurrent: true
+ 		} : {},
+ 		...input.loadRuntimePlugins && input.runtimePluginSelections && input.workspaceDir ? { pluginIdScope: createAgentRuntimeMetadataPluginIdScope({
++			...input.runtimePluginPurpose ? { purpose: input.runtimePluginPurpose } : {},
+ 			config: input.config,
+ 			workspaceDir: input.workspaceDir,
+ 			selections: input.runtimePluginSelections
+@@ -247,6 +248,7 @@
+ 		env: hashRuntimeConfigValue(input.env ?? process.env),
+ 		readOnly: input.readOnly === true,
+ 		loadRuntimePlugins: input.loadRuntimePlugins === true,
++		...input.runtimePluginPurpose ? { runtimePluginPurpose: input.runtimePluginPurpose } : {},
+ 		workspaceDir: input.workspaceDir,
+ 		allowGatewaySubagentBinding: input.allowGatewaySubagentBinding === true,
+ 		runtimePluginSelections: input.runtimePluginSelections?.map(({ provider, runtime }) => ({
+@@ -395,6 +397,8 @@
+ 		var _usingCtx$1 = _usingCtx();
+ 		const input = inputs[0];
+ 		if (!input) throw new Error("prepared model runtime workspace group is empty");
++		if (input.runtimePluginPurpose !== void 0 && input.runtimePluginPurpose !== "simple-completion" || options.purpose !== void 0 && options.purpose !== "simple-completion" && options.purpose !== "model-catalog") throw new Error("Unsupported workspace runtime plugin purpose");
++		if (inputs.some((candidate) => candidate.runtimePluginPurpose !== input.runtimePluginPurpose) || options.purpose === "simple-completion" && input.runtimePluginPurpose !== "simple-completion" || input.runtimePluginPurpose === "simple-completion" && options.purpose !== void 0 && options.purpose !== input.runtimePluginPurpose || reusablePluginGeneration && reusablePluginGeneration.runtimePluginPurpose !== input.runtimePluginPurpose) throw new Error("Prepared runtime plugin purpose mismatch");
+ 		const env = input.env ?? process.env;
+ 		let workspacePluginIds = [];
+ 		const reportStage = (stage) => options.onStage?.(`${stage}; agent ${input.agentId ?? "standalone"}` + (workspacePluginIds.length ? `; workspace plugins ${workspacePluginIds.join(", ")}` : ""));
+@@ -410,7 +414,7 @@
+ 		const localResources = _usingCtx$1.a(new AsyncDisposableStack());
+ 		const registryResources = options.registryResources ?? localResources.use(new PreparedModelRuntimeBuildResources(retainPreparedPluginRegistry));
+ 		registryResources.retainGeneration(reusablePluginGeneration);
+-		const preparingRegistries = prepareWorkspacePluginRegistries(input, pluginMetadataSnapshot, (registry) => registryResources.retainRegistry(registry), loadInboundPluginRegistry, preferBuiltPluginArtifacts, reusablePluginGeneration, options.getConfiguredHarnessRuntimes, options.basePluginIds, options.loadRuntimeRegistry, options.purpose);
++		const preparingRegistries = prepareWorkspacePluginRegistries(input, pluginMetadataSnapshot, (registry) => registryResources.retainRegistry(registry), loadInboundPluginRegistry, preferBuiltPluginArtifacts, reusablePluginGeneration, options.getConfiguredHarnessRuntimes, options.basePluginIds, options.loadRuntimeRegistry, options.purpose ?? input.runtimePluginPurpose);
+ 		const { inboundPluginRegistry, runtimePluginRegistry, primaryRegistry } = preparingRegistries instanceof Promise ? await preparingRegistries : preparingRegistries;
+ 		const reuseRuntimeFacts = reusablePluginGeneration && runtimePluginRegistry === reusablePluginGeneration.pluginRegistry;
+ 		const resources = primaryRegistry && getPluginRegistryInspectionResources(primaryRegistry);
+@@ -569,6 +573,7 @@
+ 			}
+ 			const configuredProjectionMs = performance.now() - configuredProjectionStartedAt;
+ 			const pluginGeneration = createPreparedPluginGeneration({
++				...input.runtimePluginPurpose ? { runtimePluginPurpose: input.runtimePluginPurpose } : {},
+ 				catalogMode,
+ 				configuredCatalogEntries,
+ 				inboundPluginRegistry,

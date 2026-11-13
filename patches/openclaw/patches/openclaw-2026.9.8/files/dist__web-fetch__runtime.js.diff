@@ -1,0 +1,115 @@
+diff -ruN a/dist/web-fetch/runtime.js b/dist/web-fetch/runtime.js
+--- a/dist/web-fetch/runtime.js	2026-11-13 19:09:04.933064724 +0800
++++ b/dist/web-fetch/runtime.js	2026-11-13 19:09:04.933064724 +0800
+@@ -7,6 +7,23 @@
+ import { n as resolveRuntimeWebFetchProviders, t as resolvePluginWebFetchProviders } from "../web-fetch-providers.runtime-ChuIuUb1.mjs";
+ import { i as resolveWebProviderConfig, n as providerRequiresCredential, r as readWebProviderEnvValue, t as hasWebProviderEntryCredential } from "../provider-runtime-shared-Cez32igX.mjs";
+ //#region src/web-fetch/runtime.ts
++// QQ-WEB-PROVIDER-RESOLUTION-OBSERVER v1: private synchronous numeric observations only.
++function qqWebProviderResolutionObserver(options) {
++	try {
++		const value = Object.getOwnPropertyDescriptor(options ?? {}, "__qqWebFetchResolutionObserver")?.value;
++		return typeof value === "function" ? value : void 0;
++	} catch { return; }
++}
++function qqWebProviderResolutionNote(observer, key, value) {
++	try { if (observer) observer(key, value); } catch {}
++}
++function qqWebProviderResolutionNow(observer) {
++	try { const value = observer ? Number(process.hrtime.bigint()) / 1e6 : null; return Number.isFinite(value) && value >= 0 ? value : null; } catch { return null; }
++}
++function qqWebProviderResolutionEnd(observer, key, began) {
++	try { const ended = qqWebProviderResolutionNow(observer); if (began !== null && ended !== null && ended >= began) qqWebProviderResolutionNote(observer, key, ended - began); } catch {}
++}
++// END QQ-WEB-PROVIDER-RESOLUTION-OBSERVER v1.
+ const webFetchProviderCache = /* @__PURE__ */ new WeakMap();
+ function resolveFetchConfig(config) {
+ 	return resolveWebProviderConfig(config, "fetch");
+@@ -60,8 +77,13 @@
+ 	]);
+ }
+ function resolveCachedWebFetchProviders(params) {
++	const observer = qqWebProviderResolutionObserver(params);
+ 	const cached = webFetchProviderCache.get(params.config);
+-	if (cached?.cacheKey === params.cacheKey && cached.configFingerprint === params.configFingerprint) return cached.providers;
++	if (cached?.cacheKey === params.cacheKey && cached.configFingerprint === params.configFingerprint) {
++		qqWebProviderResolutionNote(observer, "directoryCacheOutcome", "hit");
++		return cached.providers;
++	}
++	qqWebProviderResolutionNote(observer, "directoryCacheOutcome", "miss");
+ 	const loaded = params.load();
+ 	if (loaded.length > 0) webFetchProviderCache.set(params.config, {
+ 		cacheKey: params.cacheKey,
+@@ -71,16 +93,21 @@
+ 	return loaded;
+ }
+ function resolveWebFetchProvidersForOptions(options) {
++	const observer = qqWebProviderResolutionObserver(options);
++	const observerOptions = observer ? { __qqWebFetchResolutionObserver: observer } : {};
+ 	const load = () => sortPluginEntriesForAutoDetect(options?.sandboxed ? resolvePluginWebFetchProviders({
+ 		config: options?.config,
+-		sandboxed: true
+-	}) : options?.preferRuntimeProviders ? resolveRuntimeWebFetchProviders({ config: options?.config }) : resolvePluginWebFetchProviders({ config: options?.config }));
++		sandboxed: true,
++		...observerOptions
++	}) : options?.preferRuntimeProviders ? resolveRuntimeWebFetchProviders({ config: options?.config, ...observerOptions }) : resolvePluginWebFetchProviders({ config: options?.config, ...observerOptions }));
+ 	if (options?.config) return resolveCachedWebFetchProviders({
+ 		config: options.config,
+ 		cacheKey: resolveWebFetchProviderCacheKey(options),
+ 		configFingerprint: resolveRuntimeConfigCacheKey(options.config),
++		...observerOptions,
+ 		load
+ 	});
++	qqWebProviderResolutionNote(observer, "directoryCacheOutcome", "not_checked");
+ 	return load();
+ }
+ /** Resolves the executable web_fetch provider tool definition. */
+@@ -88,23 +115,35 @@
+ 	const fetch = resolveFetchConfig(options?.config);
+ 	if (fetch?.enabled === false) return null;
+ 	const runtimeWebFetch = options?.runtimeWebFetch ?? getActiveRuntimeWebToolsMetadataFromState()?.fetch;
+-	const providers = resolveWebFetchProvidersForOptions(options);
+-	if (providers.length === 0) return null;
+-	const providerId = options?.providerId ?? resolveConfiguredWebFetchProviderId({
+-		fetch,
+-		providers
+-	}) ?? runtimeWebFetch?.selectedProvider ?? resolveAutoWebFetchProviderId({
+-		config: options?.config,
+-		fetch,
+-		providers
+-	});
+-	const provider = providers.find((entry) => entry.id === providerId);
++	const observer = qqWebProviderResolutionObserver(options);
++	const directoryBegan = qqWebProviderResolutionNow(observer);
++	let providers;
++	try { providers = resolveWebFetchProvidersForOptions(options); }
++	finally { qqWebProviderResolutionEnd(observer, "directoryMs", directoryBegan); }
++	const directoryProviderCount = providers.length;
++	qqWebProviderResolutionNote(observer, "directoryProviderCount", directoryProviderCount);
++	if (directoryProviderCount === 0) return null;
++	const selectionBegan = qqWebProviderResolutionNow(observer);
++	let providerId, provider;
++	try {
++		providerId = options?.providerId ?? resolveConfiguredWebFetchProviderId({
++			fetch,
++			providers
++		}) ?? runtimeWebFetch?.selectedProvider ?? resolveAutoWebFetchProviderId({
++			config: options?.config,
++			fetch,
++			providers
++		});
++		provider = providers.find((entry) => entry.id === providerId);
++	} finally { qqWebProviderResolutionEnd(observer, "providerSelectionMs", selectionBegan); }
+ 	if (!provider) return null;
+-	const definition = provider.createTool({
++	const createToolBegan = qqWebProviderResolutionNow(observer);
++	let definition;
++	try { definition = provider.createTool({
+ 		config: options?.config,
+ 		fetchConfig: fetch,
+ 		runtimeMetadata: runtimeWebFetch
+-	});
++	}); } finally { qqWebProviderResolutionEnd(observer, "providerCreateToolMs", createToolBegan); }
+ 	return definition ? {
+ 		provider,
+ 		definition

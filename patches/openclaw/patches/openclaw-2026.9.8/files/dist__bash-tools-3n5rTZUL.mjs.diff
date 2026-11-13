@@ -1,0 +1,59 @@
+diff -ruN a/dist/bash-tools-3n5rTZUL.mjs b/dist/bash-tools-3n5rTZUL.mjs
+--- a/dist/bash-tools-3n5rTZUL.mjs	2026-11-13 19:09:04.017018483 +0800
++++ b/dist/bash-tools-3n5rTZUL.mjs	2026-11-13 19:09:04.017018483 +0800
+@@ -3648,6 +3648,36 @@
+ * Exec tool policy, host dispatch, and process lifecycle pipeline.
+ */
+ const BACKGROUND_EXEC_FOLLOW_UP = "Use process (list/poll/log/write/send-keys/submit/paste/kill/clear/remove) for follow-up.";
++/* QQ-CONTROLLED-MEDIA-EXEC-BRIDGE v1: host defaults only; final execution boundary. */
++function __qqControlledExecCandidate(defaults, params, workdir) {
++  const manager = globalThis[Symbol.for("openclaw.qqControlledMediaJobs.v1")];
++  const context = { sessionKey: defaults?.runSessionKey ?? defaults?.sessionKey };
++  const configuration = defaults?.config?.plugins?.entries?.["qq-group-followup-gate"]?.config?.controlledMediaJobs;
++  if (!manager && configuration?.enabled === true && configuration.execJobs === true && configuration.groups?.some(group => String(context.sessionKey || "").endsWith(`:qqbot:group:${String(group).toLowerCase()}`))) throw new Error("MEDIA_JOB_GUARD_NOT_READY");
++  if (!manager?.execJobsEnabled || !manager.scoped(context)) return;
++  if (!/(?:^|[\s;&|])(?:python3?|\/usr\/bin\/python3?)\s+[^\n]*\b(?:xingye_voice|xingye_tts|grok_imagine)\.py\b/.test(params.command || "")) return;
++  const origin = manager.originFor(defaults?.qqControlledMediaRequester, context);
++  const recipe = manager.parse(params.command, workdir ?? defaults?.cwd);
++  if (!recipe) {
++    if (/\s--(?:check|help)(?:\s|$)/.test(params.command) && !/[;&|\n]/.test(params.command)) return;
++    throw new Error("MEDIA_WRAPPER_REQUIRES_DIRECT_ADMITTED_COMMAND");
++  }
++  if (params.pty || Object.keys(params.env || {}).length) throw new Error("MEDIA_JOB_INTERACTIVE_OR_ENV_OVERRIDE_UNSUPPORTED");
++  return { manager, origin, recipe };
++}
++async function __qqControlledExecSubmit(candidate, signal, assertSourceActive, gatewayApproval) {
++  signal?.throwIfAborted(); assertSourceActive();
++  gatewayApproval?.assertCurrent?.();
++  await gatewayApproval?.revalidateBeforeExecution?.();
++  signal?.throwIfAborted(); assertSourceActive();
++  const scope = globalThis[Symbol.for("openclaw.gatewayWorkAdmissionState")]?.currentRootWork;
++  const submit = () => candidate.manager.submit(candidate.origin, candidate.recipe);
++  const status = await (scope?.exit ? scope.exit(submit) : submit());
++  const text = `CONTROLLED_MEDIA_JOB ${JSON.stringify(status)}。受控任务已接管；原脚本不重复执行，成功媒体自动交付一次。过期用 /media-job get ${status.jobId.slice(0, 12)} 领取，状态/取消用 /media-job status|cancel ${status.jobId.slice(0, 12)}。勿另行发送同一媒体。`;
++  return { content: [{ type: "text", text }], details: { status: "completed", delegated: true, ...status } };
++}
++/* /QQ-CONTROLLED-MEDIA-EXEC-BRIDGE v1 */
++
+ /** Creates an exec tool instance with runtime defaults and approval policy wiring. */
+ function createExecTool(defaults) {
+ 	const secretEgressEnabled = isSecretEgressProxyActive();
+@@ -3856,6 +3886,10 @@
+ 				stateDir: resolveStateDir(),
+ 				workdir
+ 			});
++			const __qqMediaCandidate = __qqControlledExecCandidate(defaults, params, workdir);
++			// The existing deferred-approval callback launches independently. Until it
++			// carries this durable authority, fail before opening an approval request.
++			if (__qqMediaCandidate && (host !== "gateway" || security !== "full" || ask !== "off" || autoReview)) throw new Error("MEDIA_JOB_ASYNC_APPROVAL_OR_REMOTE_HOST_UNSUPPORTED");
+ 			let run;
+ 			const settlement = createExecProcessSettlement();
+ 			let effectiveTimeout;
+@@ -3992,6 +4026,7 @@
+ 					command: params.command,
+ 					workdir: scriptPreflightCwd
+ 				});
++				if (__qqMediaCandidate) return attachExecApprovalReview(await __qqControlledExecSubmit(__qqMediaCandidate, signal, assertSourceActive, gatewayApproval), approvalReview);
+ 				run = await runExecProcess({
+ 					command: params.command,
+ 					execCommand: execCommandOverride,

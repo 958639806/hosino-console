@@ -1,0 +1,28 @@
+diff -ruN a/dist/coordinator-CylDxma1.mjs b/dist/coordinator-CylDxma1.mjs
+--- a/dist/coordinator-CylDxma1.mjs	2026-11-13 19:09:04.049020097 +0800
++++ b/dist/coordinator-CylDxma1.mjs	2026-11-13 19:09:04.049020097 +0800
+@@ -1,3 +1,4 @@
++import { beginQqAdmissionSpan, endQqAdmissionSpan, noteQqAdmissionCount } from "./qq-host-latency-trace.mjs";
+ import { t as createDeferredCore } from "./deferred-D0La5CRk.mjs";
+ import { i as resolveGlobalSingleton } from "./global-singleton-BfHBYj6Y.mjs";
+ import { r as racePromiseWithAbortSignal, t as createAbortError } from "./abort-signal-Z3A36sLL.mjs";
+@@ -121,7 +122,7 @@
+ 	};
+ }
+ /** Reserve foreground priority before queueing so optional work cannot seize its lane. */
+-async function beginForegroundSessionMaintenance(sessionKey) {
++async function beginForegroundSessionMaintenance(sessionKey, qqAdmissionTrace) {
+ 	const key = sessionKey?.trim();
+ 	if (!key) return () => {};
+ 	const session = sessionState(key);
+@@ -135,7 +136,10 @@
+ 		releaseSessionState(key, session);
+ 	};
+ 	const existing = independentOwners(session, state.current.getStore());
++	noteQqAdmissionCount(qqAdmissionTrace, "foregroundOwners", existing.length);
++	noteQqAdmissionCount(qqAdmissionTrace, "foregroundRunningOwners", existing.filter((owner) => owner.running).length);
+ 	const optional = existing.filter((owner) => owner.preemptible);
++	noteQqAdmissionCount(qqAdmissionTrace, "foregroundPreemptibleOwners", optional.length);
+ 	for (const owner of optional) {
+ 		recordPhase(key, owner, "foreground_preemption_requested");
+ 		owner.controller.abort(createAbortError("Session maintenance yielded to a foreground turn"));

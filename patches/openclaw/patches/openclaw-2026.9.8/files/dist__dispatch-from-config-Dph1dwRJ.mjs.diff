@@ -1,0 +1,163 @@
+diff -ruN a/dist/dispatch-from-config-Dph1dwRJ.mjs b/dist/dispatch-from-config-Dph1dwRJ.mjs
+--- a/dist/dispatch-from-config-Dph1dwRJ.mjs	2026-11-13 19:09:04.057020499 +0800
++++ b/dist/dispatch-from-config-Dph1dwRJ.mjs	2026-11-13 19:09:04.057020499 +0800
+@@ -1,3 +1,5 @@
++import { mintQQReplyAdmissionTrace, bindQQReplyAdmissionOperation } from './qq-reply-admission-trace.mjs';
++import { createQqHostLatencyTrace, qqHostLatencyTraceFromContext, createQqAdmissionTrace, closeQqAdmissionTrace, qqClaudeCoreRoutePoint, measureQQClaudeCoreRoute } from "./qq-host-latency-trace.mjs";
+ import { c as normalizeOptionalLowercaseString, l as normalizeOptionalString, o as normalizeLowercaseStringOrEmpty } from "./string-coerce-6kR-86XC.mjs";
+ import { o as asDateTimestampMs } from "./number-coercion-Dq1l5muL.mjs";
+ import { t as createDeferredCore } from "./deferred-D0La5CRk.mjs";
+@@ -1709,8 +1711,11 @@
+ 			lifecycleOnlyAbortController?.abort();
+ 		};
+ 		const admitCurrentReplyTurn = async () => {
++			const qqAdmissionTrace = phase === "pre_dispatch" ? createQqAdmissionTrace(params.qqLatencyTrace) : null;
+ 			try {
+ 				return await admitReplyTurn({
++					qqAdmissionTrace,
++					qqReplyAdmissionTicket: params.replyOptions?.[REPLY_ADMISSION_TICKET],
+ 					runId: params.replyOptions?.runId,
+ 					assertRequestCurrent: () => params.replyOptions?.operatorAuthority?.assertCurrent(),
+ 					providerReviewAcknowledgment: params.replyOptions?.providerReviewAcknowledgment,
+@@ -1735,10 +1740,12 @@
+ 			} catch (error) {
+ 				if (phase === "pre_dispatch" && replyTurnKind === "visible" && isSessionWorkStartInvalidatedError(error)) throw new DispatchSessionRefreshRequiredError(error);
+ 				throw error;
++			} finally {
++				closeQqAdmissionTrace(qqAdmissionTrace);
+ 			}
+ 		};
+ 		let admission = await admitCurrentReplyTurn();
+-		if (admission.status === "skipped" && admission.reason === "active-run" && replyTurnKind === "visible" && isRecoverableTerminalSessionStatus(params.operationSessionStoreEntry.entry?.status) && admission.activeOperation?.sessionId === params.operationSessionStoreEntry.entry?.sessionId && !admission.activeOperation?.terminalRecovery) {
++		if (admission.status === "skipped" && admission.reason === "active-run" && replyTurnKind === "visible" && isRecoverableTerminalSessionStatus(params.operationSessionStoreEntry.entry?.status) && admission.activeOperation?.sessionId === params.operationSessionStoreEntry.entry?.sessionId && ["completed", "failed", "aborted"].includes(admission.activeOperation?.result?.kind) && !admission.activeOperation?.terminalRecovery) {
+ 			if (forceClearReplyRunBySessionId(admission.activeOperation?.sessionId ?? operationSessionId, /* @__PURE__ */ new Error("clearing stale terminal reply operation"))) {
+ 				admission.lifecycleAdmission?.release();
+ 				logVerbose(`dispatch-from-config: cleared stale active reply operation for terminal session ${dispatchOperationSessionKey}`);
+@@ -1776,6 +1783,7 @@
+ 		}
+ 		if (replyTurnKind === "visible" && isRecoverableTerminalSessionStatus(params.operationSessionStoreEntry.entry?.status) && operationSessionId === params.operationSessionStoreEntry.entry?.sessionId) admission.operation.markTerminalRecovery();
+ 		dispatchReplyOperation = admission.operation;
++		bindQQReplyAdmissionOperation(params.replyOptions?.[REPLY_ADMISSION_TICKET], dispatchReplyOperation);
+ 		dispatchReplyOperation.retainFailureUntilComplete();
+ 		dispatchAbortOperation = admission.operation;
+ 		return { status: "ready" };
+@@ -1896,6 +1904,7 @@
+ function createReplyHotPathTimingTracker(options = {}) {
+ 	const timing = createReplyTimingTracker({
+ 		log: replyHotPathTimingLog,
++		qqLatencyTrace: options.qqLatencyTrace,
+ 		enabled: options.profilerEnabled === true,
+ 		formatMessage: (params, summary, stages) => `reply hot path timings channel=${params.channel} messageId=${params.messageId ?? "unknown"} runId=${params.runId ?? "unknown"} sessionId=${params.sessionId ?? "unknown"} sessionKey=${params.sessionKey ?? "unknown"} outcome=${params.outcome} totalMs=${summary.totalMs} stages=${stages}${params.reason ? ` reason=${params.reason}` : ""}`,
+ 		detailKeys: () => [
+@@ -2017,12 +2026,15 @@
+ 		hasSessionKey: Boolean(sessionKey),
+ 		hasRunId: typeof params.replyOptions?.runId === "string"
+ 	};
+-	const replyHotPathTiming = createReplyHotPathTimingTracker({ profilerEnabled: isReplyProfilerEnabled({ config: cfg }) });
+-	const traceReplyPhase = (name, run) => replyHotPathTiming.measure(name, () => measureDiagnosticsTimelineSpan(name, run, {
++	qqClaudeCoreRoutePoint(ctx, params.replyOptions, "hot_path_enter");
++	const qqLatencyTrace = createQqHostLatencyTrace(ctx, params.replyOptions, "hot_path", replyHotPathTimingLog, params.replyOptions?.runId);
++	qqLatencyTrace?.point("hot_path_enter");
++	const replyHotPathTiming = createReplyHotPathTimingTracker({ profilerEnabled: isReplyProfilerEnabled({ config: cfg }) || isQqPreparationProfileEnabled(ctx, params.replyOptions), qqLatencyTrace });
++	const traceReplyPhase = (name, run) => measureQQClaudeCoreRoute(ctx, params.replyOptions, name, () => replyHotPathTiming.measure(name, () => measureDiagnosticsTimelineSpan(name, run, {
+ 		phase: "agent-turn",
+ 		config: cfg,
+ 		attributes: traceAttributes
+-	}));
++	})));
+ 	let agentDispatchStartedAt = 0;
+ 	const recordProcessed = (outcome, opts) => {
+ 		noteDispatchProcessedOutcome({
+@@ -2186,6 +2198,7 @@
+ 	}
+ 	const workspaceDir = preparedReplyDispatchRuntime?.workspaceDir ?? resolveAgentWorkspaceDir(cfg, sessionAgentId);
+ 	const replyOperationCoordinator = createDispatchReplyOperationCoordinator({
++		qqLatencyTrace,
+ 		allowActiveQueueResolution,
+ 		agentId: operationSessionStoreEntry.agentId ?? sessionAgentId,
+ 		cfg,
+@@ -3340,7 +3353,7 @@
+ //#region src/auto-reply/reply/dispatch-from-config.prepare-operation.ts
+ async function prepareDispatchOperation(state) {
+ 	const { attachSourceReplyDeliveryMode, cfg, chatType, commitInboundDedupeIfClaimed, completeDispatchReplyOperation, ctx, deliverySuppressionReason, dispatcher, emitMessageReceivedHooks, finishReplyOperationAbortedDispatch, hookRunner, isPreDispatchOperationAborted, markIdle, params, persistPluginBindingUserTurn, pluginOwnedBinding, recordProcessed, sendBindingNotice, sessionAgentId, sessionKey, sessionStoreEntry, suppressDelivery, turnLedger } = state;
+-	const abortRuntime = params.fastAbortResolver ? null : await loadAbortRuntime();
++	const abortRuntime = params.fastAbortResolver ? null : await measureQQClaudeCoreRoute(state.ctx, params.replyOptions, "reply.load_abort_runtime", loadAbortRuntime);
+ 	const fastAbortResolver = params.fastAbortResolver ?? abortRuntime?.tryFastAbortFromMessage;
+ 	const formatAbortReplyTextResolver = params.formatAbortReplyTextResolver ?? abortRuntime?.formatAbortReplyText;
+ 	if (!fastAbortResolver || !formatAbortReplyTextResolver) throw new Error("abort runtime unavailable");
+@@ -3387,11 +3400,11 @@
+ 			})
+ 		};
+ 	};
+-	const fastAbort = await fastAbortResolver({
++	const fastAbort = await measureQQClaudeCoreRoute(ctx, params.replyOptions, "reply.fast_abort_resolver", () => fastAbortResolver({
+ 		ctx,
+ 		cfg,
+ 		isCommandTargetCurrent: params.replyOptions?.isCommandTargetCurrent
+-	});
++	}));
+ 	if (fastAbort.handled) {
+ 		if (fastAbort.aborted || (fastAbort.stoppedSubagents ?? 0) > 0) state.markInboundDedupeReplayUnsafe();
+ 		return await finishFastCommand({
+@@ -3609,17 +3622,18 @@
+ 	return await dispatchReplyFromConfigWithQueuePolicy(params, !getGroupThreadTurn());
+ }
+ async function dispatchReplyFromConfigWithQueuePolicy(params, allowActiveQueueResolution) {
+-	const ticket = reserveReplyAdmissionTicket([params.ctx.SessionKey, params.ctx.CommandTargetSessionKey]);
+-	const ticketedParams = ticket ? {
+-		...params,
+-		replyOptions: {
+-			...params.replyOptions,
+-			[REPLY_ADMISSION_TICKET]: ticket
+-		}
+-	} : params;
+-	const messageAuditTerminal = createInboundMessageAuditTerminal(params);
+-	let refreshedSessionSnapshot = false;
++	qqClaudeCoreRoutePoint(params.ctx, params.replyOptions, "config_dispatch_enter");
++	const ticket = reserveReplyAdmissionTicket([params.ctx.SessionKey, params.ctx.CommandTargetSessionKey], mintQQReplyAdmissionTrace(params.ctx, params.replyOptions));
+ 	try {
++		const ticketedParams = ticket ? {
++			...params,
++			replyOptions: {
++				...params.replyOptions,
++				[REPLY_ADMISSION_TICKET]: ticket
++			}
++		} : params;
++		const messageAuditTerminal = createInboundMessageAuditTerminal(params);
++		let refreshedSessionSnapshot = false;
+ 		while (true) try {
+ 			const result = await dispatchReplyFromConfigInner(ticketedParams, messageAuditTerminal, allowActiveQueueResolution);
+ 			messageAuditTerminal?.finishSuccess(result);
+@@ -3637,14 +3651,15 @@
+ 	}
+ }
+ async function dispatchReplyFromConfigInner(params, messageAuditTerminal, allowActiveQueueResolution) {
+-	const gathered = await gatherDispatchRequest(params, messageAuditTerminal, allowActiveQueueResolution);
++	const gathered = await measureQQClaudeCoreRoute(params.ctx, params.replyOptions, "reply.gather_dispatch_request", () => gatherDispatchRequest(params, messageAuditTerminal, allowActiveQueueResolution));
+ 	if (gathered.status === "complete") return gathered.result;
+ 	return await withPluginRuntimeRegistryScope(gathered.state.pluginRegistry, async () => {
+-		const context = await prepareDispatchOperationContext((await prepareDispatchDelivery(gathered.state)).state);
++		const qqRoutePreparedDelivery = await measureQQClaudeCoreRoute(params.ctx, params.replyOptions, "reply.prepare_dispatch_delivery", () => prepareDispatchDelivery(gathered.state));
++		const context = await measureQQClaudeCoreRoute(params.ctx, params.replyOptions, "reply.prepare_dispatch_operation_context", () => prepareDispatchOperationContext(qqRoutePreparedDelivery.state));
+ 		if (context.status === "complete") return context.result;
+ 		const errorState = context.state;
+ 		try {
+-			const operation = await prepareDispatchOperation(context.state);
++			const operation = await measureQQClaudeCoreRoute(params.ctx, params.replyOptions, "reply.prepare_dispatch_operation", () => prepareDispatchOperation(context.state));
+ 			if (operation.status === "complete") return operation.result;
+ 			const route = await chooseDispatchRoute(operation.state);
+ 			if (route.status === "complete") return route.result;
+@@ -3689,3 +3704,13 @@
+ }
+ //#endregion
+ export { emitInboundMessageAuditTerminal as a, resetInboundDedupe as i, dispatchReplyFromConfig as n, resolveBoundAcpDispatchSessionKey as o, emitMessageReceivedHooks as r, DispatchSessionRefreshRequiredError as s, dispatchLowLevelChannelReplyFromConfig as t };
++
++// QQ-PREPARATION-PROFILE-PATCH v1: diagnostics only, one authorized group.
++function isQqPreparationProfileEnabled(ctx, options) {
++	try {
++		if (process.env.OPENCLAW_QQ_PREPARATION_PROFILE !== "1" || options?.isHeartbeat === true || ctx?.InternalTurnSource != null) return false;
++		if (ctx?.SessionKey !== "agent:main:qqbot:group:__HS_GROUP_NEW_OPENID__") return false;
++		const channels = [ctx?.Provider, ctx?.Surface].filter((value) => value != null);
++		return channels.length > 0 && channels.every((value) => typeof value === "string" && value.trim().toLowerCase() === "qqbot");
++	} catch { return false; }
++}

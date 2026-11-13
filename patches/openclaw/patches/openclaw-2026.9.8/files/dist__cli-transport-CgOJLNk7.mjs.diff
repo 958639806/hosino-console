@@ -1,0 +1,239 @@
+diff -ruN a/dist/cli-transport-CgOJLNk7.mjs b/dist/cli-transport-CgOJLNk7.mjs
+--- a/dist/cli-transport-CgOJLNk7.mjs	2026-11-13 19:09:04.037019491 +0800
++++ b/dist/cli-transport-CgOJLNk7.mjs	2026-11-13 19:09:04.037019491 +0800
+@@ -4,7 +4,138 @@
+ import "./process-runtime-DjF1i1Gt.mjs";
+ import { a as createDeferred } from "./extension-shared-BW58_FN4.mjs";
+ import { t as createClaudeCliProcessOwner } from "./cli-process-tHzwN0QT.mjs";
+-import { randomUUID } from "node:crypto";
++import { createHash, randomUUID } from "node:crypto";
++import { createServer } from "node:http";
++// Diagnostic only: no authority, message content, API headers or raw telemetry persisted.
++
++const groups = new Map([
++ ['agent:main:qqbot:group:__HS_GROUP_NEW_OPENID__','new'],
++ ['agent:main:qqbot:group:__HS_GROUP_OLD_OPENID__','old'],
++]);
++const numericKeys = new Set(['duration_ms','ttft_ms','first_content_ms','input_tokens','output_tokens','cache_read_tokens','cache_creation_tokens','attempt']);
++const enumValues = {
++ effort: new Set(['low','medium','high','xhigh','max']),
++ speed: new Set(['normal','fast']),
++ 'llm_request.context': new Set(['interaction','tool','standalone']),
++ query_source_safe: new Set(['repl_main_thread','compact','agent.builtin.general-purpose','agent.custom']),
++};
++const n = x => typeof x==='number' && Number.isFinite(x) && x>=0 && x<=Number.MAX_SAFE_INTEGER ? Math.round(x*1000)/1000 : null;
++const epochNs = () => BigInt(Math.round((performance.timeOrigin+performance.now())*1e6));
++function attrs(rows) {
++ const out=Object.create(null);
++ if(!Array.isArray(rows)||rows.length>512) return out;
++ const seen=new Set();
++ for(const row of rows) {
++  const k=row?.key;if(typeof k!=='string'||seen.has(k))continue;seen.add(k);
++  const v=row.value;
++  if(numericKeys.has(k)) {
++   const raw=v?.doubleValue??v?.intValue;
++   if(typeof raw==='number'||typeof raw==='string'&&/^\d{1,15}$/.test(raw)) {const x=n(Number(raw));if(x!==null)out[k]=x;}
++  } else if(Object.hasOwn(enumValues,k)&&enumValues[k].has(v?.stringValue))out[k]=v.stringValue;
++ }
++ return out;
++}
++function stamp(value) {return typeof value==='string'&&/^\d{16,22}$/.test(value)?BigInt(value):null;}
++function projectApiSpan(span) {
++ if(span?.name!=='claude_code.llm_request')return;
++ const start=stamp(span.startTimeUnixNano),end=stamp(span.endTimeUnixNano);
++ if(start===null||end===null||end<start||end-start>600000000000n)return;
++ // The source span id is used only to suppress duplicate exporter batches, never exported.
++ if(typeof span.spanId!=='string')return;
++ let id;
++ if(/^[0-9a-f]{16}$/i.test(span.spanId))id=span.spanId.toLowerCase();
++ else if(/^[A-Za-z0-9+/]{11}=$/.test(span.spanId)) {
++  const bytes=Buffer.from(span.spanId,'base64');if(bytes.length!==8||bytes.toString('base64')!==span.spanId)return;
++  id=bytes.toString('hex');
++ }else return;
++ return {start,end,spanId:id,numbers:attrs(span.attributes)};
++}
++async function prepareQQClaudeApiTiming(context, emit=console.info) {
++ const meta=context?.qqClaudeLatencyContext;
++ if(!groups.has(meta?.sessionKey)||meta?.trigger!=='user')return;
++ // Do not redirect a pre-existing caller-managed telemetry configuration.
++ if(Object.entries(context.env??{}).some(([k,v])=>v&&(/^OTEL_/.test(k)||/^CLAUDE_CODE_(?:ENABLE_TELEMETRY|ENHANCED_TELEMETRY_BETA|PROPAGATE_TRACEPARENT)$/.test(k))))return;
++ let closed=false, requests=0, attributionValid=true;
++ const windows=[],pending=[],seen=new Set();
++ const path='/'+randomUUID()+'/v1/traces';
++ const safeEmit=row=>{try{emit('[qq-claude-api-timing] '+JSON.stringify(row));}catch{}};
++ function drain() {
++  if(!attributionValid){pending.length=0;return;}
++  for(let i=pending.length-1;i>=0;i--) {
++   const span=pending[i];
++   if(windows.some(w=>w.end===null&&w.start<=span.end))continue;
++   // Exact same-child turn interval containment; never nearest-time association.
++   const matches=windows.filter(w=>w.end!==null&&span.start>=w.start&&span.end<=w.end);
++   if(matches.length===1) {
++    const w=matches[0];pending.splice(i,1);
++    if(!w.user)continue;
++    safeEmit({schema:'qq-claude-api-timing-v1',groupAlias:w.groupAlias,runHash:w.runHash,trigger:'user',association:'same-transport-exact-host-turn-containment',apiStartMonoMs:n(Number(span.start)/1e6-performance.timeOrigin),apiEndMonoMs:n(Number(span.end)/1e6-performance.timeOrigin),inputToApiStartMs:n(Number(span.start-w.start)/1e6),apiSpanMs:n(Number(span.end-span.start)/1e6),...span.numbers});
++   } else if(matches.length>1) pending.splice(i,1);
++  }
++ }
++ const server=createServer((req,res)=>{
++  if(closed||req.method!=='POST'||req.url!==path) {res.writeHead(404).end();req.resume();return;}
++  if(++requests>1024){res.writeHead(200,{'content-type':'application/json'}).end('{}');req.resume();return;}
++  if(req.headers['content-encoding']&&req.headers['content-encoding']!=='identity'){res.writeHead(415).end();req.resume();return;}
++  const length=Number(req.headers['content-length']);
++  if(!Number.isSafeInteger(length)||length<0||length>2*1024**2){res.writeHead(413).end();req.resume();return;}
++  const chunks=[];let size=0,failed=false;
++  req.on('data',b=>{size+=b.length;if(size>2*1024**2){failed=true;chunks.length=0;res.writeHead(413).end();req.destroy();}else if(!failed)chunks.push(b);});
++  req.on('error',()=>{});
++  req.on('end',()=>{
++   if(failed)return;
++   try {
++    const body=JSON.parse(Buffer.concat(chunks).toString('utf8'));
++    const resources=body.resourceSpans;
++    if(!Array.isArray(resources)||resources.length>64)throw Error();
++    let count=0;
++    for(const r of resources) {
++     if(!Array.isArray(r.scopeSpans)||r.scopeSpans.length>64)continue;
++     for(const s of r.scopeSpans) {
++      if(!Array.isArray(s.spans)||s.spans.length>256)continue;
++      for(const raw of s.spans) {
++       if(++count>512)break;
++       const p=projectApiSpan(raw);
++       if(!p||seen.has(p.spanId))continue;
++       if(seen.size>=2048||pending.length>=64)continue;
++       seen.add(p.spanId);pending.push(p);
++      }
++     }
++    }
++    drain();res.writeHead(200,{'content-type':'application/json'}).end('{}');
++   }catch{res.writeHead(400).end();}
++  });
++ });
++ server.maxConnections=2;server.requestTimeout=5000;server.headersTimeout=5000;server.keepAliveTimeout=1000;
++ server.on('clientError',(_e,socket)=>socket.destroy());
++ const close=()=>{if(closed)return;closed=true;pending.length=0;windows.length=0;seen.clear();server.close();server.closeAllConnections();};
++ try {
++  await new Promise((resolve,reject)=>{
++   const timer=setTimeout(()=>{close();reject(Error('QQ_API_DIAGNOSTIC_LISTEN_TIMEOUT'));},500);
++   server.once('error',e=>{clearTimeout(timer);reject(e);});
++   server.listen(0,'127.0.0.1',()=>{clearTimeout(timer);if(closed){server.close();return;}resolve();});
++  });
++  server.unref();
++  const port=server.address().port;
++  const env={...context.env};
++  for(const k of Object.keys(env))if(/^OTEL_/.test(k)||/^CLAUDE_CODE_(?:ENABLE_TELEMETRY|ENHANCED_TELEMETRY_BETA|PROPAGATE_TRACEPARENT)$/.test(k))delete env[k];
++  Object.assign(env,{CLAUDE_CODE_ENABLE_TELEMETRY:'1',CLAUDE_CODE_ENHANCED_TELEMETRY_BETA:'1',CLAUDE_CODE_PROPAGATE_TRACEPARENT:'0',OTEL_TRACES_EXPORTER:'otlp',OTEL_METRICS_EXPORTER:'none',OTEL_LOGS_EXPORTER:'none',OTEL_EXPORTER_OTLP_PROTOCOL:'http/json',OTEL_EXPORTER_OTLP_TRACES_PROTOCOL:'http/json',OTEL_EXPORTER_OTLP_TRACES_ENDPOINT:`http://127.0.0.1:${port}${path}`,OTEL_TRACES_EXPORT_INTERVAL:'1000',OTEL_LOG_USER_PROMPTS:'0',OTEL_LOG_ASSISTANT_RESPONSES:'0',OTEL_LOG_TOOL_DETAILS:'0',OTEL_LOG_TOOL_CONTENT:'0'});
++  return Object.freeze({env,
++   begin(inputUuid,current){try{
++    if(closed||windows.some(w=>w.uuid===inputUuid))return;
++    if(windows.some(w=>w.end===null)){attributionValid=false;pending.length=0;return;}
++    const m=current?.qqClaudeLatencyContext;const g=groups.get(m?.sessionKey);
++    const user=!!g&&m.trigger==='user'&&typeof m.runId==='string'&&m.runId.length>0&&m.runId.length<=512;
++    if(windows.length>=32){const old=windows.shift();for(let i=pending.length-1;i>=0;i--)if(pending[i].start<old.end)pending.splice(i,1);}
++    windows.push({uuid:inputUuid,start:epochNs(),end:null,user,groupAlias:g,runHash:user?createHash('sha256').update('qq-claude-native-run-v1\0'+m.runId).digest('hex').slice(0,24):null});
++   }catch{}},
++   end(inputUuid){try{const w=windows.find(w=>w.uuid===inputUuid);if(w&&w.end===null)w.end=epochNs();drain();}catch{}},
++   close,
++  });
++ }catch{close();return;}
++}
++
++
+ //#region extensions/anthropic/cli-transport.ts
+ const MAX_LINE_CHARS = 8388608;
+ const CLOSE_GRACE_MS = 500;
+@@ -14,7 +145,7 @@
+ 	const owner = createClaudeCliProcessOwner(params.currentContext, params.secretInput);
+ 	let child;
+ 	try {
+-		const env = { ...params.context.env };
++		const env = { ...(params.qqApiTiming?.env ?? params.context.env) };
+ 		delete env.NODE_OPTIONS;
+ 		delete env.DEBUG;
+ 		child = owner.spawn({
+@@ -23,6 +154,7 @@
+ 			env
+ 		});
+ 	} catch (error) {
++		try { params.qqApiTiming?.close(); } catch {}
+ 		owner[Symbol.dispose]();
+ 		throw error;
+ 	}
+@@ -57,6 +189,7 @@
+ 	const close = () => {
+ 		if (closed) return;
+ 		closed = true;
++		try { params.qqApiTiming?.close(); } catch {}
+ 		rejectReady(/* @__PURE__ */ new Error("Claude CLI closed before initialization completed."));
+ 		for (const controller of requests.values()) controller.abort();
+ 		requests.clear();
+@@ -82,6 +215,7 @@
+ 	const didExit = () => {
+ 		if (hasExited) return;
+ 		hasExited = true;
++		try { params.qqApiTiming?.close(); } catch {}
+ 		clearTimeout(terminateTimer);
+ 		clearTimeout(killTimer);
+ 		if (process.platform !== "win32" || !closed) treeExit = signalTree("SIGKILL");
+@@ -136,14 +270,20 @@
+ 			if (requests.get(id) === controller) requests.delete(id);
+ 		}
+ 	};
+-	const acceptLine = async (line) => {
++	// QQ-CLAUDE-LOCAL-BOUNDARIES v1: one frozen metadata record per complete line.
++	// chunkObserved is delivery to this JS iterator, not kernel/network arrival.
++	const currentTiming = () => { try { return params.currentTiming?.(); } catch { return; } };
++	const noteSpan = (trace, bucket, elapsed) => { try { trace?.localSpan(bucket, elapsed); } catch {} };
++	const acceptLine = async (line, chunkObservedMonoMs) => {
+ 		if (!line.trim()) return;
+ 		let message;
++		const lineReadyMonoMs = performance.now();
+ 		try {
+ 			message = JSON.parse(line);
+ 		} catch {
+ 			return;
+ 		}
++		const jsonParseMs = performance.now() - lineReadyMonoMs;
+ 		if (!isRecord(message)) return;
+ 		if (message.type === "control_response") {
+ 			const response = message.response;
+@@ -156,12 +296,19 @@
+ 			dispatch(message.request_id, message.request).catch(fail);
+ 		} else if (message.type === "control_cancel_request") {
+ 			if (typeof message.request_id === "string") requests.get(message.request_id)?.abort();
+-		} else if (message.type !== "keep_alive") await params.onMessage(message);
++		} else if (message.type !== "keep_alive") {
++			const trace = currentTiming();
++			const callbackBegin = performance.now();
++			try { await params.onMessage(message, Object.freeze({ chunkObservedMonoMs, lineReadyMonoMs, jsonParseMs })); }
++			finally { noteSpan(trace, "pipeCallback", performance.now() - callbackBegin); }
++		}
+ 	};
+ 	const read = async () => {
+ 		let pending = "";
++		let lastChunkObservedMonoMs;
+ 		child.stdout.setEncoding("utf8");
+ 		for await (const chunk of child.stdout) {
++			lastChunkObservedMonoMs = performance.now();
+ 			const text = String(chunk);
+ 			for (let offset = 0; offset < text.length;) {
+ 				const newline = text.indexOf("\n", offset);
+@@ -172,11 +319,11 @@
+ 				if (newline >= 0) {
+ 					const line = pending;
+ 					pending = "";
+-					await acceptLine(line);
++					await acceptLine(line, lastChunkObservedMonoMs);
+ 				}
+ 			}
+ 		}
+-		if (pending) await acceptLine(pending);
++		if (pending) await acceptLine(pending, lastChunkObservedMonoMs);
+ 		await exited;
+ 		if (!closed) throw exitError ?? /* @__PURE__ */ new Error("Claude CLI live session exited unexpectedly without a terminal result.");
+ 	};
+@@ -202,4 +349,4 @@
+ 	};
+ }
+ //#endregion
+-export { createClaudeCliTransport as t };
++export { createClaudeCliTransport as t, prepareQQClaudeApiTiming as q };

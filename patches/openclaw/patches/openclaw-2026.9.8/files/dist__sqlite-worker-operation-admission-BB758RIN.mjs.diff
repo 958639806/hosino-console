@@ -1,0 +1,187 @@
+diff -ruN a/dist/sqlite-worker-operation-admission-BB758RIN.mjs b/dist/sqlite-worker-operation-admission-BB758RIN.mjs
+--- a/dist/sqlite-worker-operation-admission-BB758RIN.mjs	2026-11-13 19:09:04.897062906 +0800
++++ b/dist/sqlite-worker-operation-admission-BB758RIN.mjs	2026-11-13 19:09:04.897062906 +0800
+@@ -4,7 +4,8 @@
+ import { t as resolveIdentityPathViaExistingAncestorSync } from "./boundary-path-CAv_plX7.mjs";
+ import { t as deferSqlitePostCommitPublication } from "./sqlite-post-commit-Dih1WMKX.mjs";
+ import { AsyncLocalStorage } from "node:async_hooks";
+-import { MessageChannel, receiveMessageOnPort } from "node:worker_threads";
++import { MessageChannel, receiveMessageOnPort, isMainThread, threadId } from "node:worker_threads";
++import { createHash as sqliteObservationHash } from "node:crypto";
+ import { serialize } from "node:v8";
+ import { isNativeError, isProxy } from "node:util/types";
+ //#region src/infra/sqlite-worker-contract.ts
+@@ -91,9 +92,21 @@
+ 		this.name = "SqliteWorkerOpenRefusedError";
+ 	}
+ });
++// Factory-owned observation only. A diagnostic callback receives no authority or facts.
++const sqliteOperationAdmissionObservers = new WeakMap();
++function bindSqliteWorkerOperationAdmissionObserver(admission, observe) {
++  try {
++    const state = sqliteOperationAdmissionObservers.get(admission);
++    if (!state || state.closed || state.observe !== undefined || typeof observe !== "function" || isProxy(observe)) return false;
++    state.observe = observe;
++    return true;
++  } catch { return false; }
++}
+ /** The caller retains real source custody before invoking the synchronous grant. */
+ function createSqliteWorkerOperationAdmission(admit, attachment) {
+ 	const { port1, port2 } = new MessageChannel();
++	const observation = { observe: undefined, closed: false };
++	const observeAdmission = (key, stage, point) => { try { if (!observation.closed) observation.observe?.(key, stage, point); } catch {} };
+ 	if (attachment !== void 0) try {
+ 		port1.postMessage({
+ 			kind: "sqlite-operation-attachment",
+@@ -151,6 +164,9 @@
+ 			recordFailure(new SqliteWorkerError("SQLite worker admission request is invalid", "unavailable"), "protocol");
+ 			return;
+ 		}
++		const diagnosticRequest = Object.freeze({});
++		observeAdmission(diagnosticRequest, message.stage, "receive");
++		try {
+ 		const decision = new Int32Array(message.decision);
+ 		decisions.add(decision);
+ 		if (closed) {
+@@ -171,6 +187,7 @@
+ 			}
+ 			const granted = Atomics.compareExchange(decision, 0, REQUESTED, GRANTED) === REQUESTED;
+ 			if (granted) Atomics.notify(decision, 0);
++			if (granted) observeAdmission(diagnosticRequest, message.stage, "grant");
+ 			return granted;
+ 		};
+ 		let source = "authority";
+@@ -182,6 +199,7 @@
+ 			if (request.stage === "prepare" && isRecord(request.facts) && request.facts.kind === "schema-maintenance") {
+ 				const authority = databaseAuthority;
+ 				if (!authority || typeof request.facts.databasePath !== "string" || resolveIdentityPathViaExistingAncestorSync(request.facts.databasePath) !== authority.databasePath) throw new SqliteWorkerError("SQLite schema maintenance target differs from its admitted database", "closed");
++				observeAdmission(diagnosticRequest, message.stage, "before_admit");
+ 				inOwnerContext(() => {
+ 					authority.lease ??= authority.acquireSchema();
+ 					authority.lease.assertCurrent();
+@@ -189,6 +207,7 @@
+ 				});
+ 			} else {
+ 				source = "domain";
++				observeAdmission(diagnosticRequest, message.stage, "before_admit");
+ 				inOwnerContext(admit, request, grant);
+ 			}
+ 		} catch (error) {
+@@ -198,13 +217,14 @@
+ 			decisions.delete(decision);
+ 		}
+ 		if (Atomics.load(decision, 0) === REQUESTED) refuse(decision, new SqliteWorkerError("SQLite worker admission was not granted", "closed"), "domain");
++		} finally { observeAdmission(diagnosticRequest, message.stage, "terminal"); }
+ 	};
+ 	port1.on("message", receive);
+ 	port1.unref();
+ 	const service = () => {
+ 		for (let queued = receiveMessageOnPort(port1); queued; queued = receiveMessageOnPort(port1)) receive(queued.message);
+ 	};
+-	return {
++	const observedAdmission = {
+ 		port: port2,
+ 		bindDatabaseAuthority(authority) {
+ 			if (closed || databaseAuthority) throw new SqliteWorkerError("SQLite database authority is already bound or closed", "closed");
+@@ -241,6 +261,7 @@
+ 		},
+ 		service,
+ 		finish() {
++			try {
+ 			closed = true;
+ 			service();
+ 			for (const decision of decisions) if (Atomics.load(decision, 0) === REQUESTED) refuse(decision, new SqliteWorkerError("SQLite worker admission is closed", "closed"), "authority");
+@@ -252,9 +273,72 @@
+ 			} catch (error) {
+ 				cleanupFailures.push(error);
+ 			}
++			} finally { observation.closed = true; observation.observe = undefined; sqliteOperationAdmissionObservers.delete(observedAdmission); }
+ 		}
+ 	};
++	sqliteOperationAdmissionObservers.set(observedAdmission, observation);
++	return observedAdmission;
++}
++
++// Passive operation timing: private owner WeakMap; no SQL/port payload changes.
++const sqliteRuntimeObservations = new WeakMap();
++const sqliteRuntimePoints = new Set(["load_begin","load_end","prepare_begin","prepare_end","execute_begin","execute_end","transaction_request_begin","transaction_request_posted","transaction_wait_returned","commit_request_begin","commit_request_posted","commit_wait_returned"]);
++const sqliteRuntimeNow = () => {
++	try { const value=Number(process.hrtime.bigint())/1e6; return Number.isFinite(value)&&value>=0?Math.round(value*1000)/1000:null; } catch { return null; }
++};
++function bindSqliteWorkerRuntimeObservation(owner, request, receivedAt) {
++	try {
++		if(isMainThread||!owner||typeof owner!=="object"||isProxy(owner)||sqliteRuntimeObservations.has(owner)||!request||typeof request!=="object"||isProxy(request))return;
++		const id=Object.getOwnPropertyDescriptor(request,"id");
++		if(!id||!Object.prototype.hasOwnProperty.call(id,"value")||!Number.isSafeInteger(id.value)||id.value<1)return;
++		const at=typeof receivedAt==="number"&&Number.isFinite(receivedAt)&&receivedAt>=0?receivedAt:sqliteRuntimeNow();
++		sqliteRuntimeObservations.set(owner,{requestId:id.value,receivedAt:at,enabled:false,closed:false,points:[],seen:new Set(),droppedPointCount:0});
++	} catch {}
++}
++function markSqliteWorkerRuntimeObservation(owner, point, commandType) {
++	try {
++		const record=owner&&sqliteRuntimeObservations.get(owner);
++		if(!record||record.closed||!sqliteRuntimePoints.has(point))return;
++		if(!record.enabled){
++			if(!commandType||typeof commandType!=="object"||isProxy(commandType))return;
++			const type=Object.getOwnPropertyDescriptor(commandType,"type");
++			if(!type||!Object.prototype.hasOwnProperty.call(type,"value")||type.value!=="placementTurns.claim")return;
++			record.enabled=true;
++			record.requestHash=sqliteObservationHash("sha256").update("openclaw.sqlite.operation-observation.v1\0"+String(process.pid)+"\0"+String(record.requestId),"utf8").digest("hex");
++			if(record.receivedAt!==null){record.points.push({name:"worker_receive",atMonoMs:record.receivedAt});record.seen.add("worker_receive");}
++		}
++		if(record.seen.has(point))return;
++		if(record.points.length>=16){record.droppedPointCount=Math.min(65535,record.droppedPointCount+1);return;}
++		const at=sqliteRuntimeNow();if(at===null)return;
++		record.seen.add(point);record.points.push({name:point,atMonoMs:at});
++	} catch {}
++}
++function markSqliteWorkerAdmissionObservation(owner, request, point){
++	try{
++		if(!request||typeof request!=="object"||isProxy(request))return;
++		const stage=Object.getOwnPropertyDescriptor(request,"stage");
++		if(!stage||!Object.prototype.hasOwnProperty.call(stage,"value")||!["transaction","commit"].includes(stage.value))return;
++		markSqliteWorkerRuntimeObservation(owner,stage.value+"_"+point);
++	}catch{}
++}
++function finishSqliteWorkerRuntimeObservation(owner, replyOk) {
++	let record;
++	try {
++		record=owner&&sqliteRuntimeObservations.get(owner);
++		if(!record||record.closed)return;
++		record.closed=true;sqliteRuntimeObservations.delete(owner);
++		if(!record.enabled||!/^[a-f0-9]{64}$/.test(record.requestHash))return;
++		const replyAt=sqliteRuntimeNow();
++		if(replyAt!==null&&record.points.length<16)record.points.push({name:"worker_reply_posted",atMonoMs:replyAt});
++		const row={schema:"sqlite-operation-runtime-observation-v1",operation:"placementTurns.claim",requestHash:record.requestHash,
++			requestHashDomain:"openclaw.sqlite.operation-observation.v1",clockKind:"process.hrtime.bigint-monotonic-ms",
++			pid:process.pid,threadId,isMainThread,replyOk:replyOk===true,
++			diagnosticAfterBusinessReplyPost:true,points:record.points,droppedPointCount:record.droppedPointCount,
++			missingPointsAreUnknown:true,rawRequestIdOrCommandFactsExported:false};
++		try{console.info("[sqlite-operation-runtime-observation] "+JSON.stringify(row));}catch{}
++	} catch {} finally {if(record)record.closed=true;}
+ }
++
+ const currentAdmission = resolveGlobalSingleton(Symbol.for("openclaw.sqliteWorkerOperationAdmission"), () => new AsyncLocalStorage());
+ /** Install only the private port belonging to the broker's currently executing operation. */
+ function withSqliteWorkerOperationAdmission(owner, operation) {
+@@ -300,11 +384,14 @@
+ 	const scope = currentAdmission.getStore();
+ 	if (!scope?.active) throw new SqliteWorkerError("SQLite operation requires its retained admission", "unavailable");
+ 	const decision = new Int32Array(new SharedArrayBuffer(Int32Array.BYTES_PER_ELEMENT));
++	markSqliteWorkerAdmissionObservation(scope.owner, request, "request_begin");
+ 	scope.port.postMessage({
+ 		...request,
+ 		decision: decision.buffer
+ 	}, transferList);
++	markSqliteWorkerAdmissionObservation(scope.owner, request, "request_posted");
+ 	while (Atomics.load(decision, 0) === REQUESTED) Atomics.wait(decision, 0, REQUESTED);
++	markSqliteWorkerAdmissionObservation(scope.owner, request, "wait_returned");
+ 	if (Atomics.load(decision, 0) !== GRANTED) {
+ 		const refusal = new SqliteWorkerError("SQLite transaction admission was refused", "closed");
+ 		scope.owner.refusal = refusal;
+@@ -332,4 +419,4 @@
+ 	return message.value;
+ }
+ //#endregion
+-export { isSqliteWorkerError as _, requestSqliteWorkerSchemaMaintenance as a, withSqliteWorkerOperationAdmission as c, SQLITE_WORKER_MAX_RESULT_BYTES as d, SQLITE_WORKER_OPERATION_CLEANUP as f, hasSqliteWorkerOutcomeUnknown as g, SqliteWorkerError as h, requestSqliteWorkerOperationAdmission as i, SQLITE_WORKER_CLOSE_RECEIPT as l, SQLITE_WORKER_PREPARE_COMMAND as m, createSqliteWorkerOperationAdmission as n, settleSqliteWorkerOperationContext as o, SQLITE_WORKER_PREPARE_ADMITTED as p, deferSqliteWorkerCommitReceipt as r, takeSqliteWorkerOperationAdmissionAttachment as s, SqliteWorkerOpenRefusedError as t, SQLITE_WORKER_MAX_MESSAGE_BYTES as u, retainSqliteWorkerErrorCode as v };
++export { bindSqliteWorkerRuntimeObservation, markSqliteWorkerRuntimeObservation, finishSqliteWorkerRuntimeObservation, bindSqliteWorkerOperationAdmissionObserver, isSqliteWorkerError as _, requestSqliteWorkerSchemaMaintenance as a, withSqliteWorkerOperationAdmission as c, SQLITE_WORKER_MAX_RESULT_BYTES as d, SQLITE_WORKER_OPERATION_CLEANUP as f, hasSqliteWorkerOutcomeUnknown as g, SqliteWorkerError as h, requestSqliteWorkerOperationAdmission as i, SQLITE_WORKER_CLOSE_RECEIPT as l, SQLITE_WORKER_PREPARE_COMMAND as m, createSqliteWorkerOperationAdmission as n, settleSqliteWorkerOperationContext as o, SQLITE_WORKER_PREPARE_ADMITTED as p, deferSqliteWorkerCommitReceipt as r, takeSqliteWorkerOperationAdmissionAttachment as s, SqliteWorkerOpenRefusedError as t, SQLITE_WORKER_MAX_MESSAGE_BYTES as u, retainSqliteWorkerErrorCode as v };

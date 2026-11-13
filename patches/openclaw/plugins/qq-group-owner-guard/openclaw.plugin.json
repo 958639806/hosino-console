@@ -1,0 +1,59 @@
+{
+  "id": "qq-group-owner-guard",
+  "name": "QQ Group Owner Guard",
+  "description": "Execution-time owner checks for QQ group sessions: non-owners may only run allowlisted workspace scripts; owner-only/credential/config tools are blocked for non-owners; at most one early text progress line per turn. Interlock + config for QQ-GROUP-UNIFIED-TOOLS-PATCH v1 (unifiedTools). v1.2.0: per-turn sender hint for non-owner qqbot DM/group turns (senderHint).",
+  "categories": [
+    "other"
+  ],
+  "activation": {
+    "onStartup": true
+  },
+  "configSchema": {
+    "type": "object",
+    "additionalProperties": false,
+    "properties": {
+      "ownerIds": {
+        "type": "array",
+        "items": {
+          "type": "string"
+        },
+        "description": "Extra owner sender ids (commands.ownerAllowFrom is always read)"
+      },
+      "logSeen": {
+        "type": "boolean",
+        "description": "Log the first occurrence of each tool shape (default true)"
+      },
+      "unifiedTools": {
+        "type": "object",
+        "additionalProperties": false,
+        "description": "QQ-GROUP-UNIFIED-TOOLS-PATCH v1: in these QQ groups non-owner turns advertise the owner's tool catalog (owner-only tools refused at call time)",
+        "properties": {
+          "enabled": {
+            "type": "boolean"
+          },
+          "groups": {
+            "type": "array",
+            "items": {
+              "type": "string"
+            }
+          }
+        }
+      },
+      "senderHint": {
+        "type": "boolean",
+        "description": "v1.2.0: add a per-turn hint (prependContext) when a qqbot DM/group sender is not in commands.ownerAllowFrom (default true)"
+      }
+    }
+  },
+  "contracts": {
+    "tools": [
+      "qq_create_text_file"
+    ]
+  },
+  "toolMetadata": {
+    "qq_create_text_file": {
+      "sideEffecting": true,
+      "replaySafe": false
+    }
+  }
+}

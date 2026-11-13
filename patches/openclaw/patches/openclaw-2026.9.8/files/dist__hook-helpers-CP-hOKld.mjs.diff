@@ -1,0 +1,27 @@
+diff -ruN a/dist/hook-helpers-CP-hOKld.mjs b/dist/hook-helpers-CP-hOKld.mjs
+--- a/dist/hook-helpers-CP-hOKld.mjs	2026-11-13 19:09:04.093022318 +0800
++++ b/dist/hook-helpers-CP-hOKld.mjs	2026-11-13 19:09:04.093022318 +0800
+@@ -3,7 +3,7 @@
+ import { t as getGlobalHookRunner } from "./hook-runner-global-CwCyBBBr.mjs";
+ import { et as consumeAdjustedParamsForToolCall } from "./agent-tools.before-tool-call-BbipAsOC.mjs";
+ import { r as extractAssistantTranscriptSourceText } from "./chat-message-content-C28ajso0.mjs";
+-import { t as applyTranscriptSenderIdentityToWrite } from "./user-turn-transcript.metadata-C4MejEIQ.mjs";
++import { t as applyTranscriptSenderIdentityToWrite, u as resolveHostMemoryPrefetchInputForWrite } from "./user-turn-transcript.metadata-C4MejEIQ.mjs";
+ //#region src/agents/harness/hook-helpers.ts
+ const log = createSubsystemLogger("agents/harness");
+ /** Runs best-effort after-tool-call hooks for a completed tool invocation. */
+@@ -40,11 +40,10 @@
+ function runAgentHarnessBeforeMessageWriteHook(params) {
+ 	const sourceText = params.prepareAssistantTranscriptMessage && params.message.role === "assistant" && Reflect.get(params.message, "display") !== false ? extractAssistantTranscriptSourceText(params.message) : void 0;
+ 	const hookRunner = getGlobalHookRunner();
++	const hostInput = resolveHostMemoryPrefetchInputForWrite(params.message, params);
++	const hookContext = hostInput ? Object.freeze({ agentId: params.agentId, sessionKey: params.sessionKey, requester: hostInput.requester, currentUserMessageId: hostInput.sourceTurnId }) : { agentId: params.agentId, sessionKey: params.sessionKey };
+ 	const message = !params.skipBeforeMessageWriteHooks && hookRunner?.hasHooks("before_message_write") ? applyTranscriptSenderIdentityToWrite(params.message, () => {
+-		const result = hookRunner.runBeforeMessageWrite({ message: params.message }, {
+-			agentId: params.agentId,
+-			sessionKey: params.sessionKey
+-		});
++		const result = hookRunner.runBeforeMessageWrite({ message: params.message }, hookContext);
+ 		return result?.block ? null : result?.message ?? params.message;
+ 	}) ?? null : params.message;
+ 	return message?.role === "assistant" && Reflect.get(message, "display") !== false && sourceText !== void 0 && params.prepareAssistantTranscriptMessage ? params.prepareAssistantTranscriptMessage(message, sourceText) : message;

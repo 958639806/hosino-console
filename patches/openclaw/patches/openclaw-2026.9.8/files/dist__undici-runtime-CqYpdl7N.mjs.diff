@@ -1,0 +1,52 @@
+diff -ruN a/dist/undici-runtime-CqYpdl7N.mjs b/dist/undici-runtime-CqYpdl7N.mjs
+--- a/dist/undici-runtime-CqYpdl7N.mjs	2026-11-13 19:09:04.929064522 +0800
++++ b/dist/undici-runtime-CqYpdl7N.mjs	2026-11-13 19:09:04.929064522 +0800
+@@ -122,14 +122,46 @@
+ 		...HTTP1_ONLY_DISPATCHER_OPTIONS
+ 	};
+ }
++// QQ-ORIGIN-IDLE-POLICY v1: existing factories only; never select a dispatcher or route.
++const QQ_ORIGIN_IDLE_TIMEOUT_MS = 180000;
++let qqOriginIdlePolicyLogs = 0;
++function withQqOriginIdleTimeout(origin, options) {
++  try {
++    let parsed;
++    if (typeof origin === "string") parsed = new URL(origin);
++    else if (origin instanceof URL && Object.getPrototypeOf(origin) === URL.prototype) parsed = origin;
++    else return options;
++    if (parsed.origin !== "https://api.sgroup.qq.com" || parsed.username || parsed.password || parsed.pathname !== "/" || parsed.search || parsed.hash) return options;
++    let reason = "default_applied", next;
++    if (options !== undefined && (options === null || typeof options !== "object" || ![Object.prototype, null].includes(Object.getPrototypeOf(options)))) return options;
++    if (options && Reflect.ownKeys(Object.getOwnPropertyDescriptors(options)).some(key => {
++      const d = Object.getOwnPropertyDescriptor(options, key);
++      return d && (d.get || d.set);
++    })) return options;
++    if (options && ["keepAliveTimeout", "keepAliveMaxTimeout", "keepAliveTimeoutThreshold"].some(key => key in options)) {
++      reason = "existing_idle_policy_retained"; next = options;
++    } else next = { ...options, keepAliveTimeout: QQ_ORIGIN_IDLE_TIMEOUT_MS };
++    try {
++      if (qqOriginIdlePolicyLogs < 16) {
++        qqOriginIdlePolicyLogs++;
++        console.info("[qq-origin-idle-policy] " + JSON.stringify({ schema: "qq-origin-idle-policy-v1",
++          origin: "official_qq_https", reason, configuredDefaultIdleMs: reason === "default_applied" ? QQ_ORIGIN_IDLE_TIMEOUT_MS : null,
++          factoryPath: "existing_core_origin_client_pool", sourceMatchedNotAsserted: true,
++          routeAndExplicitOverridesPreserved: true, serverIdleHintsStillOwnedByUndici: true }));
++      }
++    } catch {}
++    return next;
++  } catch { return options; }
++}
++// END QQ-ORIGIN-IDLE-POLICY v1
+ function createUndiciClient(origin, options) {
+ 	const { Client } = loadUndiciModule(["Client"]);
+-	return withUndiciErrorDiagnostics(new Client(origin, options));
++	return withUndiciErrorDiagnostics(new Client(origin, withQqOriginIdleTimeout(origin, options)));
+ }
+ function createUndiciPool(origin, options) {
+ 	const { Pool } = loadUndiciModule(["Pool"]);
+ 	return withUndiciErrorDiagnostics(new Pool(origin, {
+-		...options,
++		...withQqOriginIdleTimeout(origin, options),
+ 		factory: createUndiciClient
+ 	}));
+ }

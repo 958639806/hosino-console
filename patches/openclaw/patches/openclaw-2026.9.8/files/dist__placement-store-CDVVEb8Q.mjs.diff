@@ -1,0 +1,54 @@
+diff -ruN a/dist/placement-store-CDVVEb8Q.mjs b/dist/placement-store-CDVVEb8Q.mjs
+--- a/dist/placement-store-CDVVEb8Q.mjs	2026-11-13 19:09:04.801058060 +0800
++++ b/dist/placement-store-CDVVEb8Q.mjs	2026-11-13 19:09:04.801058060 +0800
+@@ -1,3 +1,4 @@
++import { bindQqWorkerPrepareObserver } from "./qq-host-latency-trace.mjs";
+ import { c as isRecord } from "./record-coerce-TIsquoVR.mjs";
+ import { i as getNodeSqliteKysely, n as executeSqliteQuerySync } from "./kysely-sync-Y4_ti-rQ.mjs";
+ import { a as isSqliteLockError } from "./sqlite-error-diagnostics-XVtvbiXE.mjs";
+@@ -201,7 +202,7 @@
+ }
+ function createPlacementTurnClaimWorkerOps(runtime) {
+ 	const context = captureOpenClawStateWorkerContext({ path: runtime.path });
+-	async function execute(input, assertCurrent) {
++	async function execute(input, assertCurrent, qqClaimObserver) {
+ 		const requested = input.input.claim;
+ 		const owner = requested.owner.kind === "local" ? {
+ 			kind: "local",
+@@ -287,7 +288,7 @@
+ 				return receipt;
+ 			};
+ 			try {
+-				return await runOpenClawStateWorkerOperation(context, async (scope) => publish(await scope.execute(command)), {
++				const qqOperationOptions = {
+ 					assertCurrent: check,
+ 					createAdmission: () => {
+ 						admission = createSqliteWorkerOperationAdmission((request, grant) => {
+@@ -309,7 +310,9 @@
+ 							admission
+ 						};
+ 					}
+-				});
++				};
++				if (command.type === "placementTurns.claim") bindQqWorkerPrepareObserver(qqOperationOptions, qqClaimObserver);
++				return await runOpenClawStateWorkerOperation(context, async (scope) => publish(await scope.execute(command)), qqOperationOptions);
+ 			} catch (error) {
+ 				const committed = admission?.committed ?? admission?.settlement?.committed;
+ 				if (committed && isReceipt(committed.facts)) return publish(committed.facts);
+@@ -395,14 +398,14 @@
+ 			if (!receipt.placement) throw new Error("Worker runtime refresh handoff receipt is missing its placement");
+ 			return receipt.placement;
+ 		},
+-		async claimTurn(input, assertCurrent) {
++		async claimTurn(input, assertCurrent, qqClaimObserver) {
+ 			const receipt = await execute({
+ 				type: "placementTurns.claim",
+ 				input: {
+ 					claim: input,
+ 					nowMs: runtime.now?.()
+ 				}
+-			}, assertCurrent);
++			}, assertCurrent, qqClaimObserver);
+ 			if (!receipt.claim) throw new Error("Placement turn claim receipt is missing its claim");
+ 			return receipt.claim;
+ 		},

@@ -1,0 +1,190 @@
+diff -ruN a/dist/cli-live-session-registry-UwsGavHf.mjs b/dist/cli-live-session-registry-UwsGavHf.mjs
+--- a/dist/cli-live-session-registry-UwsGavHf.mjs	2026-11-13 19:09:04.029019088 +0800
++++ b/dist/cli-live-session-registry-UwsGavHf.mjs	2026-11-13 19:09:04.033019290 +0800
+@@ -1566,6 +1566,134 @@
+ //#endregion
+ //#region src/agents/cli-runner/live-session-fingerprint.ts
+ /** Fingerprints every process-stable input without retaining secrets or volatile artifact paths. */
++// Diagnostic only. No IO or logging until capability.current() calls the emitter.
++const qqCliSystemPartsByRun = new WeakMap();
++const QQ_CLI_SYSTEM_PART_KEYS = Object.freeze([
++  "extraSystemInput", "bindingStaticExtraInput", "ownerListInput", "actualToolNamesInput",
++  "builtSystem", "builtStablePrefix", "builtDynamicSuffix", "transformedSystem",
++  "producerRuntimeFacts", "remainingAfterRuntime", "hookSystemOverride",
++  "hookSystemPrepend", "hookSystemAppend", "afterSystemHooks", "afterTextReplacement",
++  "finalRawSystem", "finalEffectiveSystem",
++  "sectionTooling", "sectionWorkspace", "sectionDirectoryRoles", "sectionWorkspaceFilesAndProject",
++  "sectionTemporal", "sectionAuthorizedSenders", "sectionVoice", "sectionConversation", "sectionRuntime"
++]);
++const QQ_CLI_SYSTEM_SECTION_HEADINGS = Object.freeze({
++  sectionTooling: "## Tooling", sectionWorkspace: "## Workspace", sectionDirectoryRoles: "## Directory Roles",
++  sectionWorkspaceFilesAndProject: "## Workspace Files (injected)", sectionTemporal: "## Temporal Context",
++  sectionAuthorizedSenders: "## Authorized Senders", sectionVoice: "## Voice (TTS)",
++  sectionConversation: "## Conversation Context", sectionRuntime: "## Runtime"
++});
++const QQ_CLI_SYSTEM_KNOWN_HEADINGS = new Set([
++  ...Object.values(QQ_CLI_SYSTEM_SECTION_HEADINGS), "## Project Memory", "## Messaging", "## Skills",
++  "## Bootstrap Pending", "## Bootstrap Context Notice", "## Assistant Output Directives", "## Control UI Embed",
++  "## Control UI Side Chat", "## Execution Bias", "## Collapsible Details", "## Documentation", "## Care",
++  "## Tool Call Style", "## Runtime Context", "## OpenClaw Control", "## Model Aliases", "## Sandbox",
++  "## Reasoning Format", "## Silent Replies", "## Subagent Context", "## Reactions"
++]);
++function qqCliSystemAuditSections(text, parts) {
++  const lines = text.split("\n");
++  for (const [key, heading] of Object.entries(QQ_CLI_SYSTEM_SECTION_HEADINGS)) {
++    const matches = [];
++    for (let i = 0; i < lines.length; i++) if (lines[i] === heading) matches.push(i);
++    if (matches.length !== 1) continue;
++    const start = matches[0];
++    let end = lines.length;
++    if (key === "sectionWorkspaceFilesAndProject") {
++      const boundaries = [];
++      for (let i = start + 1; i < lines.length; i++) if (lines[i] === "<!-- OPENCLAW_CACHE_BOUNDARY -->") boundaries.push(i);
++      if (boundaries.length !== 1) continue;
++      end = boundaries[0];
++    } else {
++      for (let i = start + 1; i < lines.length; i++) if (QQ_CLI_SYSTEM_KNOWN_HEADINGS.has(lines[i]) || lines[i] === "<!-- OPENCLAW_CACHE_BOUNDARY -->") { end = i; break; }
++    }
++    parts[key] = lines.slice(start, end).join("\n");
++  }
++}
++function qqCliSystemAuditScope(run, backendId) {
++  if (backendId !== "claude-cli" || run?.trigger !== "user" || typeof run.runId !== "string" || !run.runId || run.runId.length > 512) return;
++  return run.sessionKey === "agent:main:qqbot:group:__HS_GROUP_NEW_OPENID__" ? "new" : run.sessionKey === "agent:main:qqbot:group:__HS_GROUP_OLD_OPENID__" ? "old" : void 0;
++}
++function qqCliSystemAuditEffective(text) {
++  // Same transformations as current stripSystemPromptCacheBoundary(text).trim().
++  return text.replaceAll("\n<!-- OPENCLAW_CACHE_BOUNDARY -->\n", "\n")
++    .replaceAll("<!-- OPENCLAW_CACHE_BOUNDARY -->", "")
++    .replaceAll("\n<!-- OPENCLAW-RELOCATABLE-BOUNDARY -->\n", "\n")
++    .replaceAll("\n<!-- /OPENCLAW-RELOCATABLE-BOUNDARY -->", "")
++    .replaceAll("<!-- OPENCLAW-RELOCATABLE-BOUNDARY -->", "")
++    .replaceAll("<!-- /OPENCLAW-RELOCATABLE-BOUNDARY -->", "").trim();
++}
++function qqCliSystemAuditRuntime(text) {
++  const opening = "<!-- OPENCLAW-RELOCATABLE-BOUNDARY -->";
++  const closing = "<!-- /OPENCLAW-RELOCATABLE-BOUNDARY -->";
++  const start = text.indexOf(opening), end = text.indexOf(closing);
++  if (start === -1 && end === -1) return { state: "absent" };
++  if (start === -1 || end < start || text.includes(opening, start + opening.length) || text.includes(closing, end + closing.length)) return { state: "ambiguous" };
++  return { state: "present", value: text.slice(start + opening.length, end).trim() };
++}
++function rememberQQCliSystemParts(run, backendId, values, runtimeFactsInTurn, promptToolCount) {
++  try {
++    if (!qqCliSystemAuditScope(run, backendId)) return;
++    const parts = { ...values };
++    const boundary = "\n<!-- OPENCLAW_CACHE_BOUNDARY -->\n";
++    const built = typeof parts.builtSystem === "string" ? parts.builtSystem : "";
++    qqCliSystemAuditSections(built, parts);
++    const first = built.indexOf(boundary);
++    const stableState = first < 0 ? "absent" : built.includes(boundary, first + boundary.length) ? "ambiguous" : "present";
++    if (stableState === "present") {
++      parts.builtStablePrefix = built.slice(0, first);
++      parts.builtDynamicSuffix = built.slice(first + boundary.length);
++    }
++    const runtime = qqCliSystemAuditRuntime(typeof parts.transformedSystem === "string" ? parts.transformedSystem : "");
++    if (runtime.state === "present") parts.producerRuntimeFacts = runtime.value;
++    if (typeof parts.finalRawSystem === "string") parts.finalEffectiveSystem = qqCliSystemAuditEffective(parts.finalRawSystem);
++    const digests = Object.freeze(Object.fromEntries(QQ_CLI_SYSTEM_PART_KEYS.map(key => [key, typeof parts[key] === "string" ? sha256Hex(parts[key]) : null])));
++    qqCliSystemPartsByRun.set(run, Object.freeze({ digests, stableState, runtimeState: runtime.state,
++      promptToolCount: Number.isInteger(promptToolCount) && promptToolCount >= 0 && promptToolCount <= 65536 ? promptToolCount : null,
++      runtimeFactsInTurn: runtimeFactsInTurn === true ? true : runtimeFactsInTurn === false ? false : null }));
++  } catch { /* No diagnostic failure may change preparation. */ }
++}
++function emitQQCliSystemPartsAudit(context, record) {
++  try {
++    const groupAlias = qqCliSystemAuditScope(context?.params, context?.backendResolved?.id);
++    if (!groupAlias) return;
++    const current = qqCliSystemPartsByRun.get(context.params);
++    const previous = record?.qqSystemPartsAudit;
++    const currentProducerMatchesFinal = Boolean(current && current.digests.finalRawSystem === sha256Hex(context.systemPrompt));
++    const comparable = Boolean(currentProducerMatchesFinal && previous);
++    const changed = Object.fromEntries(QQ_CLI_SYSTEM_PART_KEYS.map(key => [key,
++      comparable && (!(key in QQ_CLI_SYSTEM_SECTION_HEADINGS) || current.digests[key] !== null && previous.digests[key] !== null)
++        ? current.digests[key] !== previous.digests[key] : null]));
++    console.info("[qq-claude-system-reuse-audit] " + JSON.stringify({ schema: "qq-claude-system-reuse-audit-v1", groupAlias,
++      runHash: sha256Hex("qq-claude-native-run-v1\0" + context.params.runId).slice(0, 24), phase: "capability_current",
++      currentProducerAvailable: Boolean(current), previousProducerAvailable: Boolean(previous), currentProducerMatchesFinal,
++      componentComparisonAvailable: comparable, stableBoundaryState: current?.stableState ?? "unavailable",
++      runtimeBoundaryState: current?.runtimeState ?? "unavailable", runtimeFactsInTurn: current?.runtimeFactsInTurn ?? null,
++      currentPromptToolCount: current?.promptToolCount ?? null, previousPromptToolCount: previous?.promptToolCount ?? null,
++      changed }));
++  } catch { /* Fixed categories and boolean/null only; never raw input or digest. */ }
++}
++
++const qqCliReuseFieldDigests = new WeakMap();
++const QQ_CLI_REUSE_AUDIT_COMPONENTS = new Set(["argv", "argv0", "workspaceDirHash", "cwdHash", "provider", "model", "systemPromptHash", "authProfileIdHash", "authEpochHash", "extraSystemPromptHash", "promptToolNamesHash", "mcpResumeHash", "credentialFingerprint", "skillsFingerprint", "env"]);
++function qqCliReuseAuditScope(context) {
++	if (context?.params?.trigger !== "user" || context?.backendResolved?.id !== "claude-cli") return;
++	const key = context?.params?.sessionKey;
++	return key === "agent:main:qqbot:group:__HS_GROUP_NEW_OPENID__" ? "new" : key === "agent:main:qqbot:group:__HS_GROUP_OLD_OPENID__" ? "old" : void 0;
++}
++function emitQQCliReuseAudit(context, record, fingerprint, requiredGeneration) {
++	// Never print values, fingerprints, owner keys, credential hashes or env names.
++	try {
++		const groupAlias = qqCliReuseAuditScope(context);
++		const runId = context?.params?.runId;
++		if (!groupAlias || typeof runId !== "string" || !runId || runId.length > 512) return;
++		const fresh = qqCliReuseFieldDigests.get(context);
++		const previous = record?.qqReuseAuditFieldDigests;
++		const comparable = Boolean(fresh && previous);
++		const changedComponents = comparable ? [...QQ_CLI_REUSE_AUDIT_COMPONENTS].filter((key) => fresh[key] !== previous[key]) : [];
++		const reason = requiredGeneration && record?.handle?.generation !== requiredGeneration ? record?.handle ? "required-generation-mismatch" : "required-generation-missing" : !record?.handle ? "owner-record-missing" : record.handle.fingerprint !== fingerprint ? "fingerprint-mismatch" : "fingerprint-match";
++		console.info("[qq-claude-reuse-audit] " + JSON.stringify({schema:"qq-claude-reuse-audit-v1",groupAlias,runHash:sha256Hex("qq-claude-native-run-v1\0" + runId).slice(0,24),phase:"capability_current",reason,currentHandlePresent:Boolean(record?.handle),fingerprintMatches:record?.handle ? record.handle.fingerprint === fingerprint : null,requiredGenerationPresent:Boolean(requiredGeneration),componentComparisonAvailable:comparable,changedComponents}));
++	} catch { /* telemetry must not change admission or execution */ }
++}
+ function buildCliLiveSessionFingerprint(params) {
+ 	const context = params.context;
+ 	const managedGrant = context.preparedBackend.mcpClientGrantCapture;
+@@ -1617,7 +1745,7 @@
+ 		}
+ 		argv.push(value);
+ 	}
+-	return sha256Hex(JSON.stringify({
++	const fields = {
+ 		argv,
+ 		argv0: params.argv0,
+ 		workspaceDirHash: sha256Hex(context.workspaceDir),
+@@ -1633,7 +1761,14 @@
+ 		credentialFingerprint: context.preparedBackend.secretInput?.fingerprint,
+ 		skillsFingerprint,
+ 		env: Object.keys(params.env).toSorted().filter((key) => key !== "OPENCLAW_MCP_CLI_CAPTURE_KEY").map((key) => [key, key === "OPENCLAW_MCP_TOKEN" && normalizeGrantToken ? "<managed-mcp-grant>" : params.env[key] ? sha256Hex(params.env[key]) : ""])
+-	}));
++	};
++	const fingerprint = sha256Hex(JSON.stringify(fields));
++	// Diagnostic only: retain per-component digests; original hash stays identical.
++	try {
++		if (qqCliReuseAuditScope(context)) qqCliReuseFieldDigests.set(context,
++			Object.fromEntries(Object.entries(fields).map(([key, value]) => [key, sha256Hex(JSON.stringify(value) ?? "<undefined>")])));
++	} catch { /* diagnostics cannot affect the original fingerprint result */ }
++	return fingerprint;
+ }
+ //#endregion
+ //#region src/agents/cli-runner/cli-live-session-registry.ts
+@@ -1757,7 +1892,10 @@
+ 		fingerprint,
+ 		current: () => {
+ 			assertActive();
+-			const handle = liveSessions.get(ownerKey)?.handle;
++			const record = liveSessions.get(ownerKey);
++			const handle = record?.handle;
++			emitQQCliReuseAudit(params.context, record, fingerprint, params.requiredGeneration);
++			emitQQCliSystemPartsAudit(params.context, record);
+ 			if (params.requiredGeneration && handle?.generation !== params.requiredGeneration) throw requiredSessionError(handle ? "cli_live_session_changed" : "cli_live_session_missing");
+ 			if (params.requiredGeneration && handle?.fingerprint !== fingerprint) throw requiredSessionError("cli_live_session_changed");
+ 			return handle;
+@@ -1776,6 +1914,8 @@
+ 			const cleanup = params.claimResources?.();
+ 			const record = {
+ 				handle,
++				qqReuseAuditFieldDigests: qqCliReuseFieldDigests.get(params.context),
++				qqSystemPartsAudit: qqCliSystemPartsByRun.get(params.context.params),
+ 				owner: params.context.preparedBackend,
+ 				approvalGrants: /* @__PURE__ */ new Set(),
+ 				...cleanup ? { cleanup } : {},
+@@ -1819,3 +1959,5 @@
+ }
+ //#endregion
+ export { attachCliReplyBackend as _, getCliLiveSessionApprovalGrants as a, retainCliPluginExecutionConsumer as b, restartCliLiveSession as c, resolveCliResumeAtError as d, formatCliOutputError as f, isClaudeForegroundAgentToolName as g, transformCliResultText as h, createCliLiveSessionCapability as i, createCliExitFailoverError as l, createCliJsonlStreamingParser as m, buildCliLiveOwnerKey as n, getCliLiveSessionGeneration as o, parseCliOutput as p, closeCliLiveSession as r, hasCliLiveSession as s, acceptsCliLiveSession as t, createCliFailoverError as u, createCliRunCurrentAssertion as v, runCliCleanup as x, resolveCliExecutionTarget as y };
++
++export { rememberQQCliSystemParts };

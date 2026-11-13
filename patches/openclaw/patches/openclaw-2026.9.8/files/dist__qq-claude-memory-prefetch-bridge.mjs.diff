@@ -1,0 +1,310 @@
+diff -ruN a/dist/qq-claude-memory-prefetch-bridge.mjs b/dist/qq-claude-memory-prefetch-bridge.mjs
+--- a/dist/qq-claude-memory-prefetch-bridge.mjs	1970-01-01 07:30:00.000000000 +0730
++++ b/dist/qq-claude-memory-prefetch-bridge.mjs	2026-11-13 19:09:04.829059473 +0800
+@@ -0,0 +1,306 @@
++// QQ-CLAUDE-MEMORY-PREFETCH-BRIDGE v1: current committed input, never prompt/history inference.
++// HOSINO-CLI-ADMISSION v2: any session whose persisted receipt matches the key; all proof checks kept.
++import { createHash } from 'node:crypto';
++const GROUP_KEYS = new Set([
++  'agent:main:qqbot:group:__HS_GROUP_NEW_OPENID__',
++  'agent:main:qqbot:group:__HS_GROUP_OLD_OPENID__',
++]);
++const inputs = new WeakMap();
++const norm = value => typeof value === 'string' ? value.trim().toLowerCase() : '';
++const textOf = message => {
++  if (typeof message?.content === 'string') return message.content;
++  if (!Array.isArray(message?.content)) return;
++  const text = [];
++  for (const part of message.content) {
++    if (part?.type !== 'text') continue;
++    if (typeof part.text !== 'string') return;
++    text.push(part.text);
++  }
++  return text.join('\n');
++};
++
++// Dependencies are bound by the host's prepare module, never taken from run input.
++export function captureQQClaudeMemoryRecallInput(params, deps) {
++  let lastReason = 'verification-error';
++  const groupAlias = params?.sessionKey === [...GROUP_KEYS][0] ? 'new' : params?.sessionKey === [...GROUP_KEYS][1] ? 'old' : typeof params?.sessionKey === 'string' && params.sessionKey ? (params.sessionKey === 'agent:main:main' ? 'main' : params.sessionKey.includes(':qqbot:direct:') ? 'direct' : params.sessionKey.includes(':qqbot:') ? 'qq-other' : 'console') : null;
++  const diagnosticScope = groupAlias && params?.trigger === 'user' && deps?.isClaudeCli === true &&
++    typeof params.runId === 'string' && params.runId.length > 0 && params.runId.length <= 512;
++  const emit = (phase, outcome, reason) => {
++    if (!diagnosticScope) return;
++    try {
++      const runHash = createHash('sha256').update('qq-claude-native-run-v1\0').update(params.runId).digest('hex').slice(0, 24);
++      console.info('[qq-claude-memory-bridge] ' + JSON.stringify({ schema: 'qq-claude-memory-bridge-v1', groupAlias, runHash, phase, outcome, reason }));
++    } catch { /* Metadata cannot affect recall or custody. */ }
++  };
++  const reject = reason => { lastReason = reason; return false; };
++  const unavailable = reason => { emit('capture', 'rejected', reason); return; };
++  try {
++    if (deps?.isClaudeCli !== true || typeof deps.getAdmissionOwner !== 'function' ||
++        typeof deps.readFence !== 'function' || typeof deps.resolveStorePath !== 'function' ||
++        typeof deps.assertCurrent !== 'function' || typeof deps.validateAdmission !== 'function') return unavailable('dependencies-unavailable');
++    const key = params?.sessionKey;
++    if (typeof key !== 'string' || !key || params.trigger !== 'user' || params.sessionManager ||
++        !params.sessionTarget || params.abortSignal?.aborted ||
++        params.inputProvenance && params.inputProvenance.kind !== 'external_user') return unavailable(params?.abortSignal?.aborted ? 'cancelled' : 'scope-ineligible');
++    const target = params.sessionTarget;
++    const recorder = params.userTurnTranscriptRecorder;
++    // The admission module's private WeakMap distinguishes real factory custody from API lookalikes.
++    const owner = deps.getAdmissionOwner(recorder);
++    if (!owner) return unavailable('owner-missing');
++    const receipt = owner.receipt();
++    const message = owner.message();
++    const sourceId = message?.idempotencyKey;
++    const text = textOf(message);
++    const sender = norm(params.senderId);
++    const ownerBit = params.senderIsOwner;
++    const storePath = deps.resolveStorePath(target);
++    const eligible = () => {
++      lastReason = 'current-unavailable';
++      deps.assertCurrent();
++      if (params.abortSignal?.aborted) return reject('cancelled');
++      if (params.sessionKey !== key || params.sessionTarget !== target ||
++          params.userTurnTranscriptRecorder !== recorder || params.trigger !== 'user' ||
++          norm(params.senderId) !== sender || params.senderIsOwner !== ownerBit ||
++          params.inputProvenance && params.inputProvenance.kind !== 'external_user') return reject('context-changed');
++      if (deps.getAdmissionOwner(recorder) !== owner) return reject('owner-mismatch');
++      if (owner.blocked() || owner.sentToProvider()) return reject('owner-state');
++      if (!receipt) return reject('receipt-missing');
++      if (owner.receipt() !== receipt || owner.message() !== message) return reject('source-state-changed');
++      if (deps.readFence(target) !== receipt) return reject('fence-mismatch');
++      if (receipt.role !== 'user' || receipt.sessionKey !== key || target.sessionKey !== key ||
++          receipt.agentId !== 'main' || target.agentId !== receipt.agentId ||
++          receipt.sessionId !== params.sessionId || target.sessionId !== receipt.sessionId ||
++          !storePath || receipt.storePath !== storePath || deps.resolveStorePath(target) !== storePath ||
++          typeof receipt.logicalTurnId !== 'string' || !receipt.logicalTurnId ||
++          typeof receipt.entryId !== 'string' || !receipt.entryId) return reject('target-mismatch');
++      const meta = message?.__openclaw;
++      if (message?.role !== 'user' || message.display === false || message.excludeFromContext === true ||
++          message.provenance && message.provenance.kind !== 'external_user' ||
++          meta?.lateMedia === true || meta?.beforeAgentRunBlocked !== undefined) return reject('message-ineligible');
++      if (sender ? (norm(meta?.senderId) !== sender || typeof ownerBit !== 'boolean' || meta?.senderIsOwner !== ownerBit) : (ownerBit !== true || norm(meta?.senderId) !== '' || (meta?.senderIsOwner !== undefined && meta.senderIsOwner !== true))) return reject('sender-mismatch');
++      if (typeof sourceId !== 'string' || sourceId.length === 0 || message.idempotencyKey !== sourceId) return reject('source-missing');
++      if (typeof text !== 'string' || text.trim().length < 2 || textOf(message) !== text) return reject('text-invalid');
++      lastReason = 'eligible';
++      return true;
++    };
++    if (!eligible()) return unavailable(lastReason);
++    const token = Object.freeze({});
++    let readLogged = false;
++    inputs.set(token, hookCtx => {
++      let result;
++      try {
++        if (eligible()) {
++          const requester = hookCtx?.requester;
++          const hookMatches = hookCtx?.sessionKey === key && hookCtx?.trigger === 'user' && norm(hookCtx?.senderId) === sender &&
++            (!requester || norm(requester.senderId) === sender && requester.senderIsOwner === ownerBit && (sender ? norm(requester.channel) === 'qqbot' : true) &&
++              (requester.trigger === undefined || requester.trigger === 'user'));
++          if (hookMatches) {
++            // Validate at consumption, after asynchronous earlier hooks, before exposing any input.
++            lastReason = 'admission-invalid';
++            deps.validateAdmission(target, receipt);
++            /* HOSINO-CLI-ADMISSION v1: committed only after validateAdmission + eligible() above */ if (eligible()) result = { currentUserMessage: text, currentUserMessageId: sourceId, admissionCommitted: true };
++          } else lastReason = 'hook-context-mismatch';
++        }
++      }
++      catch { /* Current attempt may have ended while earlier hooks were awaited. */ }
++      if (!readLogged) { readLogged = true; emit('read', result ? 'accepted' : 'rejected', lastReason); }
++      return result;
++    });
++    emit('capture', 'captured', 'snapshot-ready');
++    return token;
++  } catch {
++    return unavailable(lastReason); // Unsupported or stale custody keeps the existing scoped recall fallback.
++  }
++}
++
++export function readQQClaudeMemoryRecallInput(token, hookCtx) {
++  try {
++    return token && inputs.get(token)?.(hookCtx);
++  } catch {
++    return;
++  }
++}
++
++// QQ-CLAUDE-LEGACY-RECALL-OVERLAP v3: the real runner owns opaque outcomes.
++// The bridge stores host continuations, never projects or unwraps plugin values.
++const legacyPrependHandlers = new WeakSet();
++const deferredRecallOffers = new WeakMap();
++const deferredRecallReceipts = new WeakMap();
++const deferredInvocationFrames = new WeakMap();
++const deferredProtocolErrors = new WeakSet();
++import { AsyncLocalStorage } from 'node:async_hooks';
++const legacyRecallFrame = new AsyncLocalStorage();
++const deferredInvalid = () => {
++  const error = new Error('MEMORY_DEFERRED_RECALL_PROTOCOL_INVALID');
++  deferredProtocolErrors.add(error);
++  return error;
++};
++
++export function isQQClaudeLegacyRecallProofFailure(error) {
++  return deferredProtocolErrors.has(error);
++}
++
++export function registerQQClaudeLegacyPrependHandler(handler) {
++  if (typeof handler === 'function') legacyPrependHandlers.add(handler);
++}
++
++export function wrapQQClaudeLegacyPrependHandler(handler, originalHandler, assertInstanceCurrent, matchesOriginalHandler) {
++  if (typeof handler !== 'function' || typeof originalHandler !== 'function' ||
++      typeof assertInstanceCurrent !== 'function' || typeof matchesOriginalHandler !== 'function') throw deferredInvalid();
++  const wrapped = (event, ctx) => {
++    const frame = deferredInvocationFrames.get(ctx);
++    if (!frame || frame.handler !== wrapped || frame.event !== event) return handler(event, ctx);
++    frame.originalHandler = originalHandler;
++    frame.matchesOriginalHandler = matchesOriginalHandler;
++    frame.assertInstanceCurrent = assertInstanceCurrent;
++    frame.invoking = true;
++    try {
++      const outer = legacyRecallFrame.run(frame, () => handler(event, ctx));
++      frame.outer = outer;
++      return outer;
++    } finally { frame.invoking = false; }
++  };
++  return wrapped;
++}
++
++export function offerQQClaudeLegacyRecall(token, hookCtx, isClaudeCli, assertHostCurrent) {
++  if (isClaudeCli !== true || !inputs.has(token) || !hookCtx || hookCtx.trigger !== 'user' ||
++      !GROUP_KEYS.has(hookCtx.sessionKey) || deferredRecallOffers.has(hookCtx) || typeof assertHostCurrent !== 'function') return;
++  const handle = Object.freeze({});
++  const record = { token, hookCtx, handle, active: true, state: 'offered', claimed: false,
++    adopted: false, fatal: false, queryAssertion: undefined, releaseInvocation: undefined,
++    releaseDispatch: undefined, assertHostCurrent };
++  deferredRecallOffers.set(hookCtx, record);
++  deferredRecallReceipts.set(handle, record);
++  return handle;
++}
++
++function sameDeferredInput(record) {
++  const now = readQQClaudeMemoryRecallInput(record.token, record.hookCtx);
++  return now?.admissionCommitted === true && record.event?.admissionCommitted === true &&
++    typeof now.currentUserMessage === 'string' && now.currentUserMessage === record.text &&
++    now.currentUserMessageId === record.messageId &&
++    record.event.currentUserMessage === record.text && record.event.currentUserMessageId === record.messageId;
++}
++
++function assertDeferredSourceCurrent(record) {
++  record.assertHostCurrent();
++  if (!record.active || !sameDeferredInput(record)) throw deferredInvalid();
++  record.frame.assertInstanceCurrent();
++}
++
++function assertDeferredCurrent(record) {
++  assertDeferredSourceCurrent(record);
++  if (typeof record.withScope !== 'function' || typeof record.queryAssertion !== 'function') throw deferredInvalid();
++  // Scope/query validation must occur while the original invocation is live.
++  // After its real runner continuation revokes that lease, do not re-enter it.
++  record.withScope(() => record.queryAssertion());
++}
++
++export function createQQClaudeLegacyRecallClaim(hookCtx, handler, event, releaseInvocation) {
++  const record = deferredRecallOffers.get(hookCtx);
++  if (!record?.active || record.state !== 'offered' || !legacyPrependHandlers.has(handler) ||
++      typeof releaseInvocation !== 'function') return;
++  const input = readQQClaudeMemoryRecallInput(record.token, hookCtx);
++  if (input?.admissionCommitted !== true || event?.admissionCommitted !== true ||
++      event.currentUserMessage !== input.currentUserMessage || event.currentUserMessageId !== input.currentUserMessageId) return;
++  record.handler = handler; record.event = event; record.text = input.currentUserMessage;
++  record.messageId = input.currentUserMessageId;
++  const frame = { handler, event, record, invoking: false, outer: undefined };
++  record.frame = frame;
++  const bindQuery = assertion => {
++    if (!record.active || legacyRecallFrame.getStore() !== frame ||
++        record.state !== 'claiming' && record.state !== 'claimed' || typeof assertion !== 'function') {
++      record.fatal = true;
++      return;
++    }
++    try { record.queryAssertion?.(); assertion(); record.queryAssertion = assertion; }
++    catch { record.fatal = true; }
++  };
++  const claim = (actualHandler, startOnce, withScope) => {
++    if (!record.active || record.state !== 'offered' || legacyRecallFrame.getStore() !== frame ||
++        frame.invoking !== true || typeof frame.matchesOriginalHandler !== 'function' ||
++        frame.matchesOriginalHandler(actualHandler) !== true ||
++        !legacyPrependHandlers.has(handler) || typeof startOnce !== 'function' || typeof withScope !== 'function') return;
++    try {
++      if (!sameDeferredInput(record)) throw deferredInvalid();
++      frame.assertInstanceCurrent(); record.assertHostCurrent();
++    } catch { record.fatal = true; throw deferredInvalid(); }
++    record.state = 'claiming'; record.withScope = withScope;
++    try { record.originalPromise = startOnce(); }
++    catch (error) { record.state = 'offered'; record.withScope = undefined; throw error; }
++    record.state = 'claimed'; record.claimed = true;
++  };
++  return Object.freeze({ claim, bindQuery,
++    bindInvocation(handlerCtx) { deferredInvocationFrames.set(handlerCtx, frame); },
++    adopt(rawReturn, settledPromise, resumeHook) {
++      if (!record.active || record.state !== 'claimed' || rawReturn !== frame.outer ||
++          typeof record.queryAssertion !== 'function' || typeof resumeHook !== 'function') {
++        record.state = 'offered'; record.claimed = false;
++        record.withScope = undefined; record.queryAssertion = undefined;
++        return false;
++      }
++      record.adopted = true; record.releaseInvocation = releaseInvocation;
++      record.resumeHook = resumeHook;
++      // This is the host runner's always-settled void promise. The original
++      // value or rejection remains solely in that runner's lexical closure.
++      record.foreground = Promise.resolve(settledPromise).then(() => {
++        record.state = 'settled';
++      }, () => { record.fatal = true; record.state = 'settled'; });
++      return true;
++    }
++  });
++}
++
++export function bindQQClaudeLegacyRecallPromptFinalizer(hookCtx, partialResult, finalizePrompt) {
++  const record = deferredRecallOffers.get(hookCtx);
++  if (!record?.active || !record.adopted) return false;
++  if (record.finalizePrompt || typeof finalizePrompt !== 'function') { record.fatal = true; throw deferredInvalid(); }
++  record.partialResult = partialResult; record.finalizePrompt = finalizePrompt;
++  return true;
++}
++
++export function retainQQClaudeLegacyRecallDispatch(hookCtx, releaseDispatch) {
++  const record = deferredRecallOffers.get(hookCtx);
++  if (!record?.active || record.adopted !== true || typeof releaseDispatch !== 'function') return false;
++  record.releaseDispatch = releaseDispatch;
++  return true;
++}
++
++export function hasQQClaudeLegacyRecallClaim(handle) {
++  const record = deferredRecallReceipts.get(handle);
++  return record?.active === true && record.adopted === true;
++}
++
++export async function joinQQClaudeLegacyRecall(handle, partialResult) {
++  const record = deferredRecallReceipts.get(handle);
++  if (!record) return partialResult;
++  try {
++    if (!record.active || record.fatal) throw deferredInvalid();
++    if (!record.adopted) return partialResult;
++    if (record.joinStarted || partialResult !== record.partialResult ||
++        typeof record.resumeHook !== 'function' || typeof record.finalizePrompt !== 'function') throw deferredInvalid();
++    record.joinStarted = true;
++    try { assertDeferredCurrent(record); } catch { throw deferredInvalid(); }
++    await record.foreground;
++    if (record.fatal) throw deferredInvalid();
++    try { assertDeferredCurrent(record); } catch { throw deferredInvalid(); }
++    // The actual f20 runner catches ordinary errors and performs its original
++    // merge; actual f11 supplies its original outer catch and aggregate. The
++    // bridge neither reads plugin result fields nor changes their semantics.
++    const result = await record.finalizePrompt(record.resumeHook);
++    try { assertDeferredSourceCurrent(record); } catch { throw deferredInvalid(); }
++    record.state = 'joined';
++    return result;
++  } finally { closeQQClaudeLegacyRecall(handle); }
++}
++
++export function closeQQClaudeLegacyRecall(handle) {
++  const record = deferredRecallReceipts.get(handle);
++  if (!record || !record.active) return;
++  record.active = false; record.state = 'closed'; deferredRecallOffers.delete(record.hookCtx);
++  try { record.releaseInvocation?.(); } finally { record.releaseDispatch?.(); }
++  record.text = undefined; record.event = undefined; record.originalPromise = undefined;
++  record.foreground = undefined; record.resumeHook = undefined; record.finalizePrompt = undefined;
++  record.partialResult = undefined; record.withScope = undefined; record.queryAssertion = undefined;
++}

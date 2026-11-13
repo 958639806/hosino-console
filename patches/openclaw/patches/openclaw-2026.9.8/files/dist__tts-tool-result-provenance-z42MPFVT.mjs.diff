@@ -1,0 +1,14 @@
+diff -ruN a/dist/tts-tool-result-provenance-z42MPFVT.mjs b/dist/tts-tool-result-provenance-z42MPFVT.mjs
+--- a/dist/tts-tool-result-provenance-z42MPFVT.mjs	2026-11-13 19:09:04.925064319 +0800
++++ b/dist/tts-tool-result-provenance-z42MPFVT.mjs	2026-11-13 19:09:04.925064319 +0800
+@@ -42,4 +42,9 @@
+ 	return provenance.mediaUrls.filter((url) => delivered.has(url.trim()));
+ }
+ //#endregion
+-export { markCoreTtsToolResult as a, markCoreTtsAttemptResult as i, getCoreTtsAttemptResultMediaUrls as n, transferCoreTtsToolResultProvenance as o, getCoreTtsToolResultMediaUrls as r, copyCoreTtsAttemptResultProvenance as t };
++function inspectCoreTtsAttemptResultIdentity(result, operationalRunInstance) {
++ const provenance=coreTtsProvenanceByAttemptResult.get(result);
++ return {hasPrivateProvenance:Boolean(provenance),sameOperationalRunInstance:provenance?provenance.operationalRunInstance===operationalRunInstance:null,
++  privateMediaCount:provenance?.mediaUrls.length??0};
++}
++export { inspectCoreTtsAttemptResultIdentity as c, markCoreTtsToolResult as a, markCoreTtsAttemptResult as i, getCoreTtsAttemptResultMediaUrls as n, transferCoreTtsToolResultProvenance as o, getCoreTtsToolResultMediaUrls as r, copyCoreTtsAttemptResultProvenance as t };

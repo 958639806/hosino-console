@@ -1,0 +1,144 @@
+diff -ruN a/dist/session-transcript-read-worker-runtime-Ey1OtD_0.mjs b/dist/session-transcript-read-worker-runtime-Ey1OtD_0.mjs
+--- a/dist/session-transcript-read-worker-runtime-Ey1OtD_0.mjs	2026-11-13 19:09:04.889062502 +0800
++++ b/dist/session-transcript-read-worker-runtime-Ey1OtD_0.mjs	2026-11-13 19:09:04.889062502 +0800
+@@ -1,12 +1,33 @@
++import { n as resolveNodeCompileCacheEnv } from "./node-compile-cache-env-ClGKcLRy.mjs";
+ import { t as ensureSqliteLibrarySelected } from "./bun-sqlite-library-gIY4lQaO.mjs";
+ import { n as runtimeProcessEntrypoints } from "./runtime-process-entrypoints-CbWx0yUe.mjs";
+ import { r as resolveRuntimeWorkerUrl } from "./runtime-worker-url-S0NIVxUR.mjs";
+ import { t as WorkerTaskPool } from "./worker-task-pool-Cl1KhdJb.mjs";
+ import { r as resolveSessionTranscriptReadFence } from "./session-transcript-read-fence-Bq0b1oaG.mjs";
+ import { a as unwrapSessionTranscriptWorkerReply } from "./session-history-worker-errors-BIrOr1iJ.mjs";
++import { n as resolveSessionTranscriptDatabasePathForHistoryIdle } from "./session-accessor.transcript-target-Bb5PwcvU.mjs";
++import { t as createSubsystemLogger } from "./subsystem-CeqVSEVi.mjs";
+ //#region src/config/sessions/session-transcript-read-worker-runtime.ts
++let qqReaderCompileCacheDiagnosticCount = 0;
+ function prepareSqliteReadWorker() {
+ 	ensureSqliteLibrarySelected();
++	try {
++		const env = resolveNodeCompileCacheEnv();
++		if (env !== process.env) {
++			try {
++				if (qqReaderCompileCacheDiagnosticCount < 4) {
++					qqReaderCompileCacheDiagnosticCount += 1;
++					createSubsystemLogger("sessions/history-cache").info("[qq-reader-compile-cache] " + JSON.stringify({
++						schema: 1,
++						derivedEnv: true,
++						configured: typeof env.NODE_COMPILE_CACHE === "string" && env.NODE_COMPILE_CACHE.length > 0,
++						disabled: env.NODE_DISABLE_COMPILE_CACHE !== void 0
++					}));
++				}
++			} catch { /* Optional diagnostic evidence must not change worker preparation. */ }
++			return { options: { env } };
++		}
++	} catch { /* Optional code-cache inheritance must not fail a fresh read. */ }
+ 	return { options: {} };
+ }
+ const workerUrl = resolveRuntimeWorkerUrl(runtimeProcessEntrypoints.sessionTranscript);
+@@ -30,20 +51,94 @@
+ 	maxWorkers: 1,
+ 	sharedCompute: true
+ });
++// Only the existing worker lifetime changes; every request still reads fresh SQLite context.
++let qqHistoryIdleDiagnosticLog;
++let qqHistoryIdleDiagnosticCount = 0;
++function isQqHistoryIdleTarget(target) {
++	return target?.agentId === "main" && (
++		target?.sessionId === "__HS_GROUP_NEW_SESSION_ID__" && target?.sessionKey === "agent:main:qqbot:group:__HS_GROUP_NEW_OPENID__" ||
++		target?.sessionId === "__HS_GROUP_OLD_SESSION_ID__" && target?.sessionKey === "agent:main:qqbot:group:__HS_GROUP_OLD_OPENID__"
++	);
++}
++function resolveQqHistoryIdleRetentionDecision(target, admission, env = process.env) { /* QQ-HISTORY-IDLE-REUSE-PATCH v1 */
++	if (!isQqHistoryIdleTarget(target)) return { reason: "other-scope", storeLocatorWasAlias: null };
++	if (env.OPENCLAW_QQ_HISTORY_IDLE_REUSE !== "1") return { reason: "disabled", storeLocatorWasAlias: null };
++	if (admission && (admission.agentId !== target.agentId || admission.sessionId !== target.sessionId || admission.sessionKey !== target.sessionKey)) return { reason: "admission-scope-mismatch", storeLocatorWasAlias: null };
++	let physicalPath;
++	try {
++		physicalPath = resolveSessionTranscriptDatabasePathForHistoryIdle(target);
++	} catch {
++		return { reason: "store-resolution-unavailable", storeLocatorWasAlias: null };
++	}
++	const storeLocatorWasAlias = target.storePath !== physicalPath;
++	if (admission && admission.storePath !== physicalPath) return { reason: "admission-store-mismatch", storeLocatorWasAlias };
++	return { reason: "applied", storeLocatorWasAlias, retentionMs: 3e5 };
++}
++function resolveQqHistoryIdleRetentionMs(target, admission, env = process.env) {
++	return resolveQqHistoryIdleRetentionDecision(target, admission, env).retentionMs;
++}
++function readQqHistoryIdleWorkerMetadata() { /* QQ-HISTORY-IDLE-DIAGNOSTICS v1 */
++	try {
++		const snapshot = modelContextReads.getSnapshot();
++		const slots = modelContextReads.core?.slots;
++		const healthy = slots instanceof Set ? [...slots].filter((slot) => slot.worker && !slot.retiring) : [];
++		const only = healthy.length === 1 ? healthy[0] : void 0;
++		const workerId = only?.worker?.threadId;
++		const idleTimeoutMs = only?.idleTimer?._idleTimeout;
++		return {
++			workerId: Number.isSafeInteger(workerId) && workerId >= 0 ? workerId : null,
++			idleTimeoutMs: Number.isSafeInteger(idleTimeoutMs) && idleTimeoutMs > 0 ? idleTimeoutMs : null,
++			workersCreated: Number.isSafeInteger(snapshot.workersCreated) ? snapshot.workersCreated : null
++		};
++	} catch {
++		return { workerId: null, idleTimeoutMs: null, workersCreated: null };
++	}
++}
+ async function readSessionTranscriptModelContextAsync(target, admission, signal, through, limits) {
+ 	signal?.throwIfAborted();
+-	const value = unwrapSessionTranscriptWorkerReply(await modelContextReads.run({
+-		kind: "model-context",
+-		target,
+-		admission,
+-		through,
+-		limits
+-	}, {
+-		timeoutMs: 6e4,
+-		signal
+-	}));
+-	if (!("events" in value)) throw new Error("Session context worker returned a database target instead of context");
+-	return value;
++	const decision = resolveQqHistoryIdleRetentionDecision(target, admission);
++	const diagnostics = process.env.OPENCLAW_QQ_HISTORY_IDLE_DIAGNOSTICS === "1" && isQqHistoryIdleTarget(target) && qqHistoryIdleDiagnosticCount < 8;
++	const diagnosticId = diagnostics ? ++qqHistoryIdleDiagnosticCount : void 0;
++	const before = diagnostics ? readQqHistoryIdleWorkerMetadata() : void 0;
++	const started = diagnostics ? performance.now() : void 0;
++	let outcome = "error";
++	try {
++		const value = unwrapSessionTranscriptWorkerReply(await modelContextReads.run({
++			kind: "model-context",
++			target,
++			admission,
++			through,
++			limits
++		}, {
++			timeoutMs: 6e4,
++			signal,
++			idleRetentionMs: decision.retentionMs
++		}));
++		if (!("events" in value)) throw new Error("Session context worker returned a database target instead of context");
++		outcome = "ok";
++		return value;
++	} catch (error) {
++		if (signal?.aborted) outcome = "aborted";
++		throw error;
++	} finally {
++		if (diagnostics) try {
++			const after = readQqHistoryIdleWorkerMetadata();
++			(qqHistoryIdleDiagnosticLog ??= createSubsystemLogger("sessions/history-idle")).info("[qq-history-idle] " + JSON.stringify({
++				id: diagnosticId,
++				groupAlias: target.sessionKey === "agent:main:qqbot:group:__HS_GROUP_OLD_OPENID__" ? "old" : "new",
++				gateApplied: decision.retentionMs === 3e5,
++				reason: decision.reason,
++				storeLocatorWasAlias: decision.storeLocatorWasAlias,
++				beforeWorkerId: before.workerId,
++				afterWorkerId: after.workerId,
++				beforeWorkersCreated: before.workersCreated,
++				afterWorkersCreated: after.workersCreated,
++				afterIdleTimeoutMs: after.idleTimeoutMs,
++				outcome,
++				ms: Math.round(Math.max(0, performance.now() - started) * 1000) / 1000
++			}));
++		} catch {}
++	}
+ }
+ async function resolveSessionSqliteTargetInWorker(input, signal) {
+ 	signal?.throwIfAborted();

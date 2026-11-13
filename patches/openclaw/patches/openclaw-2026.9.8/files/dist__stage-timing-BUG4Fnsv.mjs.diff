@@ -1,0 +1,27 @@
+diff -ruN a/dist/stage-timing-BUG4Fnsv.mjs b/dist/stage-timing-BUG4Fnsv.mjs
+--- a/dist/stage-timing-BUG4Fnsv.mjs	2026-11-13 19:09:04.901063108 +0800
++++ b/dist/stage-timing-BUG4Fnsv.mjs	2026-11-13 19:09:04.905063310 +0800
+@@ -1,17 +1,20 @@
+ //#region src/shared/stage-timing.ts
+ /** Records checkpoints and explicit spans without owning logging policy. */
+-function createStageTimingTracker(now = () => Date.now()) {
++function createStageTimingTracker(now = () => Date.now(), onStage) {
+ 	const startedAt = now();
+ 	let previousAt = startedAt;
+ 	const stages = [];
+ 	const toMs = (value) => Math.max(0, Math.round(value));
+ 	const record = (name, spanStartedAt) => {
+ 		const currentAt = now();
+-		stages.push({
++		const stage = {
+ 			name,
+ 			durationMs: toMs(currentAt - spanStartedAt),
+ 			elapsedMs: toMs(currentAt - startedAt)
+-		});
++		};
++		stages.push(stage);
++		// QQ-LATENCY-TRACE: best-effort observer; no await and no outcome ownership.
++		try { onStage?.({ ...stage }); } catch {}
+ 		return currentAt;
+ 	};
+ 	return {

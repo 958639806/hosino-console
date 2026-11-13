@@ -1,0 +1,42 @@
+diff -ruN a/dist/agent-tool-definition-adapter-DhVQiLqj.mjs b/dist/agent-tool-definition-adapter-DhVQiLqj.mjs
+--- a/dist/agent-tool-definition-adapter-DhVQiLqj.mjs	2026-11-13 19:09:04.005017878 +0800
++++ b/dist/agent-tool-definition-adapter-DhVQiLqj.mjs	2026-11-13 19:09:04.005017878 +0800
+@@ -4,12 +4,12 @@
+ import { l as normalizeToolPolicyName } from "./tool-policy-shared-DSNSYBF4.mjs";
+ import "./tool-policy-C57wduz9.mjs";
+ import { n as logError, t as logDebug } from "./logger-DmolGPgx.mjs";
+-import { _ as consumeFinalClientVoiceToolConfirmation, a as prepareBeforeToolCallExecutionParams, b as runBeforeToolCallHook, m as readInternalExecutionControl, n as finalizeBeforeToolCallExecutionParams, o as recordAdjustedParamsForToolCall, p as createInternalExecutionPreparer, s as recordStructuredReplayTrustForToolCall, t as buildBlockedToolResult } from "./agent-tools.before-tool-call-BbipAsOC.mjs";
++import { _ as consumeFinalClientVoiceToolConfirmation, a as prepareBeforeToolCallExecutionParams, b as runBeforeToolCallHook, l as wrapToolWithBeforeToolCallHook, m as readInternalExecutionControl, n as finalizeBeforeToolCallExecutionParams, o as recordAdjustedParamsForToolCall, p as createInternalExecutionPreparer, s as recordStructuredReplayTrustForToolCall, t as buildBlockedToolResult } from "./agent-tools.before-tool-call-BbipAsOC.mjs";
+ import { t as sanitizeForConsole } from "./console-sanitize-CaBHLewO.mjs";
+ import { n as ToolInputError } from "./tool-input-error-mjW74R8m.mjs";
+ import { a as getCodeModeExecBeforeHookMetadata, d as normalizeCodeModeExecBeforeHookParams, r as copyCodeModeControlToolIdentity } from "./code-mode-control-tools-C5LVeeKh.mjs";
+ import { r as getPluginToolMeta } from "./tool-metadata--ndgGyn8.mjs";
+-import { g as isToolWrappedWithBeforeToolCallHook } from "./agent-tool-metadata-BZbVjjCx.mjs";
++import { g as isToolWrappedWithBeforeToolCallHook, r as copyAgentToolMetadata } from "./agent-tool-metadata-BZbVjjCx.mjs";
+ import { a as attachInternalToolExecutionPreparer, p as getInternalToolExecutionPreparer } from "./internal-hooks-DUPhyX-W.mjs";
+ import { t as jsonResult } from "./tool-results-BCM3fdVS.mjs";
+ import { s as payloadTextResult } from "./common-CnSoEQyp.mjs";
+@@ -194,6 +194,10 @@
+ function toToolDefinitions(tools, hookContext, abortSignal) {
+ 	const resolveAbortSignal = (signal) => signal && abortSignal ? AbortSignal.any([signal, abortSignal]) : signal ?? abortSignal;
+ 	return tools.map((tool) => {
++		// QQ-EARLY-MESSAGE-HOOK-OWNERSHIP v2: give a plain source the real
++		// policy wrapper before adapting it. Native projection then preserves
++		// the one guard, including cancellation and execution admission.
++		if (!isToolWrappedWithBeforeToolCallHook(tool) && !getInternalToolExecutionPreparer(tool)) tool = wrapToolWithBeforeToolCallHook(tool, hookContext, { emitDiagnostics: false });
+ 		const name = tool.name || "tool";
+ 		const toolOwnerPluginId = getPluginToolMeta(tool)?.pluginId;
+ 		const normalizedName = normalizeToolPolicyName(name);
+@@ -291,6 +295,12 @@
+ 			}
+ 		};
+ 		copyCodeModeControlToolIdentity(tool, definition);
++		// The native projection must not run the source guard again.
++		// Keep the adapter edge when hooks are rewrapped with a new run context.
++		const rebuildAdapter = (rebuilt) => toToolDefinitions([rebuilt], hookContext, abortSignal)[0];
++		if (beforeHookWrapped) copyAgentToolMetadata(tool, definition, rebuildAdapter);
++		// A plain source preparer can bypass definition.execute; do not advertise
++		// hook ownership for that path. The native wrapper remains its guard.
+ 		if (!sourcePreparer) return beforeHookWrapped ? definition : attachAdapterExecutionPreparer(definition);
+ 		return attachInternalToolExecutionPreparer(definition, async (params) => {
+ 			const signal = resolveAbortSignal(params.signal);

@@ -1,0 +1,16 @@
+{
+  "version": 1,
+  "enabled": true,
+  "attachProbability": 0.3,
+  "cooldownReplies": 3,
+  "quietHours": null,
+  "defaultEnabled": false,
+  "sessions": { "group:__GROUP_A__": { "enabled": true } },
+  "genEnabled": false,
+  "genDailyCap": 10,
+  "voice": {
+    "enabled": true, "probability": 0.12, "cooldownReplies": 4, "tz": "Asia/Shanghai", "quietHours": [],
+    "defaultEnabled": false, "perConversation": { "group:__GROUP_A__": { "enabled": true } },
+    "maxChars": 40, "dailyLimit": 0, "exclusiveWithSticker": true, "explicitRequestOverride": true
+  }
+}

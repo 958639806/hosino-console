@@ -1,0 +1,32 @@
+diff -ruN a/dist/agent-tools-DdIcx9SP.mjs b/dist/agent-tools-DdIcx9SP.mjs
+--- a/dist/agent-tools-DdIcx9SP.mjs	2026-11-13 19:09:04.009018080 +0800
++++ b/dist/agent-tools-DdIcx9SP.mjs	2026-11-13 19:09:04.009018080 +0800
+@@ -564,6 +564,8 @@
+ 			reviewer: options?.exec?.reviewer ?? execConfig.reviewer,
+ 			reviewTranscript: options?.exec?.reviewTranscript,
+ 			trigger: options?.trigger,
++			// QQ-CONTROLLED-MEDIA-HOST-DEFAULTS v1: protected from tool argument overrides.
++			qqControlledMediaRequester: Object.freeze({ trigger: options?.trigger, channel: options?.messageChannel ?? options?.messageProvider, accountId: options?.agentAccountId, sourceMessageId: options?.currentMessageId, senderId: options?.senderId }),
+ 			node: options?.exec?.node ?? execConfig.node,
+ 			pathPrepend: mergeGatewayAgentCliPath(options?.exec?.pathPrepend ?? execConfig.pathPrepend),
+ 			safeBins: options?.exec?.safeBins ?? execConfig.safeBins,
+@@ -826,12 +828,18 @@
+ 	const turnSourceChannel = options?.messageChannel ?? options?.messageProvider;
+ 	const turnSourceTo = options?.currentMessagingTarget ?? options?.currentChannelId;
+ 	const requester = {
++		// QQ-GENERIC-TRIGGER-REQUESTER-PATCH v1: preserve host run kind across embedded/fallback hooks.
++		...options?.trigger ? { trigger: options.trigger } : {},
++		...options?.currentMessageId ? { sourceMessageId: options.currentMessageId } : {},
++		...turnSourceTo ? { target: turnSourceTo } : {},
+ 		...turnSourceChannel ? { channel: turnSourceChannel } : {},
+ 		...options?.agentAccountId ? { accountId: options.agentAccountId } : {},
+ 		...options?.senderId ? { senderId: options.senderId } : {},
+ 		...options?.senderIsOwner !== void 0 ? { senderIsOwner: options.senderIsOwner } : {},
+-		...options?.memberRoleIds?.length ? { roleIds: [...options.memberRoleIds] } : {}
++		...options?.memberRoleIds?.length ? { roleIds: [...options.memberRoleIds] } : {},
++		...Array.isArray(options?.media) ? { readAssets: options.media.filter(f => typeof f?.path === "string" && !f.hydrationSuppressed).map(f => f.path).slice(0, 128) } : {}
+ 	};
++	globalThis[Symbol.for("openclaw.qqGroupOwnerGuard")]?.registerReadContext?.({ sessionKey: executionSessionKey, runId: options?.runId, requester });
+ 	const hasRequester = Object.keys(requester).length > 0;
+ 	const hookContext = {
+ 		agentId: executionAgentId,

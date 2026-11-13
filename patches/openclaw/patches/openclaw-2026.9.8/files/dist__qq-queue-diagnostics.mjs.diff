@@ -1,0 +1,51 @@
+diff -ruN a/dist/qq-queue-diagnostics.mjs b/dist/qq-queue-diagnostics.mjs
+--- a/dist/qq-queue-diagnostics.mjs	1970-01-01 07:30:00.000000000 +0730
++++ b/dist/qq-queue-diagnostics.mjs	2026-11-13 19:09:04.841060079 +0800
+@@ -0,0 +1,47 @@
++// QQ-QUEUE-DIAGNOSTICS v1. Counts/timings/enums only; no message body or raw sender/session IDs.
++import { createHash } from 'node:crypto';
++import { t as createSubsystemLogger } from './subsystem-CeqVSEVi.mjs';
++const logger = createSubsystemLogger('qq-queue');
++const waits = new Map();
++const hash = value => createHash('sha256').update(String(value ?? '')).digest('hex').slice(0, 16);
++const enums = new Set(['owner-wait-start', 'owner-wait-end', 'enqueue', 'overflow', 'debounce', 'drain-start', 'drain-end', 'dispatch', 'collect', 'dropped', 'expired', 'failed', 'continue', 'reply', 'interrupt', 'waiting-owner', 'accepted', 'queue-cap', 'queue-cap-new', 'queue-cap-old', 'summarize', 'new', 'old', 'duplicate', 'aborted', 'not-enqueued', 'run-now', 'steer', 'followup']);
++export function qqQueueDiagnostic(key, phase, fields = {}, output = logger) {
++  if (process.env.OPENCLAW_QQ_QUEUE_DIAGNOSTICS === '0') return;
++  const record = { schema: 1, atMs: Date.now(), layer:'core', keyHash: hash(key), phase: enums.has(phase) ? phase : 'unknown' };
++  for (const [name, value] of Object.entries(fields)) {
++    if (['queueDepth', 'inFlight', 'summarySources', 'droppedCount', 'waitMs', 'debounceMs', 'cap', 'sourceCount', 'mediaCount', 'senderCount', 'missingWaitCount'].includes(name)) record[name] = typeof value === 'number' && Number.isFinite(value) ? Math.max(0, value) : null;
++    else if (['resolvedDisposition', 'queueMode', 'dropPolicy'].includes(name)) record[name] = enums.has(value) ? value : 'unknown';
++    else if (name === 'messageId' && value) record.messageHash = hash(value);
++    else if (['interrupted', 'cancelled', 'mediaRetained'].includes(name)) record[name] = value === true;
++  }
++  try { output?.info?.(`[qq-queue] ${JSON.stringify(record)}`); } catch { /* observation cannot change execution */ }
++  return record;
++}
++export function qqQueuedWaitFields(items, now = Date.now()) {
++  const waits = items.flatMap(item => typeof item?.qqQueueEnteredAt === 'number' && Number.isFinite(item.qqQueueEnteredAt) ? [Math.max(0,now-item.qqQueueEnteredAt)] : []);
++  return { waitMs:waits.length ? Math.max(...waits) : null, sourceCount:items.length, missingWaitCount:items.length-waits.length };
++}
++export function qqFollowupQueueDisposition(key, run, queue, disposition) {
++  if (run?.originatingChannel !== 'qqbot' && run?.run?.messageProvider !== 'qqbot') return;
++  const inFlight = queue?.inFlight;
++  const depth = queue?.items ? queue.items.reduce((n,item)=>n+(inFlight?.has(item) ? 0 : 1),0) : null;
++  return qqQueueDiagnostic(key,'enqueue',{queueDepth:depth,inFlight:inFlight?.size ?? null,cap:queue?.cap ?? null,queueMode:queue?.mode,dropPolicy:queue?.dropPolicy,messageId:run.messageId,resolvedDisposition:disposition});
++}
++export function qqOwnerWait(key, fields = {}, output = logger) {
++  const record = waits.get(key) || { count: 0, at: Date.now() }; record.count++; record.at = Date.now(); waits.set(key, record);
++  while (waits.size > 4096) waits.delete(waits.keys().next().value);
++  const started = performance.now(); let closed = false;
++  qqQueueDiagnostic(key, 'owner-wait-start', { ...fields, queueDepth: record.count, resolvedDisposition: 'waiting-owner' }, output);
++  return disposition => {
++    if (closed) return; closed = true;
++    const current = waits.get(key); if (current) { current.count = Math.max(0, current.count - 1); if (!current.count) waits.delete(key); }
++    qqQueueDiagnostic(key, 'owner-wait-end', { ...fields, queueDepth: current?.count ?? null, waitMs: performance.now() - started, resolvedDisposition: disposition }, output);
++  };
++}
++export function qqQueueSummaryLine(item, text) {
++  const senderId = item?.run?.senderId;
++  const sourceId = item?.messageId ?? item?.sourceTurnId;
++  const mediaCount = Array.isArray(item?.media) ? item.media.length : 0;
++  // For model input only. IDs are host metadata and never used as executable authority.
++  return `[source=${JSON.stringify(sourceId ?? 'unknown')} sender=${JSON.stringify(senderId ?? 'unknown')} media=${mediaCount}] ${text}`;
++}

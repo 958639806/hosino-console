@@ -1,0 +1,12 @@
+diff -ruN a/dist/execution-C6SFdSb7.mjs b/dist/execution-C6SFdSb7.mjs
+--- a/dist/execution-C6SFdSb7.mjs	2026-11-13 19:09:04.069021106 +0800
++++ b/dist/execution-C6SFdSb7.mjs	2026-11-13 19:09:04.069021106 +0800
+@@ -33,7 +33,7 @@
+ }
+ //#endregion
+ //#region src/channels/turn/pending-delivery-notice.ts
+-const PENDING_DELIVERY_NOTICE = "I couldn’t confirm whether my previous reply reached this chat, so I won’t resend it automatically. Please ask for any missing remainder.";
++const PENDING_DELIVERY_NOTICE = "刚重启过，上一条可能没发到，缺的再问我～";
+ function noticeId(intentId) {
+ 	return `main-session-restart-recovery:pending-final:${intentId}`;
+ }

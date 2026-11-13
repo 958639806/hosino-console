@@ -1,0 +1,36 @@
+diff -ruN a/dist/user-turn-transcript.metadata-C4MejEIQ.mjs b/dist/user-turn-transcript.metadata-C4MejEIQ.mjs
+--- a/dist/user-turn-transcript.metadata-C4MejEIQ.mjs	2026-11-13 19:09:04.929064522 +0800
++++ b/dist/user-turn-transcript.metadata-C4MejEIQ.mjs	2026-11-13 19:09:04.933064724 +0800
+@@ -118,6 +118,15 @@
+ 	delete redacted.senderIdentity;
+ 	return Object.assign({ ...next }, { __openclaw: redacted });
+ }
++// QQ-MEM0-HOST-PREFETCH v1: source identity is the actual protected transcript idempotencyKey.
++function resolveHostMemoryPrefetchInputForWrite(message, params) {
++	const input = params.hostMemoryPrefetchInput;
++	const requester = input?.requester;
++	const sourceTurnId = Reflect.get(message, "idempotencyKey");
++	const meta = asOptionalRecord(Reflect.get(message, "__openclaw"));
++	if (!input || !Object.isFrozen(input) || !requester || !Object.isFrozen(requester) || message.role !== "user" || message.display === false || message.excludeFromContext === true || message.provenance && message.provenance.kind !== "external_user" || meta?.lateMedia === true || meta?.beforeAgentRunBlocked !== void 0 || typeof params.sessionKey !== "string" || !params.sessionKey || input.sessionKey !== params.sessionKey || typeof sourceTurnId !== "string" || !sourceTurnId || input.sourceTurnId !== sourceTurnId || requester.channel !== "qqbot" || typeof requester.accountId !== "string" || !requester.accountId || typeof requester.senderId !== "string" || !requester.senderId || typeof requester.senderIsOwner !== "boolean" || /:subagent:|:cron:/.test(params.sessionKey)) return;
++	return input;
++}
+ /** Applies before-message hooks while preserving user-turn transcript metadata. */
+ function preparePersistedUserTurnMessageForTranscriptWrite(message, params) {
+ 	if (!params.beforeMessageWrite) return message;
+@@ -147,8 +156,10 @@
+ 	const mediaImageLayout = structuredClone(originalMeta?.mediaImageLayout);
+ 	const originalTransportRecord = asOptionalRecord(originalTransport);
+ 	const transport = originalTransportRecord ? structuredClone(originalTransportRecord) : void 0;
++	const hostMemoryPrefetchInput = resolveHostMemoryPrefetchInputForWrite(message, params);
+ 	const nextMessage = applyTranscriptSenderIdentityToWrite(message, () => params.beforeMessageWrite({
+ 		message,
++		...hostMemoryPrefetchInput ? { hostMemoryPrefetchInput } : {},
+ 		...params.agentId ? { agentId: params.agentId } : {},
+ 		...params.sessionKey ? { sessionKey: params.sessionKey } : {}
+ 	}));
+@@ -186,4 +197,4 @@
+ 	return protectedMessage;
+ }
+ //#endregion
+-export { normalizePersistedSteerTargetRunId as a, rewritePersistedSteerTargetRunId as c, buildRunUserTurnIdempotencyKey as i, readTranscriptSenderIdentity as l, buildChannelUserTurnSender as n, preparePersistedUserTurnMessageForTranscriptWrite as o, buildPersistedUserTurnMetadata as r, restorePreparedUserTurnOperationalMetaForRuntime as s, applyTranscriptSenderIdentityToWrite as t };
++export { normalizePersistedSteerTargetRunId as a, rewritePersistedSteerTargetRunId as c, buildRunUserTurnIdempotencyKey as i, readTranscriptSenderIdentity as l, buildChannelUserTurnSender as n, preparePersistedUserTurnMessageForTranscriptWrite as o, buildPersistedUserTurnMetadata as r, restorePreparedUserTurnOperationalMetaForRuntime as s, applyTranscriptSenderIdentityToWrite as t, resolveHostMemoryPrefetchInputForWrite as u };

@@ -1,0 +1,11 @@
+diff -ruN a/dist/server-worker-placement-startup-DeKNE2f-.mjs b/dist/server-worker-placement-startup-DeKNE2f-.mjs
+--- a/dist/server-worker-placement-startup-DeKNE2f-.mjs	2026-11-13 19:09:04.861061088 +0800
++++ b/dist/server-worker-placement-startup-DeKNE2f-.mjs	2026-11-13 19:09:04.865061291 +0800
+@@ -7761,6 +7761,7 @@
+ 			const restartSignal = getGatewayRestartDrainSignal();
+ 			const runLocalTurn = () => executeLocalTurn({
+ 				claim,
++				qqLatencyTraceContext: inputTurn.qqLatencyTraceContext,
+ 				placements: options.placements,
+ 				runLocal,
+ 				assertCurrent: () => {

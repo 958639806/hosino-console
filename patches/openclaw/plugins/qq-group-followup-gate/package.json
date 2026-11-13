@@ -1,0 +1,11 @@
+{
+  "name": "qq-group-followup-gate",
+  "version": "2.4.1",
+  "type": "module",
+  "main": "index.js",
+  "openclaw": {
+    "extensions": [
+      "./index.js"
+    ]
+  }
+}

@@ -1,0 +1,22 @@
+{
+  "_说明": "合并进 ~/.openclaw/openclaw.json 的 plugins 段；__GROUP_A__/__GROUP_B__ 换成你的 QQ 群 openid（32 位十六进制）。不用的功能把 enabled 设为 false。",
+  "plugins": {
+    "load": { "paths": ["~/.openclaw/plugins/qq-group-followup-gate", "~/.openclaw/plugins/qq-group-owner-guard"] },
+    "entries": {
+      "qq-group-followup-gate": {
+        "enabled": true,
+        "hooks": { "allowConversationAccess": true },
+        "config": {
+          "ttlMs": 300000,
+          "keepalive": { "enabled": false, "mode": "live", "agentId": "main", "groups": ["__GROUP_A__"], "beatAfterMin": 25, "quietMin": 20, "maxIdleMin": 29, "requireOwnerLastTurn": true, "hideFromTranscript": true },
+          "lurkSticker": { "enabled": false, "dryRun": true, "probability": 0.1, "minQuietMin": 25, "nightStart": "00:00", "nightEnd": "08:00", "timeZone": "Asia/Shanghai", "dailyCap": 3, "groups": ["__GROUP_A__"] }
+        }
+      },
+      "qq-group-owner-guard": {
+        "enabled": true,
+        "hooks": { "allowConversationAccess": true },
+        "config": { "logSeen": true, "unifiedTools": { "enabled": false, "groups": ["__GROUP_A__"] } }
+      }
+    }
+  }
+}

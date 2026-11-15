@@ -1,5 +1,12 @@
-import { api, setUnauthedHandler, notReady, mediaOf } from "./api.js?v=20261101195157";
-import { md } from "./md.js?v=20261101195157";
+import { modelCollapse, modelSummary, modelBodyId } from "./model-collapse.js?v=2026.11.15.1-model-collapse";
+import { openUsageDetailPage } from "./usage-detail.js?v=2026.11.14.1-usage";
+import { api, setUnauthedHandler, notReady, mediaOf, rawReq } from "./api.js?v=2026.11.11.3";
+import { makeCred } from "./cred-adapter.js?v=2026.11.11.3";
+const cred = makeCred(rawReq);
+import { makeMemSearch, ALL as MS_ALL, pickDefaultScope } from "./memsearch-adapter.js?v=2026.11.11.3";
+const memSearch = makeMemSearch(rawReq);
+import { md } from "./md.js?v=2026.11.11.3";
+import { pluginCenter } from "./plugin-center.js?v=2026.11.11.3";
 
 // ---------- 小工具 ----------
 const $ = (s, el = document) => el.querySelector(s);
@@ -118,8 +125,21 @@ function toggleTheme() { const n = isDark() ? "light" : "dark"; document.documen
 
 // ---------- 外壳 ----------
 const app = $("#app");
-let current = null, timers = [];
-const clearTimers = () => { timers.forEach(clearInterval); timers = []; };
+let current = null, timers = [], routeGeneration = 0;
+const timerSpecs = new Map();
+const stopViewInterval = id => { clearInterval(id); timerSpecs.delete(id); };
+const clearTimers = () => { timers.forEach(stopViewInterval); timers = []; };
+// A delayed view must not start polling after navigation has detached its owner.
+function viewInterval(owner, fn, ms) {
+  if (!owner.isConnected) return null;
+  const id = setInterval(() => { if (!owner.isConnected) return stopViewInterval(id); fn(); }, ms);
+  timerSpecs.set(id, { owner, fn, ms });
+  timers.push(id); return id;
+}
+function replaceView() {
+  const old = $("#view"); if (!old) return null;
+  const next = old.cloneNode(false); old.replaceWith(next); return next;
+}
 
 function shell() {
   app.innerHTML = `<div class="shell">
@@ -142,22 +162,106 @@ function renderChrome() {
 }
 function top(title, sub, extra = "") { const back = current && current !== "more" && !TABS.includes(current) ? `<a class="iconbtn back" href="#/more" aria-label="返回更多">${ic("back")}</a>` : ""; return `<header class="top">${back}<h1>${esc(title)}${sub ? `<span class="sub">${esc(sub)}</span>` : ""}</h1>${extra}<button class="iconbtn" data-act="search" aria-label="全局搜索">${ic("search")}</button><button class="iconbtn" data-act="theme" aria-label="切换深浅色">${ic(isDark() ? "sun" : "moon")}</button></header>`; }
 
+const inertBeforeSheets = new Map();
+const topSheet = () => [...document.querySelectorAll("[data-v3sheet], .lightbox")].at(-1);
+function syncSheetInert() {
+  const top = topSheet();
+  if (!top) { for (const [node, inert] of inertBeforeSheets) node.inert = inert; inertBeforeSheets.clear(); return; }
+  for (const node of document.body.children) {
+    if (!inertBeforeSheets.has(node)) inertBeforeSheets.set(node, node.inert);
+    node.inert = node !== top;
+  }
+}
+const sheetTabStops = host => [...host.querySelectorAll('a[href],button,input,textarea,select,[tabindex]')].filter(node => node.tabIndex >= 0 && !node.matches(":disabled") && !node.closest("[hidden],[inert]") && node.getClientRects().length);
+function focusSheet(host, preferred) {
+  const dialog = host.querySelector(".sheet") || host;
+  const target = preferred && host.contains(preferred) && !preferred.closest("[hidden],[inert]") && preferred.getClientRects().length ? preferred : sheetTabStops(host)[0] || dialog;
+  target?.focus();
+}
 function sheet(html, onMount, kind) {
   // 同一种面板已经开着就不再叠一层（防重复绑定/双击/触摸+点击双触发）
-  if (kind) { const ex = document.querySelector(`[data-sheet="${kind}"]`); if (ex) return () => ex.remove(); }
-  const s = document.createElement("div"); if (kind) s.dataset.sheet = kind; s.innerHTML = `<div class="scrim"></div><div class="sheet" role="dialog" aria-modal="true">${html}</div>`;
+  if (kind) { const ex = document.querySelector(`[data-sheet="${kind}"]`); if (ex) return ex._v3close; }
+  const previousFocus = document.activeElement;
+  const s = document.createElement("div"); if (kind) s.dataset.sheet = kind; s.innerHTML = `<div class="scrim"></div><div class="sheet" role="dialog" aria-modal="true" tabindex="-1">${html}</div>`;
   s.dataset.v3sheet = "1"; document.body.append(s);
   history.pushState({ ...(history.state || {}), sheet: 1 }, "");
   // 界面关掉：不调 history.back（避免和随后的跳转抢历史），留下的空历史由 popstate 跳过
-  const close = () => s.remove(); s._v3close = () => { s.remove(); s._onclose?.(); }; const snap = new WeakMap(); const take = e => { const t = e.target; if (t.matches?.("input,textarea,select") && !snap.has(t)) snap.set(t, t.type === "checkbox" || t.type === "radio" ? t.checked : t.value); }; for (const ev of ["focusin", "pointerdown", "keydown", "beforeinput"]) s.addEventListener(ev, take, true); s._v3dirty ||= () => [...s.querySelectorAll("[data-save]:not([disabled])")].some(b => !b.closest("[hidden]")) || [...s.querySelectorAll("input,textarea,select")].some(t => snap.has(t) && snap.get(t) !== (t.type === "checkbox" || t.type === "radio" ? t.checked : t.value));
-  s.querySelector(".scrim").onclick = close; s.addEventListener("keydown", e => e.key === "Escape" && close()); s.addEventListener("click", e => { if (e.target.closest("a[href^=\"#/\"]")) close(); });
-  onMount?.(s.querySelector(".sheet"), close); return close;
+  const snap = new WeakMap(); const valueOf = t => t.type === "checkbox" || t.type === "radio" ? t.checked : t.value;
+  const take = e => { const t = e.target; if (t.matches?.("input,textarea,select") && !snap.has(t)) snap.set(t, valueOf(t)); };
+  for (const ev of ["focusin", "pointerdown", "keydown", "beforeinput"]) s.addEventListener(ev, take, true);
+  s._v3dirty = () => !s.dataset.confirm && !s.querySelector("#gq") && ([...s.querySelectorAll("[data-save]:not([disabled])")].some(b => !b.closest("[hidden]")) || [...s.querySelectorAll("input:not([readonly]),textarea:not([readonly]),select")].some(t => snap.has(t) && snap.get(t) !== valueOf(t)));
+  let closing = null, dismissed = false;
+  const dismiss = () => {
+    if (!dismissed) {
+      dismissed = true; s.remove(); s._onclose?.(); syncSheetInert();
+      const top = topSheet();
+      if (top) focusSheet(top, previousFocus);
+      else if (previousFocus?.isConnected && !previousFocus.closest("[inert]")) previousFocus.focus();
+    }
+    return true;
+  };
+  const close = force => {
+    if (s._authSuspended && force !== true) return Promise.resolve(false);
+    if (force === true || !s.isConnected || !s._v3dirty()) return Promise.resolve(dismiss());
+    if (!closing) closing = confirmDialog({ title: "还有改动没保存", body: "确定关掉吗？改动会丢掉。", ok: "关掉", danger: true }).then(ok => ok ? dismiss() : false).finally(() => { closing = null; });
+    return closing;
+  };
+  close.markSaved = values => s.querySelectorAll("input,textarea,select").forEach(t => snap.set(t, values?.has(t) ? values.get(t) : valueOf(t)));
+  s._v3close = close;
+  s.querySelector(".scrim").onclick = () => close();
+  s.addEventListener("click", async e => { const a = e.target.closest("a[href^=\"#/\"]"); if (!a || e.defaultPrevented) return; e.preventDefault(); if (await close()) location.hash = a.getAttribute("href"); });
+  onMount?.(s.querySelector(".sheet"), close);
+  syncSheetInert(); if (s === topSheet()) focusSheet(s);
+  return close;
 }
-async function logout() { try { await api.logout(); } catch {} showLogin(); }
+document.addEventListener("keydown", e => {
+  const host = topSheet(); if (!host) return;
+  if (e.key === "Escape") { e.preventDefault(); e.stopPropagation(); host._v3close(); }
+  if (e.key === "Tab") {
+    const stops = sheetTabStops(host), first = stops[0], last = stops.at(-1), active = document.activeElement;
+    if (!first || !host.contains(active) || (e.shiftKey ? active === first : active === last)) { e.preventDefault(); (e.shiftKey ? last : first)?.focus(); if (!first) focusSheet(host); }
+  }
+});
+document.addEventListener("focusin", e => { const host = topSheet(); if (host && !host.contains(e.target)) focusSheet(host); });
+let suspendedUi = null, loggingOut = false;
+const authOverlays = "[data-v3sheet], .lightbox, .undo";
+function discardSuspendedUi() {
+  if (!suspendedUi) return;
+  for (const node of [...suspendedUi.overlays.childNodes].reverse()) { if (node._v3close) node._v3close(true); else node.remove(); }
+  suspendedUi = null;
+}
+function restoreSuspendedUi() {
+  const saved = suspendedUi; suspendedUi = null;
+  app.replaceChildren(saved.content); document.body.append(saved.overlays);
+  for (const node of document.querySelectorAll(authOverlays)) node._authSuspended = false;
+  history.replaceState(saved.history, "", saved.hash); current = saved.current;
+  for (const spec of saved.intervals) viewInterval(spec.owner, spec.fn, spec.ms);
+  syncSheetInert();
+  const host = topSheet(); if (host) focusSheet(host, saved.focus); else if (saved.focus?.isConnected) saved.focus.focus();
+  window.scrollTo(0, saved.scrollY); renderChrome();
+}
+async function logout() {
+  if (loggingOut) return; loggingOut = true;
+  try { await api.logout(); showLogin({ preserve: false }); }
+  catch (error) { toast(error.message); }
+  finally { loggingOut = false; }
+}
 
 // ---------- 登录 ----------
-function showLogin() {
-  clearTimers(); current = null;
+function showLogin({ preserve = true } = {}) {
+  if (preserve && $(".login", app)) return;
+  if (preserve && $(".shell", app)) {
+    const content = document.createDocumentFragment(), overlays = document.createDocumentFragment();
+    suspendedUi = { content, overlays, focus: document.activeElement, current, hash: location.hash, history: history.state, scrollY, canCli: CAN_CLI, intervals: [...timerSpecs.values()] };
+    content.append(...app.childNodes);
+    for (const node of document.querySelectorAll(authOverlays)) { node._authSuspended = true; overlays.append(node); }
+  } else if (!preserve) {
+    discardSuspendedUi();
+    for (const node of [...document.querySelectorAll(authOverlays)].reverse()) { if (node._v3close) node._v3close(true); else node.remove(); }
+    V3 = null; v3pageHash = "";
+  }
+  ++routeGeneration; clearTimers(); current = null;
+  clearTimeout(toastT); $("#toast").textContent = ""; $("#toast").classList.remove("show");
   app.innerHTML = `<div class="login"><form class="view" autocomplete="on">
     <img src="icon.svg" alt=""><h1>欢迎回来，凛</h1><p>星野のねこ 在等你哦</p>
     <input class="input" type="password" name="password" autocomplete="current-password" placeholder="输入密码" aria-label="密码" required autofocus>
@@ -165,39 +269,49 @@ function showLogin() {
   const f = $("form", app);
   f.onsubmit = async e => {
     e.preventDefault(); const b = $("button", f), err = $(".err", f); b.disabled = true; b.textContent = "正在验证…"; err.textContent = "";
-    try { await api.login(f.password.value); location.hash = location.hash && location.hash !== "#/login" ? location.hash : "#/overview"; boot(); }
+    try { await api.login(f.password.value); if (!suspendedUi) location.hash = location.hash && location.hash !== "#/login" ? location.hash : "#/overview"; await boot(); }
     catch (x) { err.textContent = x.message; f.classList.remove("shake"); void f.offsetWidth; f.classList.add("shake"); f.password.select(); b.disabled = false; b.textContent = "进入控制台"; }
+    finally { if (f.isConnected) { b.disabled = false; b.textContent = "进入控制台"; } }
   };
+  syncSheetInert(); f.password.focus();
 }
 
 // ---------- 路由 ----------
 async function route() {
+  const generation = ++routeGeneration;
   v3stamp();
   const h = location.hash || "#/overview", p = v3parse(h);
   const prevName = v3parse(v3pageHash).name;
   // 系统返回/手势离开时，有没保存的改动先问一句
   if (v3pageHash && h !== v3pageHash && !v3skip && v3dirty() && v3parse(v3pageHash).name !== p.name) {
     const ok = await confirmDialog({ title: "还有改动没保存", body: "确定离开吗？没保存的改动会丢掉。", ok: "离开", danger: true });
+    if (generation !== routeGeneration) return;
     if (!ok) { history.replaceState(history.state, "", v3pageHash); return; }
   }
   v3skip = false;
   if (V3 && document.contains(V3.el) && v3parse(v3pageHash).name !== p.name) v3saveScroll();
   if (prevName !== p.name) sessionStorage.setItem("v3prev", prevName || "");
-  if (p.name !== (V3?.k) || !document.contains(V3?.el)) v3closeAll();
-  if (TOPIC[p.name] && !p.rest) { const redraw = h === v3pageHash; current = p.name; renderChrome(); clearTimers(); v3pageHash = h; if (p.name !== V3?.k) v3closeAll(); return v3topic(TOPIC[p.name], p.sec, { redraw }); }
+  if (p.name !== (V3?.k) || !document.contains(V3?.el)) {
+    const closed = await v3closeAll();
+    if (generation !== routeGeneration) return;
+    if (!closed) { history.replaceState(history.state, "", v3pageHash); return; }
+  }
+  { const mv = !p.rest && V4MOVE[p.name + "#" + p.sec]; if (mv) { history.replaceState(history.state, "", `#/${mv[0]}#${mv[1]}`); return route(); } }
+  if (TOPIC[p.name] && !p.rest) { const redraw = h === v3pageHash; current = p.name; renderChrome(); clearTimers(); v3pageHash = h; return v3topic(TOPIC[p.name], p.sec, { redraw }); }
   const al = v3alias(p.name, p.rest);
-  if (al) { history.replaceState(history.state, "", `#/${al.t}#${al.sec}`); const same = V3?.k === al.t && document.contains(V3?.el); current = al.t; renderChrome(); if (!same) clearTimers(); v3pageHash = location.hash; await v3topic(TOPIC[al.t], al.sec); if (al.d) v3detail(al.d); return; }
+  if (al) { history.replaceState(history.state, "", `#/${al.t}#${al.sec}`); const same = V3?.k === al.t && document.contains(V3?.el); current = al.t; renderChrome(); if (!same) clearTimers(); v3pageHash = location.hash; await v3topic(TOPIC[al.t], al.sec); if (generation === routeGeneration && al.d) v3detail(al.d); return; }
   V3 = null; v3pageHash = h;
-  return routeBase();
+  return routeBase(generation);
 }
-async function routeBase() {
+async function routeBase(generation) {
   clearTimers();
   const [, name = "overview", ...rest] = location.hash.replace(/^#/, "").split("/");
   const r = VIEWS[name] ? name : "overview"; current = r; renderChrome();
-  const v = $("#view"); if (!v) return;
+  const v = replaceView(); if (!v) return;
   v.innerHTML = `<div class="view">${top(routeTitle(r))}<div class="grid g2"><div class="skel"></div><div class="skel"></div><div class="skel"></div><div class="skel"></div></div></div>`;
   try { await VIEWS[r](v, decodeURIComponent(rest.join("/"))); }
-  catch (e) { if (e.status === 401) return; v.innerHTML = `<div class="view">${top(routeTitle(r))}<div class="card empty"><b>😿</b>出了点小状况：${esc(e.message)}<br><br><button class="btn" data-retry>再试一次</button></div></div>`; }
+  catch (e) { if (e.status === 401 || generation !== routeGeneration || !v.isConnected) return; v.innerHTML = `<div class="view">${top(routeTitle(r))}<div class="card empty"><b>😿</b>出了点小状况：${esc(e.message)}<br><br><button class="btn" data-retry>再试一次</button></div></div>`; }
+  if (generation !== routeGeneration || !v.isConnected) return;
   window.scrollTo(0, 0);
   const rb = v.querySelector("[data-retry]"); if (rb) rb.onclick = route;
 }
@@ -227,8 +341,8 @@ VIEWS.more = async v => {
 
 VIEWS.overview = async v => {
   let linkHtml = `<div class="card link"><div class="link-h"><div class="avatar">🛡️</div><div class="grow"><b>线路状态</b><div class="faint" style="font-size:13px"><span class="spin-dot"></span> 正在看看线路的情况…</div></div></div></div>`;
-  const loadLink = async () => { try { linkHtml = linkCard(await api.link()); } catch (x) { linkHtml = linkCard({ error: notReady(x) ? "后台还没开放这个接口" : scrub(x.message), __fail: true }); } const el = $("#linkst"); if (el && current === "overview") el.innerHTML = linkHtml; };
-  loadLink(); timers.push(setInterval(loadLink, 30000));
+  const loadLink = async () => { try { linkHtml = linkCard(await api.link()); } catch (x) { linkHtml = linkCard({ error: notReady(x) ? "后台还没开放这个接口" : scrub(x.message), __fail: true }); } const el = $("#linkst"); if (v.isConnected && el && current === "overview") el.innerHTML = linkHtml; };
+  loadLink(); viewInterval(v, loadLink, 30000);
   const load = async first => {
     const [o, ch] = await Promise.all([api.overview(), api.channels().catch(() => null)]);
     const hs = o.host || {}, m = hs.mem || {}, d = hs.disk || {};
@@ -264,7 +378,7 @@ VIEWS.overview = async v => {
       <div class="card"><div style="display:flex;align-items:center;gap:12px"><div class="avatar">Q</div><div class="grow" style="flex:1"><b>QQ 机器人</b><div class="faint" style="font-size:13px">${qq?.lastError ? esc(qq.lastError) : qc === "ok" ? "连接稳定，消息收发正常" + (qq?.lastConnectedAt ? " · " + ago(qq.lastConnectedAt) + "连上" : "") : "暂时没有连接上"}</div></div>${pill(qt, qc, qc === "ok")}</div></div>`;
     if (first || current === "overview") paint(v, html);
   };
-  await load(true); timers.push(setInterval(() => load().catch(() => {}), 10000));
+  await load(true); viewInterval(v, () => load().catch(() => {}), 10000);
 };
 
 // 会话
@@ -277,44 +391,49 @@ VIEWS.sessions = async (v, key) => {
   await loadAliases();
   const name = sessName;
   await loadGroups();
-  const rowHtml = x => `<a class="row" href="#/sessions/${encodeURIComponent(x.key)}" ${x.key === key ? 'style="background:var(--accent-soft)"' : ""}>
+  const lastK = !key && sessionStorage.getItem("cx-last");
+  const rowHtml = x => `<a class="row cxrow ${x.key === lastK ? "cx-hl" : ""}" data-skey="${esc(x.key)}" href="#/sessions/${encodeURIComponent(x.key)}" ${x.key === key ? 'style="background:var(--accent-soft)"' : ""}>
       <div class="avatar">${esc([...name(x)][0] || "猫")}</div>
-      <div class="grow"><div class="t"><span class="nm" data-rename="${esc(x.key)}" title="点击改名" role="button" tabindex="0" aria-label="改名：${esc(sessName(x))}">${x.pinned ? "📌 " : ""}${nameHtml(x)}</span></div><div class="rid mono">${esc(rawId(x))}</div><div class="d">${esc([x.channel, x.chatType === "group" ? "群聊" : x.chatType === "direct" ? "私聊" : x.chatType, x.model].filter(Boolean).join(" · "))}</div></div>
-      <div class="r">${fmtTime(x.updatedAt)}<br>${x.hasActiveRun ? pill("思考中", "ac", 1) : x.unread ? pill(x.unread, "ac") : ""}</div></a>`;
+      <div class="grow"><div class="t"><span class="nm">${x.pinned ? "📌 " : ""}${esc(sessName(x))}</span></div><div class="rid mono">${esc(rawId(x))}</div><div class="d">${esc([x.channel, x.chatType === "group" ? "群聊" : x.chatType === "direct" ? "私聊" : x.chatType, x.model].filter(Boolean).join(" · "))}</div></div>
+      <div class="r">${fmtTime(x.updatedAt)}<br>${x.hasActiveRun ? pill("思考中", "ac", 1) : x.unread ? pill(x.unread, "ac") : ""}</div><button type="button" class="iconbtn cx-rowm" data-rowmenu="${esc(x.key)}" aria-label="会话操作：${esc(sessName(x))}">⋯</button></a>`;
   const col = collapsed(), byG = new Map([[null, []], ...GROUPS.map(g => [g.id, []])]);
   for (const x of list) { const g = groupOf(x); (byG.has(g) ? byG.get(g) : byG.get(null)).push(x); }
   const secs = [...GROUPS.map(g => ({ g, items: byG.get(g.id) })), { g: null, items: byG.get(null) }].filter(o => o.g || o.items.length);
   const listHtml = list.length || GROUPS.length ? `<div class="sesslist grouped">${secs.map(({ g, items }) => `<details class="grp" data-gid="${esc(g?.id || "")}" ${col.has(g?.id || "_") ? "" : "open"}><summary><span class="gname">${esc(g ? g.name : GROUPS.length ? "未分组" : "全部会话")}</span><span class="gcount">${items.length}</span>${g ? `<button type="button" class="gmenu iconbtn" data-gmenu="${esc(g.id)}" aria-label="分组操作">⋯</button>` : ""}</summary><div class="list">${items.length ? items.map(rowHtml).join("") : `<div class="gempty faint">还没有会话，去会话设置里把它移进来吧</div>`}</div></details>`).join("")}<button type="button" class="newgroup" data-newgroup>＋ 新建分组</button></div>` : `<div class="card empty"><b>🐾</b>还没有会话呢</div>`;
   if (!key) {
-    paint(v, top("会话", `共 ${s.totalCount ?? list.length} 个`, `<button class="iconbtn" data-act="newsess" aria-label="新建会话">${ic("plus")}</button>`) + (wide ? `<div class="split">${listHtml}<div class="card empty" style="align-self:start"><b>💬</b>选一个会话，看看大家在聊什么</div></div>` : listHtml));
+    const lr = paint(v, top("会话", `共 ${s.totalCount ?? list.length} 个`, `<button class="iconbtn" data-act="newsess" aria-label="新建会话">${ic("plus")}</button>`) + (wide ? `<div class="split">${listHtml}<div class="card empty" style="align-self:start"><b>💬</b>选一个会话，看看大家在聊什么</div></div>` : listHtml));
+    cxListWire(lr, list, models, s);
+    if (lastK) { const y = +sessionStorage.getItem("cx-listy") || 0; requestAnimationFrame(() => { scrollTo(0, y); const r = lr.querySelector(".cx-hl"); if (r && (r.getBoundingClientRect().top < 0 || r.getBoundingClientRect().bottom > innerHeight)) r.scrollIntoView({ block: "center" }); }); setTimeout(() => lr.querySelector(".cx-hl")?.classList.add("cx-fade"), 2400); sessionStorage.removeItem("cx-last"); }
     return;
   }
   const sess = list.find(x => x.key === key) || (s.sessions || []).find(x => x.key === key) || { key };
   const root = paint(v, (wide ? `<div class="split">${listHtml}<div class="chatpane">` : "") + `
     <div class="chat">
-      <div class="chathead">${wide ? "" : `<a class="iconbtn" href="#/sessions" aria-label="返回">${ic("back")}</a>`}
-        <div class="grow"><div class="t"><span class="nm" data-rename="${esc(sess.key)}" title="点击改名" role="button" tabindex="0" aria-label="改名：${esc(sessName(sess))}">${nameHtml(sess)}</span></div><div class="sub" title="${esc(rawId(sess))}">${esc([sess.chatType === "group" ? "群聊" : sess.chatType === "direct" ? "私聊" : "", sess.model, sess.thinkingLevel && "思考 " + sess.thinkingLevel].filter(Boolean).join(" · "))}</div></div>
-        <button class="iconbtn" data-x="tune" aria-label="会话设置">${ic("tune")}</button>
-        <button class="iconbtn" data-x="theme2" aria-label="切换深浅色">${ic(isDark() ? "sun" : "moon")}</button></div>
+      <div class="chathead">${wide ? "" : `<a class="iconbtn" href="${esc(cxFrom())}" data-cxback aria-label="返回">${ic("back")}</a>`}
+        <div class="grow"><div class="cx-bc">会话${GROUPS.find(g => g.id === groupOf(sess)) ? " › " + esc(GROUPS.find(g => g.id === groupOf(sess)).name) : ""}</div><div class="t"><span class="nm">${esc(sessName(sess))}</span></div><div class="sub" title="${esc(rawId(sess))}">${esc([sess.chatType === "group" ? "群聊" : sess.chatType === "direct" ? "私聊" : "", sess.model, sess.thinkingLevel && "思考 " + sess.thinkingLevel].filter(Boolean).join(" · "))}</div></div>
+        <button class="iconbtn" data-x="menu" aria-label="会话菜单" aria-haspopup="dialog">⋯</button></div>
       <div class="msgs" id="msgs"><div class="skel"></div></div>
       <form class="composer" id="comp">
         <div class="att-tray" id="tray" hidden></div><div class="att-drop" aria-hidden="true">松手就能添加附件</div>
         <textarea rows="1" placeholder="以凛的身份说点什么…" aria-label="消息"></textarea>
         <div class="qqwarn" hidden>⚠️ 现在发出的内容会<b>以星野のねこ的身份</b>直接发到 ${qqDest(sess)}</div>
-        <div class="ctl"><button type="button" class="iconbtn optb" id="optb" aria-label="发送选项" aria-expanded="false">${ic("plus")}</button><div class="tgs"><label class="tg"><span class="switch"><input type="checkbox" id="deliver"><i></i></span>同时发送到 QQ</label>
-          <label class="tg tg-bot" hidden><span class="switch warn"><input type="checkbox" id="asbot"><i></i></span>以星野のねこ身份发到 QQ</label></div>
-          ${attBtns()}<button type="button" class="btn danger" id="abort" aria-label="中止" ${sess.hasActiveRun ? "" : "hidden"}>${ic("stop")}中止</button>
-          <button class="btn primary" id="sendb">${ic("send")}发送</button></div>
+        <div class="ctl"><button type="button" class="iconbtn optb" id="optb" aria-label="添加 / 发送方式" aria-haspopup="dialog">${ic("plus")}</button><div class="tgs" hidden><input type="checkbox" id="deliver" tabindex="-1" aria-hidden="true"><span class="tg-bot" hidden></span><input type="checkbox" id="asbot" tabindex="-1" aria-hidden="true"></div>
+          ${attBtns()}<button type="button" class="iconbtn cx-abort" id="abort" aria-label="中止" title="中止" ${sess.hasActiveRun ? "" : "hidden"}>■</button>
+          <button class="iconbtn primary cx-send" id="sendb" aria-label="发送">${ic("send")}</button></div>
+        <div class="cx-dest" id="cxdest" aria-live="polite">只发在控制台</div>
       </form>
     </div>` + (wide ? "</div></div>" : ""));
   const msgs = $("#msgs", root), ta = $("textarea", root), form = $("#comp", root), abortB = $("#abort", root);
   const asbot = $("#asbot", root), deliverC = $("#deliver", root);
-  const optb = $("#optb", root); optb.onclick = () => { const o = form.classList.toggle("opts"); optb.setAttribute("aria-expanded", o); };
+  const optb = $("#optb", root); let qqOk = false;
+  const destTxt = () => { const d = $("#cxdest", root); if (!d) return; d.className = "cx-dest" + (asbot.checked ? " bad" : deliverC.checked ? " ok" : ""); d.textContent = asbot.checked ? "⚠ 会以星野のねこ身份直发 QQ（发送前还会再确认）" : deliverC.checked ? "控制台 + 同时发到 QQ" : "只发在控制台"; };
+  optb.onclick = () => composerSheet({ form, asbot, deliverC, qqOk, onChange: destTxt });
   const tray = attachTray({ scope: "chat", ensureSession: async () => key, onChange: () => { const sb = $("#sendb", root); if (sb) { sb.disabled = tray.busy(); sb.title = tray.busy() ? "附件还在上传" : ""; } } }); tray.mount($("#tray", root)); tray.bind(form, ta); loadLimits();
-  api.features().then(f => { if (f?.qqSend === true) $(".tg-bot", root).hidden = false; }).catch(() => {});
-  asbot.onchange = () => { const on = asbot.checked; form.querySelector(".att-btns").hidden = on; form.classList.toggle("botmode", on); if (on) { form.classList.add("opts"); optb.setAttribute("aria-expanded", true); } $(".qqwarn", root).hidden = !on; deliverC.disabled = on; if (on) deliverC.checked = false; ta.placeholder = on ? "以星野のねこ的身份说…" : "以凛的身份说点什么…"; $("#sendb", root).innerHTML = ic("send") + (on ? "发到 QQ" : "发送"); };
+  api.features().then(f => { CXF = f || {}; if (f?.qqSend === true) { qqOk = true; $(".tg-bot", root).hidden = false; } }).catch(() => {});
+  asbot.onchange = () => { const on = asbot.checked; form.classList.toggle("botmode", on); $(".qqwarn", root).hidden = !on; deliverC.disabled = on; if (on) deliverC.checked = false; ta.placeholder = on ? "以星野のねこ的身份说…" : "以凛的身份说点什么…"; $("#sendb", root).setAttribute("aria-label", on ? "发到 QQ" : "发送"); destTxt(); };
+  deliverC.onchange = destTxt;
   msgs.addEventListener("click", e => { const im = e.target.closest("[data-full]"); if (im) lightbox(im.dataset.full, im.getAttribute("aria-label")); });
-  let lastSig = "", older = [], olderNext, olderMore; const openK = new Set(), revealK = new Set(), isGroup = sess.chatType === "group" || qqTarget(key)?.kind === "group";
+  let lastMs = [], lastSig = "", older = [], olderNext, olderMore; const openK = new Set(), revealK = new Set(), isGroup = sess.chatType === "group" || qqTarget(key)?.kind === "group";
   msgs.addEventListener("toggle", e => { const k = e.target.dataset?.k; if (k) e.target.open ? openK.add(k) : openK.delete(k); }, true);
   msgs.addEventListener("click", async e => {
     const cp = e.target.closest("[data-copy]");
@@ -327,14 +446,14 @@ VIEWS.sessions = async (v, key) => {
   const loadHist = async keep => {
     const hst = await api.history(key, 80); const latest = hst.messages || [];
     const seen = new Set(latest.map(m => m.id).filter(Boolean)), ms = [...older.filter(m => !m.id || !seen.has(m.id)), ...latest];
-    const sig = older.length + ":" + latest.length + ":" + (latest.at(-1)?.id || latest.at(-1)?.ts || "") + ":" + (latest.at(-1)?.tools || []).map(t => t.status).join(); if (sig === lastSig) return; lastSig = sig;
+    const sig = JSON.stringify([ms, hst.hasMore, hst.nextBefore, hst.gatewayHasMore, hst.totalMessages, hst.windowCount, hst.sendLogFrom]); if (sig === lastSig) return; lastSig = sig;
     const atBottom = msgs.scrollHeight - msgs.scrollTop - msgs.clientHeight < 80;
     const ctx = { sendLogFrom: hst.sendLogFrom, openK, revealK, group: isGroup };
     const more = older.length ? olderMore : !!hst.hasMore, next = older.length ? olderNext : hst.nextBefore ?? null;
     const head = (more && next != null ? `<button type="button" class="older" data-older="${esc(next)}">加载更早的消息</button>`
       : more || hst.gatewayHasMore ? `<div class="oldnote">🌙 网关只保留最近一个窗口的记录，更早的聊天在这里翻不到了</div>` : ms.length ? `<div class="oldnote">这就是最早的消息啦</div>` : "")
       + (ms.length ? `<div class="histnote faint">共 ${hst.totalMessages ?? ms.length} 条消息${hst.windowCount ? `，网关窗口内 ${hst.windowCount} 条` : ""}，已显示 ${ms.length} 条${hst.sendLogFrom ? ` · 发送日志从 ${esc(hst.sendLogFrom)} 起才有，更早的「已发到 QQ」是推断的` : ""}</div>` : "");
-    ctx.model = sess.model;
+    ctx.model = sess.model; ms.forEach((m, i) => { m._i = i; }); lastMs = ms;
     msgs.innerHTML = ms.length ? head + renderList(ms, ctx) : `<div class="empty"><b>🌙</b>这里还很安静</div>`; wrapCode(msgs);
     if (!keep && (atBottom || !msgs.dataset.init)) msgs.scrollTop = msgs.scrollHeight; msgs.dataset.init = 1;
   };
@@ -356,7 +475,7 @@ VIEWS.sessions = async (v, key) => {
   }
   await loadHist(!!older.length);
   if (older.length) { const ids = new Set(older.map(m => m.id)); const els = [...msgs.querySelectorAll(".msg")]; void ids; const el = els[Math.max(0, Math.min(older.length, els.length) - 1)]; el?.scrollIntoView({ block: "center" }); el?.classList.add("flash"); }
-  timers.push(setInterval(async () => { try { await loadHist(); const ss = await api.sessions(); const x = ss.sessions.find(y => y.key === key); abortB.hidden = !x?.hasActiveRun; } catch {} }, 4000));
+  viewInterval(v, async () => { try { await loadHist(); const ss = await api.sessions(); const x = ss.sessions.find(y => y.key === key); abortB.hidden = !x?.hasActiveRun; } catch {} }, 4000);
   ta.addEventListener("input", () => { ta.style.height = "auto"; ta.style.height = Math.min(160, ta.scrollHeight) + "px"; });
   ta.addEventListener("keydown", e => { if (e.key === "Enter" && !e.shiftKey && !e.isComposing && wide) { e.preventDefault(); form.requestSubmit(); } });
   form.onsubmit = async e => {
@@ -378,7 +497,17 @@ VIEWS.sessions = async (v, key) => {
       toast(x.status === 404 && tray.count() ? "附件已过期，点 ↻ 重新上传后再发" : x.code === "too_many_attachments" ? `附件太多了，每条最多 ${(LIMITS || LIMITS0).maxPerMessage} 个` : x.status === 413 ? "附件太大了，网关收不下，删掉几个再试" : x.status === 403 ? "有附件不属于这个会话，移除后重新添加" : x.message); } finally { b.disabled = false; }
   };
   abortB.onclick = async () => { try { await api.abort(key); toast("已经让它停下来了"); abortB.hidden = true; } catch (x) { toast(x.message); } };
-  root.addEventListener("click", e => { const b = e.target.closest("[data-x]"); if (!b) return; if (b.dataset.x === "theme2") { toggleTheme(); b.innerHTML = ic(isDark() ? "sun" : "moon"); } if (b.dataset.x === "tune") tuneSheet(sess, models.models || [], s.defaults); });
+  root.addEventListener("click", e => { const b = e.target.closest("[data-x]"); if (!b) return; if (b.dataset.x === "menu") chatMenu(sess, models.models || [], s.defaults); });
+  root.querySelector("[data-cxback]")?.addEventListener("click", e => { e.preventDefault(); const to = cxFrom(); sessionStorage.removeItem("cx-from"); location.hash = to; });
+  sessionStorage.setItem("cx-last", key);
+  if (sessionStorage.getItem("cx-open-tune") === key) { sessionStorage.removeItem("cx-open-tune"); tuneSheet(sess, models.models || [], s.defaults); }
+  let lpT = null, lpXY = null;
+  const msgOf = el => { const i = el?.closest("[data-mi]")?.dataset.mi; return i != null ? lastMs[+i] : null; };
+  msgs.addEventListener("pointerdown", e => { const el = e.target.closest(".msg[data-mi]"); if (!el || e.target.closest("button,a,summary,input,audio,video")) return; lpXY = [e.clientX, e.clientY]; clearTimeout(lpT); lpT = setTimeout(() => { lpT = null; const m = msgOf(el); if (m) { el.classList.add("cx-press"); setTimeout(() => el.classList.remove("cx-press"), 300); msgMenu(m, { ta, isGroup, key, sess, after: () => { lastSig = ""; loadHist(true); } }); } }, 450); });
+  const lpStop = e => { if (!lpT) return; if (e.type === "pointermove" && lpXY && Math.hypot(e.clientX - lpXY[0], e.clientY - lpXY[1]) < 10) return; clearTimeout(lpT); lpT = null; };
+  ["pointerup", "pointercancel", "pointermove"].forEach(t => msgs.addEventListener(t, lpStop)); msgs.addEventListener("scroll", lpStop, { passive: true });
+  msgs.addEventListener("contextmenu", e => { if (e.target.closest(".msg[data-mi]") && !getSelection()?.toString()) e.preventDefault(); });
+  msgs.addEventListener("click", e => { const b = e.target.closest("[data-mact]"); if (b) { const m = msgOf(b); if (m) msgMenu(m, { ta, isGroup, key, sess, after: () => { lastSig = ""; loadHist(true); } }); return; } const td = e.target.closest("[data-tool]"); if (td) toolSheet(td.dataset.tool); });
 };
 document.addEventListener("click", e => {
   const gm = e.target.closest("[data-gmenu]"), ng = e.target.closest("[data-newgroup]");
@@ -409,11 +538,13 @@ function renderMedia(list, seen) {
     : `<a class="filelink" href="${esc(x.url)}" download="${esc(x.name)}">📎 ${esc(x.name)}${x.size ? ` <span class="faint">${bytes(x.size)}</span>` : ""}</a>`).join("")}</div>`;
 }
 function lightbox(url, name) {
-  const d = document.createElement("div"); d.className = "lightbox"; d.setAttribute("role", "dialog"); d.setAttribute("aria-label", name || "图片");
+  const previousFocus = document.activeElement;
+  const d = document.createElement("div"); d.className = "lightbox"; d.setAttribute("role", "dialog"); d.setAttribute("aria-label", name || "图片"); d.tabIndex = -1;
   d.innerHTML = `<img src="${esc(url)}" alt="${esc(name || "")}"><a class="iconbtn lb-dl" href="${esc(url)}" download aria-label="下载">⤓</a>`;
-  const close = () => { d.classList.add("out"); setTimeout(() => d.remove(), 200); removeEventListener("keydown", k); };
-  const k = e => e.key === "Escape" && close();
-  d.onclick = e => { if (!e.target.closest(".lb-dl")) close(); }; addEventListener("keydown", k); document.body.append(d);
+  const finish = () => { d.remove(); syncSheetInert(); const host = topSheet(); if (host) focusSheet(host, previousFocus); else if (previousFocus?.isConnected && !previousFocus.closest("[inert]")) previousFocus.focus(); };
+  const close = force => { if (d._authSuspended && force !== true) return; d.classList.add("out"); if (force === true) finish(); else setTimeout(finish, 200); };
+  d._v3close = close;
+  d.onclick = e => { if (!e.target.closest(".lb-dl")) close(); }; document.body.append(d); syncSheetInert(); focusSheet(d);
 }
 const DR = { "delivery-mirror": "网关确认已投递", "mirror-unconfirmed": "网关未确认投递", "no-channel": "这个会话不连 QQ", "silent-token": "静默回复（NO_REPLY 等）", "stay_silent": "这一轮选择了不说话（stay_silent）", "keepalive": "只是缓存保活", "run-failed": "回复前运行失败了", "non-channel-trigger": "这一轮不是 QQ 消息触发的", "intermediate-text": "中间段文本，不一定发出", "qq-send-ok": "网关日志有 qq-send-ok", "no-send-ok-log": "日志里没有发送成功记录", "final-reply-inferred": "按最终回复推断，没有日志可证" };
 const tdur = ms => ms == null ? "" : ms < 1000 ? ms + "ms" : (ms / 1000).toFixed(ms < 10000 ? 1 : 0) + "s";
@@ -437,7 +568,13 @@ function chainHtml(m, ctx, compact) {
   const k = "c" + (m.id || m.ts), total = ts.reduce((a, t) => a + (t.durationMs || 0), 0), errs = ts.filter(t => t.isError || t.status === "error").length, pend = ts.some(t => t.status === "pending");
   const icon = t => t.status === "pending" ? `<span class="spin-dot"></span>` : t.isError || t.status === "error" ? `<span class="st err">✕</span>` : `<span class="st ok">✓</span>`;
   const short = n => String(n || "工具").replace(/^mcp__[^_]+__/, "");
-  return `<details class="chain ${compact ? "compact" : ""}" data-k="${esc(k)}" title="${esc(ts.map(t => short(t.name)).join("、") + (total ? " · 工具合计 " + tdur(total) : ""))}" ${ctx.openK.has(k) ? "open" : ""}><summary><span class="ch-ic">🔧</span><span class="ch-sum">调用了 ${ts.length} 个工具${errs ? `，<span class="ch-err">${errs} 个出错</span>` : ""}${pend ? "，还在进行" : ""}</span>${pend ? `<span class="spin-dot"></span>` : ""}</summary><ol>${ts.map((t, i) => `<li class="step ${t.status || ""}"><div class="step-h">${icon(t)}<b class="mono" title="${esc(t.name)}">${esc(short(t.name))}</b><span class="faint">${t.status === "pending" ? "进行中…" : tdur(t.durationMs)}</span></div>${blk("参数", t.args, k + i, ctx)}${t.result ? blk(t.isError ? "错误" : "结果", t.result, k + i, ctx) : t.status === "pending" ? "" : `<div class="faint small">没有返回结果</div>`}</li>`).join("")}</ol></details>`;
+  return `<details class="chain ${compact ? "compact" : ""}" data-k="${esc(k)}" title="${esc(ts.map(t => short(t.name)).join("、") + (total ? " · 工具合计 " + tdur(total) : ""))}" ${ctx.openK.has(k) ? "open" : ""}><summary><span class="ch-ic">🔧</span><span class="ch-sum">调用了 ${ts.length} 个工具${errs ? `，<span class="ch-err">${errs} 个出错</span>` : ""}${pend ? "，还在进行" : ""}</span>${pend ? `<span class="spin-dot"></span>` : ""}</summary><ol>${ts.map((t, i) => [t, i]).sort((a, b) => (+!!(b[0].isError || b[0].status === "error")) - (+!!(a[0].isError || a[0].status === "error")) || a[1] - b[1]).map(([t]) => { const tk = "t" + (++TOOLSEQ); TOOLS.set(tk, t); if (TOOLS.size > 400) TOOLS.delete(TOOLS.keys().next().value); return `<li class="step ${t.status || ""} ${t.isError ? "error" : ""}"><div class="step-h">${icon(t)}<b class="mono" title="${esc(t.name)}">${esc(short(t.name))}</b><span class="faint">${t.status === "pending" ? "进行中…" : tdur(t.durationMs)}</span><button type="button" class="btn sm cx-tdet" data-tool="${tk}">详情</button></div>${t.result?.text ? `<div class="cx-tres ${t.isError ? "err" : ""}">${esc(String(t.result.text).slice(0, 160))}${String(t.result.text).length > 160 ? "…" : ""}</div>` : t.status === "pending" ? "" : `<div class="faint small">没有返回结果</div>`}</li>`; }).join("")}</ol></details>`;
+}
+const TOOLS = new Map(); let TOOLSEQ = 0;
+function toolSheet(tk) {
+  const t = TOOLS.get(tk); if (!t) return;
+  const ctx = { openK: new Set(["x参数", "x结果", "x错误"]) };
+  sheet(`<h2 class="mono" style="overflow-wrap:anywhere">${esc(String(t.name || "工具").replace(/^mcp__[^_]+__/, ""))}</h2><div class="faint" style="margin:-6px 0 10px">${t.status === "pending" ? "进行中…" : (t.isError || t.status === "error" ? "出错了" : "完成") + (t.durationMs != null ? " · " + tdur(t.durationMs) : "")}</div><div class="cx-tool">${blk("参数", t.args, "x", ctx) || `<div class="faint">没有参数</div>`}${t.result ? blk(t.isError ? "错误" : "结果", t.result, "x", ctx) : `<div class="faint">没有返回结果</div>`}</div><button type="button" class="btn" data-close style="width:100%;margin-top:14px">关闭</button>`, (el, close) => { el.querySelector("[data-close]").onclick = () => close(); }, "tool");
 }
 // ---------- v2.10 附件（上传托盘：点选 / 相册 / 粘贴 / 拖拽，进度、重试、移除） ----------
 const MB = 1024 * 1024;
@@ -645,37 +782,223 @@ function renderMsg(m, ctx = { openK: new Set() }, pos = { first: true, last: tru
   const metaParts = role === "assistant" ? [m.model, cost] : role === "tool" ? [m.kind || m.role || "系统"] : [];
   const showMeta = role === "assistant" || pos.last, seen = new Set();
   const sid = senderId(m), spk = !pos.first ? "" : role === "user" && m.owner ? `<span class="speaker me">凛${src ? `<small>${src}</small>` : ""}</span>` : !ctx.group ? "" : role === "assistant" ? `<span class="speaker bot">星野のねこ</span>` : role === "user" ? `<button type="button" class="speaker" ${isOpenId(sid) ? `data-prof="${esc(sid)}"` : "disabled"} title="${esc(sid || "")}">${esc(senderLabel(m) || (m.owner ? "凛" : "未知发言人"))}</button>` : "";
-  return spk + `<div class="msg ${role} ${pos.first ? "gf" : ""} ${pos.last ? "gl" : ""} ${role === "user" && !m.owner ? "other" : ""} ${m.isError ? "err" : ""} ${role === "tool" ? "" : "md"}">${hasTools ? chainHtml(m, ctx) : ""}${role === "tool" ? esc(t.slice(0, 2000)) : t.trim() ? grayPaths(md(t), seen) : ""}${renderMedia(media, seen)}${atts}${showMeta ? `<span class="meta">${metaParts.filter(Boolean).map(x => `<span>${esc(x)}</span>`).join("")}<span class="tm">${HM(toMs(m.ts))}</span>${deliveryBadge(m, ctx)}</span>` : ""}</div>`;
+  const mact = m._i != null && role !== "tool" ? `<button type="button" class="cx-mact" data-mact aria-label="这条消息的操作">⋯</button>` : ""; const cxRc = m.id && CX_RECALLED.has(m.id) ? `<span class="cx-recalled">已在 QQ 撤回</span>` : "";
+  return spk + `<div ${m._i != null ? `data-mi="${m._i}"` : ""} class="msg ${role} ${pos.first ? "gf" : ""} ${pos.last ? "gl" : ""} ${role === "user" && !m.owner ? "other" : ""} ${m.isError ? "err" : ""} ${role === "tool" ? "" : "md"}">${hasTools ? chainHtml(m, ctx) : ""}${role === "tool" ? esc(t.slice(0, 2000)) : t.trim() ? grayPaths(md(t), seen) : ""}${renderMedia(media, seen)}${atts}${showMeta ? `<span class="meta">${metaParts.filter(Boolean).map(x => `<span>${esc(x)}</span>`).join("")}<span class="tm">${HM(toMs(m.ts))}</span>${deliveryBadge(m, ctx)}</span>` : ""}${cxRc}${mact}</div>`;
 }
+// ---------- chat-ux 2026-11-03：会话设置只剩 模型 + 思考；引擎自动配套 ----------
+// openclaw 和 pi 是同一个默认引擎；空值 / null 也表示跟随默认
+const cxDefRt = r => !r || r === "openclaw" || r === "pi";
+const cxModel = (models, id) => { if (!id) return null; const [pv, mid] = String(id).includes("/") ? [String(id).split("/")[0], String(id).split("/").slice(1).join("/")] : [null, id]; return models.find(m => m.id === mid && (!pv || !m.provider || m.provider === pv)) || (pv ? { id: mid, provider: pv } : models.find(m => m.id === mid) || { id: mid }); };
+function cxRtFits(rt, m) {
+  if (cxDefRt(rt)) return true; if (!m) return true;
+  const pv = String(m.provider || "").toLowerCase(), id = String(m.id || "").toLowerCase();
+  if (rt === "codex") return pv === "openai" || pv === "openai-codex";
+  if (rt === "claude-cli") return pv === "anthropic" || /claude/.test(id);
+  return m.runtime ? m.runtime === rt : true;
+}
+const cxRtName = r => r === "codex" ? "Codex" : r === "claude-cli" ? "Claude CLI" : r;
+// /api/patch 没有稳定错误码，原样透传网关文字：只按文字里的 acp / lock 给中文提示，其他一律「保存没成功：原文」。不提供解锁入口。
+// 网关拒绝：code 固定 INVALID_REQUEST、HTTP 502，只能看文字里有没有 ACP / locked（不区分大小写）
+const cxPatchErr = x => { const t = String(x?.message || ""); return /acp/i.test(t) ? "这是 ACP 会话，它的模型和引擎由 ACP 那边管理，这里改不了" : /locked/i.test(t) ? "这个会话的模型被锁定了，不能在这里换" : "保存没成功：" + (x?.message || "未知错误"); };
+// 只有网关明确声明支持，才显示 OAuth 登录和同供应商账号排序。
+const cxAuthCap = (p, capability) => p.capabilities?.[capability] === true;
+const CX_LOCKED = new Set(); // 本页内收到过「锁定」拒绝的会话，之后同样按锁定处理
+const cxIsAcp = k => /(^|:)acp(:|$)/i.test(String(k || ""));
+// /api/sessions 返回 runtimeSelectionLocked（模型锁定或 ACP 会话）和 modelSelectionLocked（仅模型锁定）；key 正则只作兜底
+const cxIsLocked = s => s?.modelSelectionLocked === true || CX_LOCKED.has(s?.key);
+const cxRtLocked = s => s?.runtimeSelectionLocked === true || cxIsAcp(s?.key) || cxIsLocked(s);
 function tuneSheet(sess, models, defaults) {
-  const runtimes = [...new Set([sess.agentRuntime, ...models.map(m => m.runtime)].filter(Boolean))];
   const thinks = sess.thinkingOptions?.length ? sess.thinkingOptions : ["off", "minimal", "low", "medium", "high"];
   const thinkZh = { off: "关闭", minimal: "极少", low: "少量", medium: "适中", high: "深度", xhigh: "极深", adaptive: "自适应" };
   const curModel = sess.modelProvider && sess.model && !String(sess.model).includes("/") ? sess.modelProvider + "/" + sess.model : sess.model;
-  sheet(`<h2>会话设置</h2><form id="tf">
+  const curM = cxModel(models, curModel || defaults?.model);
+  // 预防为主：锁定 / ACP 会话不显示「改回自动」，也从不发 agentRuntime
+  const noRt = cxRtLocked(sess);
+  const mis = !noRt && !cxRtFits(sess.agentRuntime, curM);
+  sheet(`<h2>模型和思考</h2><form id="tf">
     <label class="field"><span>模型</span><select class="select" name="model"><option value="">跟随默认${defaults?.model ? "（" + esc(defaults.model) + "）" : ""}</option>${models.map(m => { const id = m.provider ? `${m.provider}/${m.id}` : m.id; return `<option value="${esc(id)}" ${id === curModel || m.id === sess.model ? "selected" : ""} ${m.available === false ? "disabled" : ""}>${esc(m.alias || m.name || m.id)}${m.provider ? " · " + esc(m.provider) : ""}</option>`; }).join("")}</select></label>
-    <label class="field"><span>运行时</span><select class="select" name="agentRuntime"><option value="">跟随默认</option>${runtimes.map(r => `<option ${r === sess.agentRuntime ? "selected" : ""}>${esc(r)}</option>`).join("")}</select></label>
+    ${mis ? `<div class="cx-mis" id="cxmis"><span>⚠ 现在的引擎是 ${esc(cxRtName(sess.agentRuntime))}，和 ${esc(curM?.name || curM?.id || "这个模型")} 不配套</span><button type="button" class="btn sm" data-rtauto>改回自动</button></div>` : ""}
+    <div class="faint cx-note">${cxIsLocked(sess) ? "这个会话的模型被锁定了，这里只能调思考强度。" : noRt ? "这是 ACP 会话，模型和引擎由 ACP 那边管理。" : "换模型时会自动配好引擎，不用自己选。"}</div>
     <label class="field"><span>思考强度</span><div class="seg" role="group">${thinks.map(t => `<button type="button" data-t="${esc(t)}" aria-pressed="${t === (sess.thinkingLevel || sess.thinkingDefault)}">${esc(thinkZh[t] || t)}</button>`).join("")}</div></label>
-    <div style="display:flex;gap:10px;margin-top:20px"><button type="button" class="btn" data-close style="flex:1">取消</button><button class="btn primary" style="flex:2">保存</button></div></form>
-    <label class="field" style="margin-top:18px"><span>分组</span><select class="select" id="mvg"><option value="">未分组</option>${GROUPS.map(g => `<option value="${esc(g.id)}" ${g.id === groupOf(sess) ? "selected" : ""}>${esc(g.name)}</option>`).join("")}</select></label>
-    <div class="section" style="margin:24px 0 10px">会话操作</div>
-    <div class="grid g3"><button class="btn" data-op="compact">压缩上下文</button><button class="btn" data-op="reset">重置会话</button><button class="btn danger" data-op="delete">${ic("trash")}删除会话</button></div>
-    ${sess.chatType === "group" || qqTarget(sess.key)?.kind === "group" ? `<div class="grid g2" style="margin-top:10px"><a class="btn" href="#/interactions/${encodeURIComponent(sess.key)}" data-close>${ic("people")}互动统计</a><a class="btn" href="#/digest" data-close>${ic("digest")}群报设置</a></div>` : ""}`, (el, close) => {
-    el.querySelectorAll("[data-op]").forEach(b => b.onclick = () => sessionOp(b.dataset.op, sess, close));
-    el.querySelector("#mvg").onchange = e => moveToGroup(sess.key, e.target.value || null, () => { close(); route(); });
+    <div style="display:flex;gap:10px;margin-top:20px"><button type="button" class="btn" data-close style="flex:1">取消</button><button class="btn primary" style="flex:2">保存</button></div></form>`, (el, close) => {
     let think = sess.thinkingLevel || sess.thinkingDefault;
     el.querySelectorAll("[data-t]").forEach(b => b.onclick = () => { think = b.dataset.t; el.querySelectorAll("[data-t]").forEach(x => x.setAttribute("aria-pressed", x === b)); });
-    el.querySelector("[data-close]").onclick = close;
+    el.querySelector("[data-close]").onclick = () => close();
+    el.querySelector("[data-rtauto]")?.addEventListener("click", async e => { e.target.disabled = true; try { await api.patch(sess.key, { agentRuntime: null }); delete sess.agentRuntime; el.querySelector("#cxmis")?.remove(); toast("已改回自动 ✓"); } catch (x) { e.target.disabled = false; if (/locked/i.test(x?.message || "")) CX_LOCKED.add(sess.key); toast(cxPatchErr(x)); } });
     el.querySelector("#tf").onsubmit = async e => {
       e.preventDefault(); const f = e.target, patch = {};
-      if (f.model.value !== (curModel || "")) patch.model = f.model.value || null;
-      if (f.agentRuntime.value !== (sess.agentRuntime || "")) patch.agentRuntime = f.agentRuntime.value || null;
+      if (f.model.value !== (curModel || "")) { patch.model = f.model.value || null; const nm = cxModel(models, f.model.value || defaults?.model); if (!noRt && !cxRtFits(sess.agentRuntime, nm)) patch.agentRuntime = null; }
       if (think && think !== sess.thinkingLevel) patch.thinkingLevel = think;
       if (!Object.keys(patch).length) return close();
-      try { await api.patch(sess.key, patch); toast("设置已保存 ✓"); close(); route(); } catch (x) { toast(x.message); }
+      try { await api.patch(sess.key, patch); toast(patch.agentRuntime === null ? "设置已保存，引擎也自动配好了 ✓" : "设置已保存 ✓"); close(true); route(); } catch (x) { if (/locked/i.test(x?.message || "")) CX_LOCKED.add(sess.key); toast(cxPatchErr(x)); }
     };
   });
 }
+// ---------- 会话 ⋯ 菜单（替代原来的长设置单）。原单里的每一项都在这里：改名 / 模型和思考 / 移到分组 / 互动统计 / 群报设置 / 压缩上下文 / 重置 / 删除 ----------
+const cxItem = (k, icon, t, d = "", cls = "", dis = "") => `<button type="button" class="cx-mi ${cls}" data-m="${k}" ${dis ? `disabled aria-disabled="true"` : ""}><span class="cx-mic">${icon}</span><span class="grow"><b>${esc(t)}</b>${d ? `<small>${esc(d)}</small>` : ""}</span>${dis ? `<span class="pill">${esc(dis)}</span>` : ""}</button>`;
+async function cxRename(x, after) {
+  const v = await promptSheet("改名", x.alias || aliasFor(x.key) || "", `给「${rawId(x)}」起个名字`); if (v == null) return;
+  const nv = v.trim(), old = x.alias || aliasFor(x.key) || ""; if (nv === old) return;
+  if (await act(() => api.setAlias(x.key, nv), nv ? `已改名为「${nv}」` : "已清除别名")) { if (nv) ALIAS[x.key] = nv; else delete ALIAS[x.key]; x.alias = nv || null; searchIdx = null; after?.(); }
+}
+function cxGroupPick(x, after) {
+  const cur = groupOf(x) || "";
+  sheet(`<h2>移到分组</h2><div class="cx-menu">${[{ id: "", name: "未分组" }, ...GROUPS].map(g => `<button type="button" class="cx-mi" data-g="${esc(g.id)}" aria-pressed="${g.id === cur}"><span class="cx-mic">${g.id === cur ? "✓" : "·"}</span><span class="grow"><b>${esc(g.name)}</b></span></button>`).join("")}<button type="button" class="cx-mi" data-g="__new"><span class="cx-mic">＋</span><span class="grow"><b>新建分组</b></span></button></div>`, (el, close) => {
+    el.addEventListener("click", async e => { const b = e.target.closest("[data-g]"); if (!b) return; await close(true); if (b.dataset.g === "__new") return groupEdit(null, async () => { await loadGroups(); cxGroupPick(x, after); }); moveToGroup(x.key, b.dataset.g || null, after); });
+  }, "cxgroup");
+}
+function chatMenu(sess, models, defaults) {
+  const grp = sess.chatType === "group" || qqTarget(sess.key)?.kind === "group";
+  const gname = GROUPS.find(g => g.id === groupOf(sess))?.name || "未分组";
+  sheet(`<h2>${esc(sessName(sess))}</h2><div class="cx-menu">
+    ${cxItem("rename", "✎", "改名")}
+    ${cxItem("tune", "⚙", "模型和思考", [sess.model, sess.thinkingLevel && "思考 " + sess.thinkingLevel].filter(Boolean).join(" · "))}
+    ${cxItem("group", "▤", "移到分组", "现在：" + gname)}
+    ${grp ? cxItem("inter", "👥", "互动统计") + cxItem("digest", "📰", "群报设置") : ""}
+    ${cxItem("compact", "⇲", "压缩上下文", "让对话轻装上阵，不会删记录")}
+    ${cxItem("reset", "↺", "重置会话", "要再确认一次")}
+    ${cxItem("delete", "🗑", "删除会话", "要确认两次，删了不能恢复", "danger")}</div>`, (el, close) => {
+    el.addEventListener("click", async e => {
+      const b = e.target.closest("[data-m]"); if (!b) return; const k = b.dataset.m; await close(true);
+      if (k === "rename") return cxRename(sess, () => route());
+      if (k === "tune") return tuneSheet(sess, models, defaults);
+      if (k === "group") return cxGroupPick(sess, () => route());
+      if (k === "inter") { location.hash = "#/interactions/" + encodeURIComponent(sess.key); return; }
+      if (k === "digest") { location.hash = "#/digest"; return; }
+      sessionOp(k, sess, () => {});
+    });
+  }, "cxmenu");
+}
+// ---------- 消息操作 ----------
+// 重新生成 / 撤回（chat-actions v1，见 staging/chat-actions/API.md）。开关：/api/features 的 chatRegenerate / chatRecall（不是 true 就不显示）。
+// 两个操作都先 confirmDialog 二次确认，请求体带 confirm:true；错误按 code 映射成中文，未知 code 用通用兜底。
+let CXF = {};
+let CXF_P = null;
+// 凛已批准三项写入默认开放；/api/features 里有同名键时以它为准，这样后端仍能整块关掉。
+const CP_FLAGS = { pluginToggle: true, skillToggle: true, secretWrite: true };
+const cpOn = k => typeof CXF?.[k] === "boolean" ? CXF[k] : CP_FLAGS[k];
+const ensureFeatures = () => CXF_P ||= api.features().then(f => { CXF = f || {}; return CXF; }).catch(() => CXF);
+let CFF = null, CFF_P = null;
+const ensureConsoleFeatures = () => CFF_P ||= rawReq("GET", "/api/console-features").then(d => { CFF = d; return d; }).catch(e => { if ((e.status === 404 || e.status === 501) && !e.code) { CFF = { __closed: true }; return CFF; } throw e; });
+const cpClosed = e => (e?.status === 404 || e?.status === 501) && !e?.code;
+const CX_RECALLED = new Set(); // 撤回成功后本地加「已在 QQ 撤回」标记（后端 v1 不持久化，刷新后消失）
+// 管理员撤回（群友消息）不限时：只看 no_permission / no_message_id 等；后端若仍回 window_expired 也当可用（兼容旧后端）
+const cxAdminOk = o => !!o && (!!o.available || o.reason === "window_expired");
+const CX_ERR = { window_expired: "超过 2 分钟了", no_permission: "星野不是管理员，或者对方是群主/管理员", no_message_id: "这条消息没有 QQ 记录，没法撤回", not_qq_session: "这不是 QQ 会话，没有东西可撤", not_group: "只有群聊能撤回别人的消息，私聊不行", wrong_role: "星野的回复用「撤回」，群友的消息用「管理员撤回」", disabled: "撤回功能没开", recall_disabled: "服务器还没开撤回功能", confirm_required: "需要先确认一次", bad_mode: "撤回方式不对", message_not_found: "会话里找不到这条消息", qq_error: "QQ 那边出错了，稍后再试", no_user_turn: "找不到触发这条回复的消息", busy: "星野正在回复，等她说完再试", session_changed: "会话刚变过，刷新后再试", unsupported_session: "这个会话不支持重新生成", gateway_error: "网关出错了，稍后再试" };
+const cxErr = (x, what) => x?.code === "qq_error" && x?.detail ? `${CX_ERR.qq_error}（QQ 错误码 ${x.detail}）` : CX_ERR[x?.code] || `${what}没成功，稍后再试${x?.message ? "（" + x.message + "）" : ""}`;
+async function cxRecall(m, mode, key, after) {
+  const self = mode === "self";
+  if (!await confirmDialog({ title: self ? "在 QQ 撤回星野的这条回复？" : "以管理员身份撤回这条群消息？", body: `${self ? "会把这条回复在 QQ 里撤回（分成多段的会一起撤）。" : "需要星野是群管理员，且对方不是群主/管理员。"}只删 QQ 里的消息，控制台记录和星野的上下文不会变。`, ok: "撤回", danger: true })) return;
+  try { const r = await api.recall(key, m.id, mode);
+    if (r?.ok === false) { const bad = (r.parts || []).find(x => x && !x.ok); toast(`撤回了 ${r.recalled ?? 0} 段，${r.failed ?? 1} 段没成功${bad?.code ? "：" + (CX_ERR[bad.code] || bad.code) : ""}`); if (r.recalled) CX_RECALLED.add(m.id); }
+    else { CX_RECALLED.add(m.id); toast(self ? `已在 QQ 撤回${r?.recalled > 1 ? `（${r.recalled} 段）` : ""}` : "已以管理员身份撤回"); }
+    after?.();
+  } catch (x) { toast(cxErr(x, "撤回")); }
+}
+async function cxRegen(m, key, after) {
+  let dlv = false; const h = e => { if (e.target?.id === "cxrgq") dlv = e.target.checked; }; document.addEventListener("change", h, true);
+  const ok = await confirmDialog({ title: "重新生成这条回复？", body: `星野会回到这一轮重新回答。旧回复保留为分支，不会删除，也不会自动在 QQ 撤回。<label class="cx-mi cx-rgq"><span class="switch"><input type="checkbox" id="cxrgq"><i></i></span><span class="grow"><b>同时发到 QQ</b><small>默认不勾：只在控制台。勾上会作为一条主动消息发到 QQ</small></span></label>`, ok: "重新生成" });
+  document.removeEventListener("change", h, true); if (!ok) return;
+  if (dlv && !await confirmDialog({ title: "新回复也要发到 QQ？", body: "会占用一次主动消息额度；旧回复也还留在 QQ 里。", ok: "确认，发到 QQ", danger: true })) return;
+  try { await api.regenerate(key, m.id, dlv); toast(dlv ? "正在重新生成，好了会同时发到 QQ" : "正在重新生成（只在控制台）"); after?.(); } catch (x) { toast(cxErr(x, "重新生成")); }
+}
+const cxPlain = m => textOf(m.content).replace(/^\s*-?\s*Attachment origins \(host metadata[^\n]*$/gim, "").trim();
+function msgMenu(m, { ta, isGroup, key, after }) {
+  const txt = cxPlain(m), sid = senderId(m), isA = m.role === "assistant", isU = m.role === "user";
+  const showRegen = CXF.chatRegenerate === true && (isA || isU) && !!m.id;
+  const showRecall = CXF.chatRecall === true && (isA || (isU && isGroup));
+  const mode = isA ? "self" : "admin";
+  sheet(`<h2>消息操作</h2>${txt ? `<div class="cx-prev">${esc(txt.slice(0, 120))}${txt.length > 120 ? "…" : ""}</div>` : ""}<div class="cx-menu">
+    ${cxItem("copy", "⧉", "复制全文", "", "", txt ? "" : "没有文字")}
+    ${cxItem("quote", "❝", "引用到输入框", "", "", txt ? "" : "没有文字")}
+    ${m.tools?.length ? cxItem("tools", "🔧", "看工具详情", `${m.tools.length} 个工具`) : ""}
+    ${isGroup && isU && isOpenId(sid) ? cxItem("prof", "👤", "看发言人资料", senderLabel(m)) : ""}
+    ${showRegen ? cxItem("regenerate", "⟳", "重新生成", "默认只在控制台，可选同时发到 QQ") : ""}
+    ${showRecall ? `<div class="cx-rc" id="cxrc"><div class="cx-rcst faint" id="cxrcst">正在查能不能撤回…</div>
+      ${cxItem("recall-self", "↩", "撤回", "星野自己的回复 · QQ 2 分钟内", "danger", "查询中")}
+      ${cxItem("recall-admin", "⛔", "管理员撤回", "群友的消息 · 需要星野是群管理员", "danger", "查询中")}</div>` : ""}</div>`, (el, close) => {
+    // 打开即查询 /api/chat/recallable，显示自己撤回 / 管理员撤回 各自是否可用和剩余秒数（每秒倒计时，到 0 灰掉）
+    let tick = null, st = null;
+    const setBtn = (k, info, label) => { const b = el.querySelector(`[data-m=recall-${k}]`); if (!b) return; const left = Math.max(0, Math.floor(info?.left ?? 0)); const adm = k === "admin", on = adm ? cxAdminOk(info) : !!info?.available && left > 0; b.disabled = !on; b.toggleAttribute("aria-disabled", !on); const pill = b.querySelector(".pill") || b.appendChild(Object.assign(document.createElement("span"), { className: "pill" })); pill.textContent = on ? (adm ? "可撤回" : `剩 ${left} 秒`) : CX_ERR[info?.reason] || (info?.reason ? "不可用" : label || "不可用"); pill.className = "pill" + (on ? " ac" : ""); };
+    const draw = () => { if (!st) return; const t = (Date.now() - st.t0) / 1000; const s = st.self && { ...st.self, left: (st.self.secondsLeft || 0) - t }, a = st.admin && { ...st.admin, left: (st.admin.secondsLeft || 0) - t };
+      setBtn("self", s); setBtn("admin", a);
+      const line = (n, o) => !o ? "" : o === a && cxAdminOk(o) ? `${n}：可以（群友消息不限时）` : o.available && o.left > 0 ? `${n}：可以，还剩 ${Math.floor(o.left)} 秒${o.parts > 1 ? `（${o.parts} 段一起撤）` : ""}` : `${n}：不行，${CX_ERR[o.reason] || o.reason || "不可用"}`;
+      const s1 = el.querySelector("#cxrcst"); if (s1) s1.textContent = [line("自己撤回", s), line("管理员撤回", a)].filter(Boolean).join("；");
+      if (!(s?.available && s.left > 0)) { clearInterval(tick); tick = null; } };
+    if (showRecall) {
+      const host = el.closest("[data-v3sheet]"); const prevClose = host._onclose; host._onclose = () => { clearInterval(tick); prevClose?.(); };
+      if (!m.id) { st = { t0: Date.now(), self: { available: false, reason: "no_message_id" }, admin: { available: false, reason: "no_message_id" } }; draw(); }
+      else api.recallable(key, m.id).then(r => { st = { t0: Date.now(), self: r.self, admin: r.admin }; draw(); tick = setInterval(() => el.isConnected ? draw() : clearInterval(tick), 1000); })
+        .catch(x => { const s1 = el.querySelector("#cxrcst"); if (s1) s1.textContent = "查不到撤回状态：" + cxErr(x, "查询"); setBtn("self", { available: false, reason: x.code }, "查不到"); setBtn("admin", { available: false, reason: x.code }, "查不到"); });
+    }
+    el.addEventListener("click", async e => {
+      const b = e.target.closest("[data-m]:not([disabled])"); if (!b) return; const k = b.dataset.m; clearInterval(tick); await close(true);
+      if (k === "copy") { const ok = await copyText(txt); return toast(ok ? "已复制" : "复制没成功，可以长按选中后再复制"); }
+      if (k === "quote") { const q = txt.slice(0, 300).split("\n").map(l => "> " + l).join("\n") + (txt.length > 300 ? "…" : "") + "\n\n"; ta.value = q + ta.value; ta.dispatchEvent(new Event("input")); ta.focus(); ta.setSelectionRange(ta.value.length, ta.value.length); return; }
+      if (k === "tools") { if (m.tools.length === 1) { const tk = "t" + (++TOOLSEQ); TOOLS.set(tk, m.tools[0]); return toolSheet(tk); } return sheet(`<h2>工具详情</h2><div class="cx-menu">${m.tools.map(t => { const tk = "t" + (++TOOLSEQ); TOOLS.set(tk, t); return `<button type="button" class="cx-mi ${t.isError ? "danger" : ""}" data-tool="${tk}"><span class="cx-mic">${t.isError ? "✕" : t.status === "pending" ? "…" : "✓"}</span><span class="grow"><b class="mono">${esc(String(t.name || "").replace(/^mcp__[^_]+__/, ""))}</b><small>${esc(tdur(t.durationMs))}</small></span></button>`; }).join("")}</div>`, (el2, c2) => el2.addEventListener("click", async ev => { const tb = ev.target.closest("[data-tool]"); if (tb) { await c2(true); toolSheet(tb.dataset.tool); } })); }
+      if (k === "prof") return profileSheet(sid, null, isGroup ? key : null);
+      if (k === "regenerate") return cxRegen(m, key, after);
+      if (k === "recall-self" || k === "recall-admin") return cxRecall(m, k.slice(7), key, after);
+    });
+  }, "msgmenu");
+  void mode;
+}
+// ---------- 输入区「添加 / 发送方式」 ----------
+function composerSheet({ form, asbot, deliverC, qqOk, onChange }) {
+  const mode = () => asbot.checked ? "bot" : deliverC.checked ? "qq" : "console";
+  sheet(`<h2>添加 / 发送方式</h2>
+    <div class="section" style="margin:4px 0 8px">添加</div><div class="grid g2"><button type="button" class="btn" data-pk="img">🖼️ 图片</button><button type="button" class="btn" data-pk="file">📎 文件</button></div>
+    <div class="section" style="margin:18px 0 8px">发到哪里</div><div class="cx-menu" role="radiogroup">
+      <button type="button" class="cx-mi" role="radio" data-mode="console" aria-checked="${mode() === "console"}"><span class="cx-mic">${mode() === "console" ? "◉" : "○"}</span><span class="grow"><b>只在控制台</b><small>默认</small></span></button>
+      <button type="button" class="cx-mi" role="radio" data-mode="qq" aria-checked="${mode() === "qq"}"><span class="cx-mic">${mode() === "qq" ? "◉" : "○"}</span><span class="grow"><b>控制台 + 同时发到 QQ</b><small>星野のねこ的回复也会发到 QQ</small></span></button></div>
+    ${qqOk ? `<details class="cx-danger" ${mode() === "bot" ? "open" : ""}><summary>危险操作</summary><label class="cx-mi danger"><span class="switch warn"><input type="checkbox" id="cxbot" ${asbot.checked ? "checked" : ""}><i></i></span><span class="grow"><b>以星野のねこ身份直发 QQ</b><small>不经过她思考，发送前还会再确认；不能带附件</small></span></label></details>` : ""}
+    <button type="button" class="btn primary" data-close style="width:100%;margin-top:16px">好</button>`, (el, close) => {
+    el.querySelectorAll("[data-pk]").forEach(b => b.onclick = async () => { if (asbot.checked) return toast("以星野のねこ身份直发不支持附件"); await close(true); form.querySelector(`[data-pick=${b.dataset.pk}]`).click(); });
+    el.querySelectorAll("[data-mode]").forEach(b => b.onclick = () => { if (asbot.checked) { asbot.checked = false; asbot.onchange(); const c = el.querySelector("#cxbot"); if (c) c.checked = false; } deliverC.checked = b.dataset.mode === "qq"; el.querySelectorAll("[data-mode]").forEach(x => { const on = x === b; x.setAttribute("aria-checked", on); x.querySelector(".cx-mic").textContent = on ? "◉" : "○"; }); onChange(); });
+    el.querySelector("#cxbot")?.addEventListener("change", e => { asbot.checked = e.target.checked; asbot.onchange(); el.querySelectorAll("[data-mode]").forEach(x => { x.setAttribute("aria-checked", false); x.querySelector(".cx-mic").textContent = "○"; }); });
+    el.querySelector("[data-close]").onclick = () => close(true);
+  }, "cxcomp");
+}
+// ---------- 会话列表：整行打开；⋯ 或长按出菜单；返回高亮 + 恢复滚动 ----------
+const cxFrom = () => sessionStorage.getItem("cx-from") || "#/sessions";
+function cxListWire(lr, list, models, s) {
+  const find = k => list.find(x => x.key === k) || { key: k };
+  let lpT = null, fired = false;
+  lr.addEventListener("click", e => {
+    const mb = e.target.closest("[data-rowmenu]"); if (mb) { e.preventDefault(); e.stopPropagation(); return rowMenu(find(mb.dataset.rowmenu), models, s); }
+    const r = e.target.closest(".cxrow"); if (!r) return;
+    if (fired) { e.preventDefault(); fired = false; return; }
+    sessionStorage.setItem("cx-listy", String(scrollY));
+  });
+  lr.addEventListener("pointerdown", e => { const r = e.target.closest(".cxrow"); if (!r || e.target.closest("button")) return; fired = false; clearTimeout(lpT); lpT = setTimeout(() => { fired = true; rowMenu(find(r.dataset.skey), models, s); }, 450); });
+  ["pointerup", "pointercancel", "pointerleave"].forEach(t => lr.addEventListener(t, () => clearTimeout(lpT)));
+  addEventListener("scroll", () => clearTimeout(lpT), { passive: true });
+  lr.addEventListener("contextmenu", e => { if (e.target.closest(".cxrow")) e.preventDefault(); });
+}
+function rowMenu(x, models, s) {
+  const gname = GROUPS.find(g => g.id === groupOf(x))?.name || "未分组";
+  sheet(`<h2>${esc(sessName(x))}</h2><div class="cx-menu">
+    ${cxItem("open", "💬", "打开会话")}
+    ${cxItem("rename", "✎", "改名")}
+    ${cxItem("pin", "📌", x.pinned ? "取消置顶" : "置顶")}
+    ${cxItem("group", "▤", "移到分组", "现在：" + gname)}
+    ${cxItem("tune", "⚙", "模型和思考")}</div>`, (el, close) => {
+    el.addEventListener("click", async e => {
+      const b = e.target.closest("[data-m]"); if (!b) return; const k = b.dataset.m; await close(true);
+      const href = "#/sessions/" + encodeURIComponent(x.key);
+      if (k === "open") { sessionStorage.setItem("cx-listy", String(scrollY)); location.hash = href; return; }
+      if (k === "rename") return cxRename(x, () => route());
+      if (k === "pin") { if (await act(() => api.patch(x.key, { pinned: !x.pinned }), x.pinned ? "已取消置顶" : "已置顶")) route(); return; }
+      if (k === "group") return cxGroupPick(x, () => route());
+      if (k === "tune") return tuneSheet(x, models.models || [], s.defaults);
+    });
+  }, "rowmenu");
+}
+// 聊天页：隐藏底部 tab 栏；记录进入聊天前的来源，返回回到那里
+let cxPrev = location.hash;
+const cxMode = () => document.documentElement.classList.toggle("cx-chat", /^#\/sessions\/./.test(location.hash));
+addEventListener("hashchange", () => { const h = location.hash; if (/^#\/sessions\/./.test(h) && !/^#\/sessions\/./.test(cxPrev)) sessionStorage.setItem("cx-from", cxPrev && cxPrev !== "#" ? cxPrev : "#/sessions"); cxPrev = h; cxMode(); });
+cxMode();
 
 const CUR = { CNY: "¥", USD: "$", EUR: "€" };
 const SUMZH = { Granted: "赠送", "Topped up": "充值", Balance: "余额", Used: "已用", Remaining: "剩余" };
@@ -714,20 +1037,64 @@ function linkCard(d) {
   const bakHtml = baks.length ? `<div class="bak-row"><span class="faint" style="font-size:12.5px">备用线路</span>${baks.map((w, i) => { const st = w.online === false ? ["off", "离线"] : w.peerOnline ? ["on", "在线"] : w.online ? ["idle", "在线 · 暂无设备握手"] : ["", "未知"]; return `<span class="bak-chip" title="${esc(bakName(w, i) + (w.port ? " · 端口 " + w.port : ""))}"><span class="link-dot ${st[0]}"></span>${esc(bakName(w, i).replace("备用线路 ", ""))}<span class="faint">${st[1]}</span></span>`; }).join("")}</div>` : "";
   return `<div class="card link">${head(d.ts ? "更新于 " + fmtTime(d.ts) : "线路状态")}${mainHtml}${bakHtml}${errBox}</div>`;
 }
+const fmtSgtHm = t => {
+  const ms = toMs(t); if (!ms || isNaN(ms)) return "";
+  const opt = { timeZone: "Asia/Singapore", year: "numeric", month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", hour12: false };
+  const parts = new Intl.DateTimeFormat("en-GB", opt).formatToParts(new Date(ms));
+  const now = new Intl.DateTimeFormat("en-GB", opt).formatToParts(new Date());
+  const g = (list, typ) => list.find(p => p.type === typ)?.value;
+  const hm = `${g(parts, "hour")}:${g(parts, "minute")}`;
+  const same = ["year", "month", "day"].every(k => g(parts, k) === g(now, k));
+  return same ? hm : `${Number(g(parts, "month"))}月${Number(g(parts, "day"))}日 ${hm}`;
+};
+const CX_UNAVAIL = { "missing-auth": "未登录", "auth-failed": "鉴权失败" };
+const usageOmitted = p => {
+  const bal = (p.billing || []).find(b => b.type === "balance");
+  return !!(bal && /^prepaid balance$/i.test(String(bal.label || "").trim())) || /omitted/i.test(p.summary || "");
+};
+const cooldownResetAt = (model, usage) => {
+  for (const v of [model.cooldownUntil, model.unavailableUntil, model.resetAt, model.resetsAt, model.reset_at, model.resets_at]) {
+    if (toMs(v)) return v;
+  }
+  const providers = asArr(usage?.providers ?? usage?.usage ?? usage);
+  const row = providers.find(p => p && p.provider === model.provider);
+  const wins = row?.windows || [];
+  const hit = wins.find(w => /168h/i.test(w.label || w.window || "")) || wins.find(w => +(w.usedPercent ?? w.percent) >= 99) || wins.find(w => toMs(w.resetAt || w.resetsAt));
+  return hit?.resetAt || hit?.resetsAt || row?.resetAt || row?.cooldownUntil || null;
+};
+function cxModelUnavail(x, usage) {
+  if (x.available !== false) return { pill: "", line: "" };
+  const reason = x.unavailableReason || x.reason || "";
+  if (reason === "cooldown") {
+    const hm = fmtSgtHm(cooldownResetAt(x, usage));
+    const line = hm ? `订阅额度用完，${hm} 恢复` : "订阅额度用完，稍后自动恢复";
+    return { pill: pill("额度用完", "warn"), line: `<div class="d cx-cd">${esc(line)}</div>` };
+  }
+  return { pill: pill(CX_UNAVAIL[reason] || "不可用", "warn"), line: "" };
+}
 function usageCard(p) {
   const name = p.displayName || p.provider || p.id;
   const wins = (p.windows || []).filter(w => (w.usedPercent ?? w.percent) != null).sort((a, b) => +(b.usedPercent ?? b.percent) - +(a.usedPercent ?? a.percent));
   const fp = v => v < 10 ? String(Math.round(v * 10) / 10) : String(Math.round(v));
   const bal = (p.billing || []).find(b => b.type === "balance");
   const parts = (p.summary || "").split("·").map(x => x.trim()).filter(Boolean);
+  const omitted = usageOmitted(p);
   let tag, metric, bar, sub, extra = "", cls = "";
   if (wins.length) {
     const w = wins[0], used = +(w.usedPercent ?? w.percent);
     tag = pill(winLabel(w.label || w.window), barCls(used) === "bad" ? "bad" : barCls(used) === "warn" ? "warn" : "ac");
     metric = `<div class="big tnum">${fp(used)}<small>% 已用</small></div>`;
     bar = `<div class="bar ${barCls(used)}"><i style="width:${Math.min(100, used)}%"></i></div>`;
-    sub = [w.resetAt ? `${until(w.resetAt)}重置` : "", p.summary ? `<span class="uc-sum">${esc(p.summary)}</span>` : ""].filter(Boolean).join("<br>") || "用量窗口";
+    const sum = omitted ? "" : (p.summary ? `<span class="uc-sum">${esc(p.summary)}</span>` : "");
+    sub = [w.resetAt ? `${until(w.resetAt)}重置` : "", sum].filter(Boolean).join("<br>") || "用量窗口";
     extra = wins.slice(1).map(x => { const u2 = +(x.usedPercent ?? x.percent); return `<div class="uc-mini"><span>${esc(winLabel(x.label || x.window))}</span><div class="bar thin ${barCls(u2)}"><i style="width:${Math.min(100, u2)}%"></i></div><b class="tnum">${fp(u2)}%</b>${x.resetAt ? `<i class="uc-rs">${until(x.resetAt)}重置</i>` : ""}</div>`; }).join("");
+  } else if (bal && omitted) {
+    const amt = +bal.amount || 0, sym = CUR[bal.unit] || "";
+    const money = sym ? `${sym}${amt.toFixed(2)}` : `${amt.toFixed(2)}${bal.unit ? " " + bal.unit : ""}`;
+    tag = pill("订阅");
+    metric = `<div class="big">${esc(p.plan || "—")}</div>`;
+    bar = `<div class="uc-base"></div>`;
+    sub = `订阅内含用量网关没给出来 · 预付余额 ${esc(money)}`;
   } else if (bal) {
     const amt = +bal.amount || 0, sym = CUR[bal.unit] || "", empty = amt <= 0;
     cls = empty ? "uc-empty" : "";
@@ -739,18 +1106,387 @@ function usageCard(p) {
   } else {
     cls = "uc-empty"; tag = pill("未知");
     metric = `<div class="big">—</div>`; bar = `<div class="uc-base"></div>`;
-    sub = p.summary ? esc(p.summary) : "暂无额度信息";
+    sub = p.summary && !/omitted/i.test(p.summary) ? esc(p.summary) : "暂无额度信息";
   }
-  return `<div class="card uc ${cls}"><div class="uc-head"><b>${esc(name)}</b>${p.plan && String(p.plan).toLowerCase() !== String(name).toLowerCase() ? pill(p.plan) : ""}${tag}</div>${metric}${bar}<div class="uc-sub">${sub}</div>${extra}${p.error ? `<div class="uc-sub" style="color:var(--bad)">${esc(p.error)}</div>` : ""}</div>`;
+  return `<div class="card uc ${cls}" data-uc="${esc(p.provider || "")}"><div class="uc-head"><b>${esc(name)}</b>${p.plan && String(p.plan).toLowerCase() !== String(name).toLowerCase() ? pill(p.plan) : ""}${tag}</div>${metric}${bar}<div class="uc-sub">${sub}</div>${extra}${p.error ? `<div class="uc-sub" style="color:var(--bad)">${esc(p.error)}</div>` : ""}</div>`;
 }
-VIEWS.models = async v => {
+// 2026.11.10.1：OpenAI 官方 API（按量计费）卡片。接口：openai-api-usage/API.md。数据来自 /api/usage 里 provider="openai-api" 的条目；
+// 只有 /api/usage 里没有这一条时才单独请求一次 /api/usage/openai-api（404 就不显示）。官方没有余额接口，不显示余额。
+const OA_ID = "openai-api";
+// token 用中文单位：<1 万原样；万；亿
+const zhN = n => { n = +n; if (!Number.isFinite(n)) return "—"; const a = Math.abs(n), t = (v, d) => String(+v.toFixed(d)); return a >= 1e8 ? t(n / 1e8, 2) + " 亿" : a >= 1e4 ? (a >= 1e5 ? String(Math.round(n / 1e4)) : t(n / 1e4, 1)) + " 万" : String(Math.round(n)); };
+// 金额：小额不四舍五入成 $0.00，保留 3 位有效数字（$0.000247）
+const oaUsd = v => { v = +v; if (!Number.isFinite(v)) return "—"; if (v === 0) return "$0"; const a = Math.abs(v); if (a < 1e-6) return "<$0.000001"; if (a >= 100) return "$" + v.toFixed(2); const d = a >= 1 ? 3 : Math.min(8, Math.ceil(-Math.log10(a)) + 2); return "$" + String(+v.toFixed(d)); };
+const oaPct = (a, b) => b > 0 ? Math.round(a / b * 1000) / 10 : null;
+const oaDay = s => String(s || "").slice(5).replace("-", "/");
+// 2026.11.10.2：今日按后端给的 today.timezone 统计；Asia/Singapore 显示「新加坡时间」，其它原样，缺省是旧后端（UTC）
+const oaTz = tz => !tz || /^(utc|etc\/utc|gmt)$/i.test(tz) ? "UTC" : tz === "Asia/Singapore" ? "新加坡时间" : String(tz);
+// 柱图的日桶是 UTC 日：高亮当前 UTC 日（今日按新加坡时间时，日期可能和 today.date 不同）
+const oaUtcDay = (p, td) => /^\d{4}-\d{2}-\d{2}/.test(p.period?.end || "") ? p.period.end.slice(0, 10) : oaTz(td?.timezone) === "UTC" ? td?.date : (p.fetchedAt ? new Date(p.fetchedAt).toISOString().slice(0, 10) : td?.date);
+function oaChart(daily, todayDate, label) {
+  const ds = (daily || []).filter(d => d && /^\d{4}-\d{2}-\d{2}/.test(d.date || ""));
+  if (!ds.length) return `<div class="oa-chart oa-chart-empty faint">本月还没有按天的数据</div>`;
+  // 按整月排槽位（没数据的日子是空槽），天数少时柱子也不会被拉成大色块
+  const ym = /^\d{4}-\d{2}$/.test(label || "") ? label : ds[0].date.slice(0, 7), [yy, mm] = ym.split("-").map(Number);
+  const n = Math.max(28, new Date(Date.UTC(yy, mm, 0)).getUTCDate() || 31), by = {};
+  for (const d of ds) if (d.date.startsWith(ym)) by[+d.date.slice(8, 10)] = d;
+  const val = d => +(d?.tokens?.total ?? 0), max = Math.max(1, ...ds.map(val)), W = 10, H = 52;
+  let bars = "";
+  for (let i = 1; i <= n; i++) { const d = by[i]; if (!d) { bars += `<rect x="${(i - 1) * W + 2}" y="${H - 1}" width="${W - 4}" height="1" class="zero"></rect>`; continue; }
+    const v = val(d), h = v > 0 ? Math.max(2, v / max * (H - 4)) : 1, tip = `${d.date}（UTC）· ${zhN(v)} tokens · ${d.tokens?.requests ?? 0} 次请求`; // TODO 每日花费：后端会挪到新字段，名字定了再加
+    bars += `<rect x="${(i - 1) * W + 2}" y="${(H - h).toFixed(2)}" width="${W - 4}" height="${h.toFixed(2)}" rx="1.5" class="${d.date === todayDate ? "on" : v > 0 ? "" : "zero"}"><title>${esc(tip)}</title></rect>`; }
+  return `<div class="oa-chart"><div class="oa-ch-h"><span>每天 tokens</span><span class="faint">单日最高 ${zhN(max)}</span></div>
+    <svg viewBox="0 0 ${n * W} ${H}" preserveAspectRatio="none" role="img" aria-label="本月每天 token 用量，有数据 ${ds.length} 天">${bars}</svg>
+    <div class="oa-ch-x faint"><span>${esc(oaDay(ym + "-01"))}</span>${ds.some(d => d.date === todayDate) ? `<span class="oa-lg"><i></i>今天（UTC）</span>` : ""}<span>${esc(oaDay(ym + "-" + String(n).padStart(2, "0")))}</span></div></div>`;
+}
+function oaModels(models) {
+  const ms = (models || []).filter(m => m && m.model).slice(0, 5);
+  if (!ms.length) return "";
+  return `<div class="oa-models"><div class="oa-ch-h"><span>用得最多的模型</span></div>${ms.map(m => { const nm = scrub(m.model); const img = m.kind === "images";
+    const right = img ? `${zhN(m.images ?? 0)} 张 · ${m.requests ?? 0} 次` : `${zhN(m.total ?? 0)} tokens · ${m.requests ?? 0} 次`;
+    return `<div class="oa-m"><span class="oa-mn" title="${esc(nm)}">${esc(nm)}</span>${img ? `<span class="pill">图像</span>` : ""}<span class="oa-mv tnum">${esc(right)}</span></div>`; }).join("")}</div>`;
+}
+function oaCard(p) {
+  p = p || {};
+  const name = esc(p.displayName || "OpenAI 官方 API");
+  const head = (extra = "") => `<div class="oa-head"><span class="oa-ic" aria-hidden="true">⚡</span><b>${name}</b><span class="oa-badge">${esc(p.plan || "按量计费")}</span>${extra}</div>`;
+  if (p.error || !p.tokens) {
+    const msg = p.error ? scrub(p.error) : "后台没有返回用量数据";
+    return `<div class="card uc oa oa-off" data-oa="error">${head()}
+      <div class="oa-offbig">暂不可用</div>
+      <div class="oa-err">${esc(msg)}</div>
+      <div class="faint oa-foot">后台每 2 分钟最多重新查一次，过会儿刷新看看。${p.fetchedAt ? "上次尝试 " + esc(cxSgt(p.fetchedAt)) : ""}</div></div>`;
+  }
+  const T = p.tokens || {}, td = p.today || null, tt = td?.tokens || {};
+  const spend = (p.billing || []).find(b => b && b.type === "spend");
+  const used = spend ? +spend.used || 0 : null;
+  const cache = oaPct(+T.cachedInput || 0, +T.input || 0), tCache = oaPct(+tt.cachedInput || 0, +tt.input || 0);
+  const imgs = +(p.images?.images ?? 0);
+  const lagHint = used === 0 && (T.total || T.requests) ? "本月已经有用量，但花费还是 $0：费用通常晚 1–2 天才出账，不是没扣钱。" : "OpenAI 的费用数据有延迟，通常 1–2 天后才出账，之后还可能被修正。token 和请求次数比花费更及时。";
+  const month = p.period?.label ? esc(p.period.label) : "本月";
+  return `<div class="card uc oa" data-oa="ok">${head()}
+    <div class="oa-today"><div class="oa-k">今日<span class="faint">（${esc(scrub(oaTz(td?.timezone)))}${td?.date ? " " + esc(oaDay(td.date)) : ""}）</span></div>
+      <div class="oa-hero"><div class="oa-st"><b class="tnum">${td ? zhN(tt.requests ?? 0) : "0"}</b><small>次请求</small></div><div class="oa-st"><b class="tnum">${td ? zhN(tt.total ?? 0) : "0"}</b><small>tokens</small></div></div>
+      <div class="oa-sub faint">${td ? [`输入 ${zhN(tt.input ?? 0)}`, `输出 ${zhN(tt.output ?? 0)}`, tCache != null ? `缓存 ${tCache}%` : "", td.spendUsd != null && Number.isFinite(+td.spendUsd) ? `花费 ${oaUsd(td.spendUsd)}` : ""].filter(Boolean).map(x => `<span class="oa-nw">${esc(x)}</span>`).join(" · ") : "今天还没有记录"}</div></div>
+    <div class="oa-month"><div class="oa-k">本月 <span class="faint">（UTC 自然月 ${month}）</span></div>
+      <div class="oa-grid">
+        <div class="oa-cell"><span>请求</span><b class="tnum">${zhN(T.requests ?? 0)}<small> 次</small></b></div>
+        <div class="oa-cell"><span>tokens</span><b class="tnum">${zhN(T.total ?? 0)}</b><i class="faint"><span class="oa-nw">输入 ${esc(zhN(T.input ?? 0))}</span> · <span class="oa-nw">输出 ${esc(zhN(T.output ?? 0))}</span></i></div>
+        <div class="oa-cell"><span>缓存命中</span><b class="tnum">${cache != null ? cache + "<small>%</small>" : "—"}</b><i class="faint"><span class="oa-nw">${esc(zhN(T.cachedInput ?? 0))} /</span> <span class="oa-nw">${esc(zhN(T.input ?? 0))} 输入</span></i>${cache != null ? `<div class="bar thin"><i style="width:${Math.min(100, cache)}%"></i></div>` : ""}</div>
+        <div class="oa-cell oa-spend"><span>花费</span><b class="tnum">${used == null ? "—" : esc(oaUsd(used))}</b><details class="oa-lag"><summary title="${esc(lagHint)}">费用有延迟</summary><p>${esc(lagHint)}</p></details></div>
+      </div>${imgs ? `<div class="oa-sub faint">图像 ${esc(zhN(imgs))} 张 · ${esc(String(p.images?.requests ?? 0))} 次请求</div>` : ""}</div>
+    <div class="oa-side">${oaChart(p.daily, oaUtcDay(p, td), p.period?.label)}${oaModels(p.models)}</div>
+    <div class="faint oa-foot">${p.fetchedAt ? "数据取自 " + esc(cxSgt(p.fetchedAt)) + " · " : ""}按 UTC 自然月统计 · 按量计费，没有余额</div></div>`;
+}
+// 模型 ping（model-ping/FRONTEND-SPEC.md）：只在点击时发；等待期间按钮转圈、可再点取消，不挡其他操作
+const CX_DEFRT = new Set(["openclaw", "pi"]);
+const CX_PINGERR = { unknown_model: "网关里没有配置这个模型", rate_limited: "同一个模型 10 秒内只能测一次", busy: "同时最多测 2 个，稍等再点", cancelled: "已取消", client_timeout: "等了 75 秒还没回来，算超时" };
+const cxSgt = at => { try { return new Intl.DateTimeFormat("zh-CN", { timeZone: "Asia/Singapore", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false }).format(new Date(at)) + "（新加坡）"; } catch { return ""; } };
+function cxPingHtml(r) {
+  const st = r.status || (r.ok ? "ok" : "error"), ok = st === "ok", sec = r.latencyMs != null ? (r.latencyMs / 1000).toFixed(1) + " 秒" : "";
+  return `<div class="cx-pst ${st}"><i class="cx-dot"></i><b>${ok ? `通 · ${sec}` : st === "timeout" ? `超时${sec ? " · " + sec : ""}${r.error ? " · " + esc(r.error) : ""}` : `不通 · ${esc(r.error || "未知错误")}`}</b></div>
+  ${r.upstreamModel || r.modelMismatch ? `<div class="cx-pkv ${r.modelMismatch ? "cx-mm" : ""}"><span>上游实际模型</span><b class="mono">${esc(r.upstreamModel || "拿不到")}</b>${r.modelMismatch ? `<span class="cx-mmtag">⚠ 与配置名不同（配置 ${esc(r.requestedModel || r.modelRef || "")}）</span>` : ""}</div>` : `<div class="cx-pkv"><span>上游实际模型</span><span class="faint">拿不到</span></div>`}
+  ${r.fallbackUsed ? `<div class="cx-pfb">目标模型没直接响应，网关改用了 <b class="mono">${esc(r.effectiveModel || "")}</b></div>` : ""}
+  ${r.warnMessage ? `<div class="cx-pfb">${esc(scrub(r.warnMessage))}</div>` : ""}
+  ${r.note ? `<div class="faint cx-note">${esc(scrub(r.note))}</div>` : ""}
+  ${r.replyPreview != null && r.replyPreview !== "" ? `<div class="cx-pkv"><span>回复</span><code class="cx-prep">${esc(String(r.replyPreview).slice(0, 200))}</code></div>` : ""}
+  <div class="cx-pmeta">${[r.mode === "runtime" ? "runtime（走运行时）" : r.mode === "raw" ? "raw（裸调模型）" : r.mode, r.runtime, r.modelLatencyMs != null ? "模型 " + (r.modelLatencyMs / 1000).toFixed(1) + " 秒" : "", r.usage ? `用量 ${r.usage.input ?? "?"}/${r.usage.output ?? "?"}` : "", r.stage ? "失败阶段 " + r.stage : "", r.at ? cxSgt(r.at) : ""].filter(Boolean).map(esc).join(" · ")}</div>`;
+}
+let cxPingN = 0; const cxPingWait = async () => { while (cxPingN >= 2) await new Promise(r => setTimeout(r, 300)); cxPingN++; };
+function cxPingWire(v) {
+  if (v._cxPing) return; v._cxPing = 1;
+  modelCollapse.restore(v);
+  const live = new Map();
+  v.addEventListener("click", async e => {
+    const res = e.target.closest(".cx-pres"); if (res && !e.target.closest("button")) { res.classList.toggle("cx-fold"); return; }
+    const b = e.target.closest("[data-ping]"); if (!b) return; const ref = b.dataset.ping, box = v.querySelector(`[data-pres="${CSS.escape(ref)}"]`);
+    if (live.has(ref)) { live.get(ref).abort(); return; }
+    const ac = new AbortController(); live.set(ref, ac); const t0 = Date.now();
+    b.classList.add("busy"); b.textContent = "取消"; b.setAttribute("aria-busy", "true"); box.hidden = false; box.classList.remove("cx-fold");
+    const tick = () => { box.innerHTML = `<div class="cx-pst wait"><span class="cx-spin" aria-hidden="true"></span><b>正在测… ${Math.floor((Date.now() - t0) / 1000)} 秒</b><span class="faint">CLI 模型最长要 60 秒，可以先去做别的；再点按钮可取消</span></div>`; };
+    if (cxPingN >= 2) box.innerHTML = `<div class="cx-pst wait"><span class="cx-spin" aria-hidden="true"></span><b>排队中…</b><span class="faint">同时最多测 2 个</span></div>`;
+    let iv = null; let got = false;
+    try { await cxPingWait(); got = true; if (ac.signal.aborted) throw Object.assign(new Error("已取消"), { code: "cancelled" });
+      tick(); iv = setInterval(() => box.isConnected ? tick() : clearInterval(iv), 1000);
+      const r = await api.modelPing(ref, ac.signal); clearInterval(iv); box.innerHTML = cxPingHtml(r); }
+    catch (x) { clearInterval(iv); box.innerHTML = `<div class="cx-pst ${x.code === "cancelled" ? "" : "error"}"><i class="cx-dot"></i><b>${x.code === "cancelled" ? "已取消" : "没测成：" + esc(CX_PINGERR[x.code] && x.code !== "rate_limited" ? CX_PINGERR[x.code] : x.message || CX_PINGERR[x.code] || "未知错误")}</b></div>`; }
+    finally { if (got) cxPingN--; live.delete(ref); b.classList.remove("busy"); b.textContent = "ping"; b.removeAttribute("aria-busy"); }
+  });
+}
+// ---------- 模型管理（模型与用量页，模型列表最下面）----------
+// 写操作两步：plan（预览 diff）→ 确认 → apply {planId, confirm:true}。baseHash 随 plan/apply 一起发；
+// 409 stale/conflict → 「配置在别处改过，请刷新」+ 刷新按钮；409 restart_required → 独立提示（需要凛批准重启，什么都没保存）；
+// 凭证与登录都走 cred-adapter.js。控制台没有重启按钮，只显示 pendingRestart 标记。
+const CX_APPLY = { immediate: ["立即生效", "ok"], reload: ["热更新", "ac"], restart: ["需重启", "bad"], none: ["立即生效", "ok"], hot: ["热更新", "ac"] };
+// 每条 diff 的标签：优先 reload.paths[]（path 前缀匹配），其次 diff 自带的 apply
+const cxLabelOf = (d, rp) => { const pth = d.path || (d.keys || []).join("."); const hit = (rp || []).filter(x => x.path === pth || pth.startsWith(x.path + ".") || x.path.startsWith(pth + ".")); const rank = { immediate: 0, none: 0, reload: 1, hot: 1, restart: 2 }; return hit.length ? hit.map(x => x.label || x.kind).sort((a, b) => (rank[b] ?? 2) - (rank[a] ?? 2))[0] : d.apply; };
+const cxJ = v => v === undefined ? "（无）" : typeof v === "string" ? v : JSON.stringify(v);
+function cxDiffHtml(diff, reloadPaths, blocked) {
+  if (!diff?.length) return `<div class="faint">没有变化</div>`;
+  const bl = (blocked || []).map(String), isBl = pth => bl.some(b => pth === b || pth.startsWith(b + ".") || b.startsWith(pth + "."));
+  return `<div class="cx-diff">${diff.map(d => {
+    const lab = cxLabelOf(d, reloadPaths), pth = d.path || (d.keys || []).join("."), blk = isBl(pth);
+    const tag = (lab && CX_APPLY[lab] ? pill(CX_APPLY[lab][0], CX_APPLY[lab][1]) : "") + (blk ? pill("被拦截", "bad") : "");
+    let body;
+    if (Array.isArray(d.before) || Array.isArray(d.after)) {
+      // 数组按 id（或值本身）逐项对比
+      const idOf = x => x && typeof x === "object" ? x.id ?? x.ref ?? JSON.stringify(x) : String(x);
+      const bm = new Map((d.before || []).map(x => [idOf(x), x])), am = new Map((d.after || []).map(x => [idOf(x), x]));
+      const ids = [...new Set([...bm.keys(), ...am.keys()])];
+      body = ids.map(id => { const b = bm.get(id), a = am.get(id); const k = !bm.has(id) ? "add" : !am.has(id) ? "del" : JSON.stringify(b) === JSON.stringify(a) ? "same" : "chg";
+        return `<div class="cx-dl ${k}"><span class="mono">${k === "add" ? "＋" : k === "del" ? "－" : k === "chg" ? "～" : "·"} ${esc(id)}</span>${k === "chg" ? `<div class="cx-ba"><s>${esc(cxJ(b))}</s> → <b>${esc(cxJ(a))}</b></div>` : ""}</div>`; }).join("");
+      const bo = (d.before || []).map(idOf).join(" › "), ao = (d.after || []).map(idOf).join(" › ");
+      if (bo !== ao && ids.every(id => bm.has(id) && am.has(id))) body += `<div class="cx-ba">顺序：<s>${esc(bo)}</s><br>→ <b>${esc(ao)}</b></div>`;
+    } else body = `<div class="cx-ba"><s>${esc(cxJ(d.before))}</s> → <b>${esc(cxJ(d.after))}</b></div>`;
+    return `<div class="cx-dg${blk ? " cx-blk" : ""}"><div class="cx-dp mono">${esc(d.path || (d.keys || []).join("."))} ${tag}</div>${body}</div>`;
+  }).join("")}</div>`;
+}
+const CX_MERR = { plan_expired: "预览过期了（10 分钟），请重新预览", protected: "这是受保护的设置，不能改", oauth_managed: "这个模型用 OAuth 登录，不能改 key", inline_key: "key 直接写在配置里，控制台不改", quiet_window: "当前处于静默时段，暂不能修改，稍后再试。", not_whitelisted: "这一项不在可改范围内", in_use: "还有地方在用，不能删", order_locked: "这个供应商的账号顺序已锁定，不能调整。", not_ready: "当前网关不支持这个操作。", auth_unsupported: "当前网关不支持这个供应商的网页登录。", invalid_profile_order: "账号列表刚有变化，请刷新后重试。" };
+const CX_BLOCK = { restart_required: ["这个改动会让网关重启", "这个改动会让网关重启，需要<b>凛</b>批准，控制台不做。<b>这次什么都没有保存。</b>"], not_whitelisted: ["这个改动不在控制台能改的范围", "改动落在控制台白名单外（比如 gateway.*、plugins.*），控制台不做，需要的话请找<b>凛</b>。<b>这次什么都没有保存。</b>"] };
+// 409 restart_required / not_whitelisted：没有 planId，只展示 diff（被拦截的路径标红），没有保存按钮
+function cxBlocked(code, data) {
+  const [t, msg] = CX_BLOCK[code];
+  const bp = data?.blockedPaths || [];
+  sheet(`<h2>${t}</h2><div class="cx-rr" data-blocked="${esc(code)}">${msg}</div>${bp.length ? `<div class="cx-mmh"><b>被拦截的路径</b></div><ul class="cx-bpl">${bp.map(x => `<li class="mono">${esc(x)}</li>`).join("")}</ul>` : ""}${data?.diff?.length ? `<div class="faint">改前 → 改后（仅供查看，未保存）</div>${cxDiffHtml(data.diff, data.reload?.paths, bp)}` : ""}<button type="button" class="btn" data-close style="width:100%;margin-top:14px;min-height:44px">知道了</button>`, (el, close) => { el.querySelector("[data-close]").onclick = () => close(true); }, "cxblocked");
+}
+// 写完后网关仍报需要重启等：醒目显示
+const cxWarn = w => w && confirmDialog({ title: "⚠ 请立刻告诉凛", body: `<div class="cx-rr cx-warn">${esc(typeof w === "string" ? w : JSON.stringify(w))}</div>`, ok: "知道了", danger: true });
+function cxMErr(x, reload) {
+  if (CX_BLOCK[x?.code]) return cxBlocked(x.code, x.data || x);
+  if (x?.status === 409 && (!x.code || ["stale", "base_hash_mismatch", "baseHash_mismatch"].includes(x.code))) return cxStale(reload);
+  toast(CX_MERR[x?.code] || "没成功：" + (x?.message || "未知错误"));
+}
+async function cxStale(reload) {
+  if (await confirmDialog({ title: "配置在别处改过了", body: "刚才预览之后，模型配置被别人（或别的页面）改过。请刷新后重新操作，这次没有保存。", ok: "刷新" })) reload?.();
+}
+// 预览 → 确认 → 保存；成功后弹 ping 卡片
+async function cxPlanApply(ops, ctx, title) {
+  let plan; try { plan = await api.managePlan(ops); } catch (x) { return cxMErr(x, ctx.reload); }
+  if (!plan?.planId) return cxBlocked("restart_required", plan); // 保险：没有 planId 绝不给保存按钮
+  const all = plan.apply && CX_APPLY[plan.apply] ? `<div>整体：${pill(CX_APPLY[plan.apply][0], CX_APPLY[plan.apply][1])}</div>` : "";
+  if (!await confirmDialog({ title: title || "确认这些改动？", body: `<div class="faint">改前 → 改后（保存前会自动备份）</div>${all}${cxDiffHtml(plan.diff, plan.reload?.paths)}`, ok: "确认保存" })) return;
+  let r; try { r = await api.manageApply(plan.planId, plan.baseHash || ctx.hash); } catch (x) { return cxMErr(x, ctx.reload); }
+  toast("已保存 ✓" + (r?.backupId ? "（已备份）" : ""));
+  await ctx.reload();
+  if (r?.warning) await cxWarn(r.warning);
+  const refs = r?.pingRefs || plan.pingRefs || []; if (refs.length) cxPingCard(refs);
+}
+// 保存后的「要不要测一下？」卡片：复用 ping 组件，逐个排队（同时最多 2 个、同模型 10 秒一次）
+function cxPingCard(refs) {
+  sheet(`<h2>要不要测一下？</h2><div class="faint">刚改过的模型，点 ping 测通不通（逐个排队）。</div><div class="list cx-pcard">${refs.map(r => `<div class="row cx-mrow"><div class="grow"><div class="t mono">${esc(r)}</div></div><div class="r"><button type="button" class="btn cx-ping" data-ping="${esc(r)}">ping</button></div></div><div class="cx-pres" data-pres="${esc(r)}" hidden></div>`).join("")}</div><button type="button" class="btn" data-close style="width:100%;margin-top:14px;min-height:44px">关闭</button>`, (el, close) => { el.querySelector("[data-close]").onclick = () => close(); cxPingWire(el, { queue: true }); }, "pingcard");
+}
+function cxManage(host, models) {
+  let ov = null, order = null, auth = null;
+  const ctx = { hash: null, reload: async () => { await load(); } };
+  const authRow = provider => (auth?.providers || []).find(x => x.provider === provider);
+  const profRef = (provider, id) => { const pr = (authRow(provider)?.profiles || []).find(p => p.profileId === id || p.profileRef === id || p.id === id); return pr?.profileRef || id; };
+  const load = async () => { try { ov = await api.manage(); ctx.hash = ov.baseHash; order = [...(ov.fallbacks || [])]; auth = await api.modelAuth().catch(() => auth); draw(); } catch (x) { host.innerHTML = `<div class="card muted">模型管理暂时打不开：${esc(x.message)}</div>`; } };
+  const allRefs = () => (ov.providers || []).flatMap(p => (p.models || []).map(m => m.ref));
+  const draw = () => {
+    modelCollapse.capture(host);
+    const form = host.querySelector("#cxaddf"), draft = form && ["provider", "id", "name", "contextWindow"].map(name => [name, form.querySelector(`[name="${name}"]`)?.value]);
+    const prov = ov.providers || [];
+    host.innerHTML = `<div class="section">模型管理</div>
+      ${ov.pendingRestart ? `<div class="cx-restart" role="status">⚠ 网关有改动在等重启，重启后才完全生效。重启要由<b>凛</b>批准，控制台不会自己重启。${ov.pendingRestartReason ? `<div class="faint">${esc(ov.pendingRestartReason)}</div>` : ""}</div>` : ""}
+      <div class="card cx-mmcard"><div class="cx-mmh"><b>默认模型</b><span class="mono">${esc(ov.primary || "（未设置）")}</span></div>
+        <div class="cx-mmh"><b>备用顺序</b><span class="faint">拖动或用 ↑↓ 调整，跨供应商的回退顺序</span></div>
+        <ol class="cx-fb" id="cxfb">${order.map((r, i) => `<li class="cx-fbi" data-ref="${esc(r)}" draggable="true"><span class="cx-grip" aria-hidden="true">⠿</span><span class="grow mono">${esc(r)}</span><button type="button" class="btn sm cx-ud" data-up="${i}" aria-label="上移 ${esc(r)}" ${i ? "" : "disabled"}>↑</button><button type="button" class="btn sm cx-ud" data-dn="${i}" aria-label="下移 ${esc(r)}" ${i < order.length - 1 ? "" : "disabled"}>↓</button><button type="button" class="btn sm cx-ud" data-rmfb="${i}" aria-label="移出备用 ${esc(r)}">✕</button></li>`).join("") || `<li class="faint">没有备用模型</li>`}</ol>
+        <div class="cx-row2"><select class="select" id="cxfbadd" aria-label="加入备用"><option value="">＋ 加入备用…</option>${allRefs().filter(r => r !== ov.primary && !order.includes(r)).map(r => `<option>${esc(r)}</option>`).join("")}</select>
+        <button type="button" class="btn primary" data-saveorder ${JSON.stringify(order) === JSON.stringify(ov.fallbacks || []) ? "disabled" : ""}>保存顺序</button></div></div>
+      ${prov.map(p => { const c = p.credential || {}, oauth = c.kind === "oauth" || c.editable === false;
+        return `<details class="card cx-prov" data-prov="${esc(p.provider)}" data-model-collapse="${esc("manage:" + p.provider)}">${modelSummary("manage:" + p.provider, p.provider, p.models || [], models)}<div class="mc-body" id="${esc(modelBodyId("manage:" + p.provider))}"><div class="cx-mmh"><b>${esc(p.provider)}</b><span class="faint mono">${esc(p.api || "")}</span></div>
+        <div class="cx-cred">${oauth ? `<span>登录方式：OAuth · ${c.present ? pill("已登录", "ok") : pill("未登录", "warn")}</span>${c.note ? `<div class="faint">${esc(c.note)}</div>` : ""}`
+          : `<span>API Key：${c.present ? pill("已设置" + (p.keyHint || c.keyHint ? " " + esc(p.keyHint || c.keyHint) : ""), "ok") : pill("未设置", "warn")}</span>${c.target ? `<div class="faint mono">${esc(c.target)}</div>` : ""}<button type="button" class="btn" data-setkey="${esc(p.provider)}">更换 API Key</button>`}</div>
+        ${(() => { const typ = { oauth: "OAuth 登录", api_key: "API Key", token: "令牌" }; const st = s => ({ ok: ["正常", "ok"], static: ["已配置", "ok"], valid: ["正常", "ok"], expiring: ["快过期", "warn"], expired: ["已过期", "bad"], missing: ["未配置", ""], error: ["异常", "bad"] }[s] || [s || "未知", ""]); const profs = authRow(p.provider)?.profiles || [];
+          return profs.length ? `<div class="cx-accts" data-accts="${esc(p.provider)}"><div class="cx-mmh"><b>账号</b></div>${profs.map(pr => { const ref = pr.profileRef || pr.profileId; const ext = pr.source === "inherited" || pr.source === "external" || pr.source === "cli"; return `<div class="row cx-acct"><div class="grow"><div class="t mono">${esc(pr.profileId || pr.id || "")}</div><div class="d">${esc(typ[pr.type] || pr.type || "")}${ext ? " · 外部管理" : ""}${pr.expiresAt ? " · " + until(pr.expiresAt) + "过期" : ""} ${pill(...st(pr.status))}</div></div>${pr.logoutSupported ? `<button type="button" class="btn danger" data-logout="${esc(p.provider)}" data-pref="${esc(ref)}">退出</button>` : ""}</div>`; }).join("")}</div>` : ""; })()}
+        ${cxAuthCap(p, "login") ? `<button type="button" class="btn" data-login="${esc(p.provider)}">${c.present ? "重新登录" : "登录"}</button>` : ""}
+        ${cxAuthCap(p, "order") && (p.profiles || []).length > 1 ? `<div class="cx-mmh"><b>账号顺序</b><span class="faint">${p.orderLocked ? "顺序已锁定，不能调整" : "同一供应商内"}</span></div><ol class="cx-fb">${p.profiles.map((id, i) => `<li class="cx-fbi"><span class="grow mono">${esc(typeof id === "string" ? id : id.profileId || id.id || "")}</span><button type="button" class="btn sm cx-ud" data-pup="${esc(p.provider)}" data-i="${i}" ${i && !p.orderLocked ? "" : "disabled"} aria-label="上移">↑</button></li>`).join("")}</ol>` : ""}
+        <div class="list">${(p.models || []).map(m => `<div class="row cx-mmrow"><div class="grow"><div class="t">${esc(m.alias || m.name || m.id)} ${m.isPrimary ? pill("默认", "ac") : m.fallbackIndex >= 0 ? pill("备用 " + (m.fallbackIndex + 1)) : ""}</div><div class="d mono">${esc(m.ref)}</div>
+          ${m.problem === "missing_in_gateway" ? `<div class="cx-miss">⚠ 网关里没有这个模型 <button type="button" class="btn sm" data-fix="${esc(m.ref)}">一键修复</button></div>` : ""}</div>
+          <div class="r">${m.isPrimary ? "" : `<button type="button" class="btn sm cx-ud" data-primary="${esc(m.ref)}">设为默认</button>`}</div></div>`).join("")}</div></div></details>`; }).join("")}
+      <details class="card cx-add" data-model-collapse="manage:add"><summary><b>＋ 新增模型</b></summary><form id="cxaddf">
+        <label class="field"><span>供应商</span><select class="select" name="provider">${prov.map(p => `<option>${esc(p.provider)}</option>`).join("")}</select></label>
+        <label class="field"><span>模型 id</span><input class="input" name="id" required autocomplete="off"></label>
+        <label class="field"><span>显示名（可不填）</span><input class="input" name="name" autocomplete="off"></label>
+        <label class="field"><span>上下文长度（可不填）</span><input class="input" name="contextWindow" inputmode="numeric" autocomplete="off"></label>
+        <button class="btn primary" style="width:100%;min-height:44px">预览并保存</button></form></details>
+      <details class="card cx-add" id="cxbk"><summary><b>备份与回滚</b></summary><div id="cxbkl" class="faint">展开后加载…</div></details>`;
+    if (draft) for (const [name, value] of draft) {
+      const field = host.querySelector(`#cxaddf [name="${name}"]`);
+      if (field && value !== undefined && (field.tagName !== "SELECT" || [...field.options].some(o => o.value === value))) field.value = value;
+    }
+    modelCollapse.restore(host);
+    wireDrag();
+  };
+  const move = (i, j) => { if (j < 0 || j >= order.length) return; const [x] = order.splice(i, 1); order.splice(j, 0, x); draw(); };
+  const wireDrag = () => {
+    const ol = host.querySelector("#cxfb"); if (!ol) return; let from = null;
+    ol.addEventListener("dragstart", e => { const li = e.target.closest("[data-ref]"); from = [...ol.children].indexOf(li); e.dataTransfer.effectAllowed = "move"; });
+    ol.addEventListener("dragover", e => e.preventDefault());
+    ol.addEventListener("drop", e => { e.preventDefault(); const li = e.target.closest("[data-ref]"); if (li && from != null) move(from, [...ol.children].indexOf(li)); from = null; });
+    // 触屏拖动：按住 ⠿ 上下拖
+    ol.addEventListener("pointerdown", e => { const g = e.target.closest(".cx-grip"); if (!g) return; e.preventDefault(); const li = g.closest("[data-ref]"); const i0 = [...ol.children].indexOf(li); li.classList.add("cx-drag");
+      const up = ev => { removeEventListener("pointerup", up); li.classList.remove("cx-drag"); const t = document.elementFromPoint(ev.clientX, ev.clientY)?.closest("#cxfb [data-ref]"); if (t) move(i0, [...ol.children].indexOf(t)); };
+      addEventListener("pointerup", up); });
+  };
+  host.addEventListener("toggle", async e => { if (e.target.id !== "cxbk" || !e.target.open) return; const l = host.querySelector("#cxbkl");
+    try { const r = await api.manageBackups(); const bs = r?.backups || []; l.className = ""; l.innerHTML = bs.length ? `<div class="list">${bs.map(b => `<div class="row"><div class="grow"><div class="t mono">${esc(b.id)}</div><div class="d">${esc(b.at ? new Date(b.at).toLocaleString("zh-CN", { timeZone: "Asia/Singapore", hour12: false }) + "（新加坡）" : "")} · ${esc([].concat(b.ops || []).map(o => o.op || o).join("、"))}</div></div><div class="r"><button type="button" class="btn sm cx-ud" data-rb="${esc(b.id)}">回滚</button></div></div>`).join("")}</div>` : `<div class="faint">还没有备份</div>`; }
+    catch (x) { l.textContent = "备份列表打不开：" + x.message; } }, true);
+  const cxConf = cs => cs?.length ? `<div class="cx-rr"><b>冲突：之后又改过这些地方</b><ul class="cx-bpl">${cs.map(c => `<li><span class="mono">${esc(c.path || (c.keys || []).join(".") || "")}</span>${c.current !== undefined || c.backup !== undefined ? `<div class="cx-ba">现在：${esc(cxJ(c.current))}<br>备份：${esc(cxJ(c.backup ?? c.after))}</div>` : c.message ? `<div>${esc(c.message)}</div>` : ""}</li>`).join("")}</ul></div>` : "";
+  const rollback = async id => {
+    let pv; try { pv = await api.manageRollback(id, { dryRun: true }); } catch (x) { return cxMErr(x, load); }
+    if (!await confirmDialog({ title: "回滚到这份备份？", body: `<div class="faint">改前 → 改后</div>${cxDiffHtml(pv?.diff, pv?.reload?.paths)}${cxConf(pv?.conflicts)}`, ok: "回滚", danger: true })) return;
+    try { const r = await api.manageRollback(id, { confirm: true }); toast("已回滚 ✓"); await load(); if (r?.warning) await cxWarn(r.warning); }
+    catch (x) { if (x?.code !== "conflict") return cxMErr(x, load);
+      if (!await confirmDialog({ title: "有冲突，要覆盖吗？", body: `${cxConf(x.data?.conflicts)}<div>覆盖会用备份里的值替换之后的改动。</div>`, ok: "覆盖并回滚", danger: true })) return;
+      try { const r = await api.manageRollback(id, { confirm: true, force: true }); toast("已覆盖回滚 ✓"); await load(); if (r?.warning) await cxWarn(r.warning); } catch (y) { cxMErr(y, load); } }
+  };
+  host.addEventListener("change", e => { if (e.target.id === "cxfbadd" && e.target.value) { order.push(e.target.value); draw(); } });
+  host.addEventListener("submit", e => { if (e.target.id !== "cxaddf") return; e.preventDefault(); const f = e.target, op = { op: "addModel", provider: f.provider.value, id: f.id.value.trim() };
+    if (f.name.value.trim()) op.name = f.name.value.trim(); if (f.contextWindow.value.trim()) op.contextWindow = +f.contextWindow.value.trim(); if (!op.id) return toast("要填模型 id");
+    cxPlanApply([op], ctx, "新增模型"); });
+  host.addEventListener("click", async e => {
+    const b = e.target.closest("button"); if (!b || b.disabled) return; const d = b.dataset;
+    if (d.up) return move(+d.up, +d.up - 1); if (d.dn) return move(+d.dn, +d.dn + 1); if (d.rmfb) { order.splice(+d.rmfb, 1); return draw(); }
+    if ("saveorder" in d) return cxPlanApply([{ op: "setFallbacks", refs: [...order] }], ctx, "保存备用顺序");
+    if (d.primary) return cxPlanApply([{ op: "setPrimary", ref: d.primary }], ctx, "设为默认模型");
+    if (d.fix) { const m = (ov.providers || []).flatMap(p => p.models || []).find(x => x.ref === d.fix); return m?.fix && cxPlanApply([m.fix], ctx, "一键修复：把模型加进网关"); }
+    if (d.pup) { const p = ov.providers.find(x => x.provider === d.pup); if (!cxAuthCap(p, "order") || p.orderLocked) return; const ids = [...p.profiles], i = +d.i; if (i < 1 || i >= ids.length) return; [ids[i - 1], ids[i]] = [ids[i], ids[i - 1]];
+      if (!await confirmDialog({ title: "调整账号顺序？", body: `${esc(p.profiles.join(" › "))}<br>→ <b>${esc(ids.join(" › "))}</b>`, ok: "保存" })) return;
+      b.disabled = true;
+      try { await cred.setOrder(p.provider, ids.map(id => profRef(p.provider, typeof id === "string" ? id : id.profileId || id.id))); toast("顺序已保存 ✓"); await load(); } catch (x) { b.disabled = false; cxMErr(x, load); } return; }
+    if (d.logout) { await cxLogoutSheet(d.logout, d.pref, ctx); return; }
+    if (d.rb) return rollback(d.rb);
+    if (d.setkey) return cxKeySheet(d.setkey, ctx);
+    if (d.login) { const p = ov.providers.find(x => x.provider === d.login); if (!cxAuthCap(p, "login")) return; b.disabled = true; try { await cxLoginChoose(p, ctx); } finally { if (b.isConnected) b.disabled = false; } }
+  });
+  load(); void models;
+}
+async function cxLogoutSheet(provider, profileRef, ctx) {
+  let pv;
+  try { pv = await cred.logoutPreview(provider, [profileRef]); }
+  catch (x) { return cxMErr(x, ctx.reload); }
+  if (pv.leavesDefaultWithoutAccount) {
+    return confirmDialog({ title: "不能退出", body: `<div class="cx-rr">${esc(CP_MSG.default_model_auth)}</div>${pv.effects ? `<p class="faint" style="white-space:pre-wrap">${esc(pv.effects)}</p>` : ""}`, ok: "知道了" });
+  }
+  return new Promise(res => {
+    sheet(`<h2>退出这个账号？</h2>
+      <div>退出后这个供应商还剩 <b>${esc(String(pv.remainingProfiles ?? "—"))}</b> 个账号。</div>
+      ${pv.affectsDefault ? `<div class="faint">会影响到默认模型 ${esc(pv.defaultModel || "")}。</div>` : `<div class="faint">默认模型不受影响${pv.defaultModel ? "（" + esc(pv.defaultModel) + "）" : ""}。</div>`}
+      <div class="faint">${esc(pv.applyLabel || "网关热重载，不重启")}</div>
+      ${pv.effects ? `<div class="cp-pend" style="margin-top:10px;white-space:pre-wrap">${esc(pv.effects)}</div>` : ""}
+      ${pv.blockedWindow || pv.canApply === false ? `<div class="cx-rr">${esc(pv.blockedWindow ? cpMsg({ code: "quiet_window" }) : "现在不能退出。")}</div>` : ""}
+      <label class="switchrow" style="margin-top:12px;min-height:44px"><input type="checkbox" id="cp-ack"> <span>我知道退出后要重新登录或重新填 key 才能再用这个账号</span></label>
+      <div class="cp-btns"><button type="button" class="btn" data-no>再想想</button><button type="button" class="btn danger" data-yes disabled>退出这个账号</button></div>`, (el, close) => {
+      const yes = el.querySelector("[data-yes]"), ack = el.querySelector("#cp-ack");
+      ack.onchange = () => { yes.disabled = !ack.checked || pv.canApply === false || pv.blockedWindow; };
+      el.querySelector("[data-no]").onclick = () => { close(true); res(false); };
+      yes.onclick = async () => {
+        if (yes.disabled) return; yes.disabled = true;
+        try { await cred.logout(provider, [profileRef]); close(true); toast("已退出"); await ctx.reload(); res(true); }
+        catch (x) { yes.disabled = false; toast(cpMsg(x)); }
+      };
+    }, "cxlogout");
+  });
+}
+// 更换 API Key：只写不读，提交后立刻清空；界面只显示后 4 位
+async function cxKeySheet(provider, ctx) {
+  let pv = null; try { pv = await cred.preview(provider); } catch (x) { return cxMErr(x, ctx.reload); }
+  sheet(`<h2>更换 ${esc(provider)} 的 API Key</h2><form id="cxkf" autocomplete="off">
+    <div class="faint">写入方式：${esc(pv.method || "—")}${pv.target ? ` · <span class="mono">${esc(pv.target)}</span>` : ""}</div>
+    <label class="field"><span>新的 API Key</span><input class="input" type="password" name="k" autocomplete="off" autocapitalize="off" spellcheck="false" required></label>
+    <div class="cx-rr">注意：旧 key 不会保留，<b>这个改动不能自动回滚</b>。</div>
+    <div style="display:flex;gap:10px;margin-top:16px"><button type="button" class="btn" data-close style="flex:1">取消</button><button class="btn primary" style="flex:2">保存</button></div></form>`, (el, close) => {
+    el.querySelector("[data-close]").onclick = () => close(true);
+    el.querySelector("#cxkf").onsubmit = async e => { e.preventDefault(); const inp = e.target.k; let k = inp.value; inp.value = ""; if (!k.trim()) return toast("要填 key");
+      if (!await confirmDialog({ title: "确认更换 key？", body: "旧 key 不保留，更换后不能自动回滚。", ok: "更换", danger: true })) { k = ""; return; }
+      try { const r = await cred.setKey(provider, k); k = ""; await close(true); toast(`已更换 ✓ 现在是 ${r.keyHint || "（看不到末位）"}`); await ctx.reload(); if (r.warning) await cxWarn(r.warning); const h = document.querySelector(`[data-prov="${CSS.escape(provider)}"] .cx-cred`); if (h && r.keyHint) h.insertAdjacentHTML("beforeend", `<div class="faint">新 key：${esc(r.keyHint)}</div>`); if (r.pingRefs.length) cxPingCard(r.pingRefs); }
+      catch (x) { k = ""; cxMErr(x, ctx.reload); } };
+  }, "cxkey");
+}
+// OAuth 登录向导：给链接或代码 → 轮询结果，可取消
+async function cxLoginChoose(p, ctx) {
+  const methods = (p.loginMethods || []).map(m => typeof m === "string" ? { id: m, label: m } : m).filter(m => m?.id);
+  if (methods.length < 2) return cxLoginSheet(p.provider, ctx, methods[0]?.id);
+  sheet(`<h2>登录 ${esc(p.provider)}</h2><form data-login-method><label class="field"><span>登录方式</span><select class="select" name="method">${methods.map(m => `<option value="${esc(m.id)}">${esc(m.label || m.id)}</option>`).join("")}</select></label><div class="cp-btns"><button type="button" class="btn" data-no>取消</button><button class="btn primary">继续</button></div></form>`, (el, close) => {
+    el.querySelector("[data-no]").onclick = () => close(true);
+    el.querySelector("form").onsubmit = async e => { e.preventDefault(); const method = e.target.elements.namedItem("method").value; await close(true); await cxLoginSheet(p.provider, ctx, method); };
+  }, "cxloginmethod");
+}
+async function cxLoginSheet(provider, ctx, method) {
+  let w; try { w = await cred.loginStart(provider, method); } catch (x) { return cxMErr(x, ctx.reload); }
+  const safeUrl = value => { try { const u = new URL(value); return !u.username && !u.password && (u.protocol === "https:" || u.protocol === "http:" && ["localhost", "127.0.0.1", "[::1]"].includes(u.hostname)) ? u.href : ""; } catch { return ""; } };
+  if (w.url && !safeUrl(w.url)) { await cred.loginCancel(w.pollId).catch(() => {}); return toast("登录服务返回的授权链接无效，请稍后重试。"); }
+  sheet(`<h2>登录 ${esc(provider)}</h2><div data-auth-instructions></div><div data-auth-step></div><div class="cx-pst wait" id="cxlst" role="status"><span class="cx-spin"></span><b>等待授权完成…</b></div><button type="button" class="btn" data-cancel style="width:100%;margin-top:14px;min-height:44px">取消登录</button>`, (el, close) => {
+    let alive = true, timer, busy = false, cancelling = false, stepKey = null, current = w, flowEpoch = 0;
+    const host = el.closest("[data-v3sheet]"), prev = host._onclose, cancelButton = el.querySelector("[data-cancel]"), status = el.querySelector("#cxlst"), stepHost = el.querySelector("[data-auth-step]");
+    const statusText = (text, error = false) => { status.className = "cx-pst " + (error ? "error" : "wait"); status.innerHTML = `<i class="cx-dot"></i><b>${esc(scrub(text))}</b>`; };
+    const failed = message => { alive = false; clearTimeout(timer); statusText("登录没成功：" + message, true); cancelButton.textContent = "关闭"; stepHost.querySelectorAll("input,select,button").forEach(x => x.disabled = true); };
+    const schedule = (delay = 2000) => { clearTimeout(timer); if (alive) timer = setTimeout(poll, delay); };
+    const render = async r => {
+      if (!alive) return;
+      current = { ...current, ...r };
+      if (["done", "ok", "success"].includes(r.state)) { alive = false; clearTimeout(timer); await close(true); toast(`${provider} 已登录 ✓`); return ctx.reload(); }
+      if (["error", "cancelled", "expired", "failed"].includes(r.state)) return failed(r.error || (r.state === "cancelled" ? "已取消" : r.state === "expired" ? "授权已过期，请重新登录" : "授权失败，请重试"));
+      const step = current.step, urlValue = current.url || step?.externalUrl || "", url = urlValue ? safeUrl(urlValue) : "", code = current.userCode || step?.deviceCode?.code;
+      if (urlValue && !url) { failed("授权链接无效，请重新登录"); await cred.loginCancel(w.pollId).catch(() => {}); return; }
+      el.querySelector("[data-auth-instructions]").innerHTML = `${url ? `<p>在浏览器里打开下面的链接完成授权：</p><a class="btn" href="${esc(url)}" target="_blank" rel="noopener noreferrer" style="min-height:44px;word-break:break-all">${esc(url)}</a>` : ""}${code ? `<p>输入这个代码：</p><div class="cx-code mono">${esc(code)}</div>` : ""}`;
+      const nextKey = step ? JSON.stringify([step.id, step.type]) : "none";
+      if (nextKey === stepKey) return;
+      stepKey = nextKey;
+      if (!step) { stepHost.innerHTML = ""; return; }
+      const options = step.options || [], answerable = step.requiresAnswer !== false && step.type !== "progress", known = ["note", "text", "select", "confirm", "multiselect", "progress", "action"].includes(step.type);
+      const optionText = o => esc(o.label ?? o.value ?? "") + (o.hint ? " · " + esc(o.hint) : "");
+      stepHost.innerHTML = `${step.title ? `<h3>${esc(step.title)}</h3>` : ""}${step.message ? `<p style="white-space:pre-wrap;overflow-wrap:anywhere">${esc(step.message)}</p>` : ""}${!known ? `<p class="faint">这个授权步骤暂不受支持，请取消后使用终端登录。</p>` : answerable ? `<form data-auth-answer autocomplete="off">
+        ${step.type === "text" ? `<label class="field"><span>${esc(step.title || "授权信息")}</span><input class="input" name="answer" type="${step.sensitive ? "password" : "text"}" autocomplete="off" autocapitalize="off" spellcheck="false" placeholder="${esc(step.placeholder || "")}" ${step.required === false ? "" : "required"}></label>` : ""}
+        ${step.type === "select" ? `<label class="field"><span>请选择</span><select class="select" name="answer" required><option value="" selected disabled>请选择…</option>${options.map((o, i) => `<option value="${i}">${optionText(o)}</option>`).join("")}</select></label>` : ""}
+        ${step.type === "multiselect" ? `<div role="group" aria-label="${esc(step.title || "可选项目")}">${options.map((o, i) => `<label class="field"><span><input type="checkbox" name="answer" value="${i}"> ${optionText(o)}</span></label>`).join("")}</div>` : ""}
+        <div class="cp-btns">${step.type === "confirm" ? `<button class="btn" type="submit" value="false">不确认</button><button class="btn primary" type="submit" value="true">确认</button>` : `<button class="btn primary" type="submit">${["note", "action"].includes(step.type) ? "继续" : "提交"}</button>`}</div></form>` : `<p class="faint">正在等待授权服务…</p>`}`;
+      const form = stepHost.querySelector("form");
+      if (form) form.onsubmit = async e => {
+        e.preventDefault(); if (busy || !alive || cancelling) return;
+        let value;
+        if (step.type === "text") { const input = form.elements.namedItem("answer"); value = input.value; input.value = ""; }
+        if (step.type === "select") { const selected = form.elements.namedItem("answer").value; if (selected === "") return; value = options[+selected]?.value; }
+        if (step.type === "multiselect") value = [...form.querySelectorAll("input:checked")].map(x => options[+x.value]?.value);
+        if (step.type === "confirm") value = e.submitter?.value === "true";
+        busy = true; const epoch = ++flowEpoch; clearTimeout(timer); form.querySelectorAll("button").forEach(x => x.disabled = true); statusText("正在提交授权步骤…");
+        try { const next = await cred.loginAnswer(w.pollId, step.id, value); if (alive && epoch === flowEpoch) { statusText("等待授权完成…"); await render(next); } }
+        catch (x) { if (alive && epoch === flowEpoch) { if (x.status === 401) failed("控制台登录已过期，请关闭后重试"); else statusText(x.code === "quiet_window" ? CP_MSG.quiet_window : "提交没成功，请重试：" + x.message, true); } }
+        finally { busy = false; if (alive) { form.querySelectorAll("button").forEach(x => x.disabled = false); schedule(); } }
+      };
+    };
+    const cancel = async force => {
+      if (!alive) return close(force);
+      if (cancelling) return false;
+      if (force !== true && host._v3dirty() && !await confirmDialog({ title: "取消登录？", body: "还没提交的授权信息会丢失。已保存的账号不会因此撤销。", ok: "取消登录", danger: true })) return false;
+      cancelling = true; ++flowEpoch; clearTimeout(timer); cancelButton.disabled = true;
+      try { const r = await cred.loginCancel(w.pollId); if (r.state === "pending") { statusText(r.message || "登录仍在运行，暂时不能取消，请等待完成。", true); schedule(); return false; } alive = false; return close(true); }
+      catch (x) { statusText("取消没成功：" + (x.code === "quiet_window" ? CP_MSG.quiet_window : x.message), true); schedule(); return false; }
+      finally { cancelling = false; cancelButton.disabled = false; }
+    };
+    host._v3close = cancel; host.querySelector(".scrim").onclick = () => cancel(); cancelButton.onclick = () => cancel(true);
+    host._onclose = () => { clearTimeout(timer); if (alive) { alive = false; cred.loginCancel(w.pollId).then(r => { if (r.state === "pending") toast(r.message || "登录仍在运行，已保存的账号不会因关闭面板而撤销。"); }).catch(() => {}); } prev?.(); };
+    const poll = async () => { if (!alive || busy || cancelling) return; let delay = 2000; const epoch = flowEpoch;
+      try { const r = await cred.loginPoll(w.pollId); if (alive && epoch === flowEpoch) { statusText("等待授权完成…"); await render(r); } }
+      catch (x) { if (!alive || epoch !== flowEpoch) return; if (x.status === 401) return failed("控制台登录已过期，请关闭后重试"); if (x.status >= 400 && x.status < 500 && ![423, 429].includes(x.status)) return failed(x.message || "登录流程已结束，请重试"); statusText(x.code === "quiet_window" ? CP_MSG.quiet_window : "查询失败，重试中：" + x.message); delay = Math.max(2000, Math.min(60000, x.data?.retryAfterMs || 2000)); }
+      schedule(delay); };
+    render(w).catch(x => failed(x.message)); schedule(1500);
+  }, "cxlogin");
+}
+VIEWS.models = async (v, rest) => {
+  if (rest === "cost") { await openUsageDetailPage(v, rest, refresh => rawReq("GET", "/api/usage/cost?days=30" + (refresh ? "&refresh=1" : ""))); return; }
   const [m, u] = await Promise.all([api.models(), api.usage().catch(e => ({ __err: e.message }))]);
-  const providers = asArr(u?.providers ?? u?.usage ?? u);
-  const usageHtml = u?.__err ? `<div class="card muted">用量暂时取不到：${esc(u.__err)}</div>` : providers.length && providers.some(p => p.provider || p.displayName) ? `<div class="grid g2 g3w">${providers.map(usageCard).join("")}</div>` : `<div class="tree list"><details><summary>原始用量数据</summary>${jsonView(u)}</details></div>`;
+  let providers = asArr(u?.providers ?? u?.usage ?? u);
+  // OpenAI 官方 API：/api/usage 里有就直接用（只取一条，避免重复卡片）；没有才单独请求一次，接口不存在就不显示
+  let seenOa = false; providers = providers.filter(p => p?.provider !== OA_ID || (!seenOa && (seenOa = true)));
+  if (!u?.__err && !seenOa) { const oa = await api.usageOpenaiApi().catch(() => null); if (oa && oa.provider === OA_ID) { const i = providers.findIndex(p => p?.provider === "openai"); providers.splice(i < 0 ? providers.length : i + 1, 0, oa); } }
+  const usageHtml = u?.__err ? `<div class="card muted">用量暂时取不到：${esc(u.__err)}</div>` : providers.length && providers.some(p => p.provider || p.displayName) ? `<div class="grid g2 g3w uc-grid">${providers.map(p => p?.provider === OA_ID ? oaCard(p) : usageCard(p)).join("")}</div>` : `<div class="tree list"><details><summary>原始用量数据</summary>${jsonView(u)}</details></div>`;
   const groups = {}; for (const x of m.models || []) (groups[x.provider || "其他"] ||= []).push(x);
   paint(v, top("模型与用量", `可用模型 ${(m.models || []).filter(x => x.available !== false).length} 个`) + `<div class="section">额度</div>${usageHtml}` +
-    Object.entries(groups).map(([g, xs]) => `<div class="section">${esc(g)}</div><div class="list">${xs.map(x => `<div class="row"><div class="grow"><div class="t">${esc(x.alias || x.name || x.id)}</div><div class="d mono">${esc(x.id)}${x.contextWindow ? " · 上下文 " + num(x.contextWindow) : ""}${x.runtime ? " · " + esc(x.runtime) : ""}</div></div><div class="r">${x.reasoning ? pill("推理", "ac") : ""} ${x.available === false ? pill("不可用", "warn") : ""}</div></div>`).join("")}</div>`).join("") + `<div id="cost"></div><div id="auth"></div>`);
-  costSection($("#cost", v)); authSection($("#auth", v));
+    `<div class="section">模型列表 <span class="faint">点服务商展开，点 ping 测一下通不通</span></div>` +
+    Object.entries(groups).map(([g, xs]) => `<details class="cx-mg" data-pv="${esc(g)}" data-model-collapse="${esc("catalog:" + g)}">${modelSummary("catalog:" + g, g, xs)}<div class="list" id="${esc(modelBodyId("catalog:" + g))}">${xs.map(x => { const ref = (x.provider ? x.provider + "/" : "") + x.id, slow = x.runtime && !CX_DEFRT.has(x.runtime), un = cxModelUnavail(x, u); return `<div class="row cx-mrow" data-mid="${esc(ref)}"><div class="grow"><div class="t">${esc(x.alias || x.name || x.id)}</div><div class="d mono">${esc(x.id)}${x.contextWindow ? " · 上下文 " + num(x.contextWindow) : ""}${x.runtime ? " · " + esc(x.runtime) : ""}</div>${un.line}${slow ? `<div class="d cx-slow">CLI 模型较慢（10–60 秒）</div>` : ""}</div><div class="r">${x.reasoning ? pill("推理", "ac") : ""} ${un.pill}<button type="button" class="btn cx-ping" data-ping="${esc(ref)}" aria-label="ping ${esc(ref)}">ping</button></div></div><div class="cx-pres" data-pres="${esc(ref)}" hidden></div>`; }).join("")}</div></details>`).join("") + `<div id="cxmm"></div><div id="cost"></div><div id="auth"></div>`);
+  costSection($("#cost", v)); authSection($("#auth", v)); cxPingWire(v); cxManage($("#cxmm", v), m.models || []);
 };
 
 VIEWS.channels = async v => {
@@ -765,20 +1501,112 @@ VIEWS.channels = async v => {
   }).join("")}</div>` : "") + `<div class="section">详细数据</div><div class="tree list"><details><summary>原始状态</summary>${jsonView(c)}</details></div>`);
 };
 
+async function cpPluginToggle({ id, name, enabled }) {
+  let pv;
+  try { pv = await rawReq("POST", "/api/plugins/toggle/preview", { id, enabled }); }
+  catch (e) { if (e.status === 401) return false; await confirmDialog({ title: "没法预览", body: esc(cpMsg(e)), ok: "知道了" }); return false; }
+  const needAck = !enabled || /QQ 可能/.test(pv.effects || "");
+  const ok = await new Promise(res => {
+    let done = false; const fin = v => { if (!done) { done = true; res(v); } };
+    sheet(`<h2>${enabled ? "启用" : "停用"}「${esc(name || id)}」？</h2>
+      <div>状态 <s>${pv.enabledBefore ? "已启用" : "已停用"}</s> → <b>${pv.enabledAfter ? "已启用" : "已停用"}</b> · ${cpApplyPill(pv.apply, pv.applyLabel)}</div>
+      ${pv.effects ? `<div class="cp-pend" style="margin-top:10px;white-space:pre-wrap">${esc(pv.effects)}</div>` : ""}
+      ${pv.blockedWindow || pv.canApply === false ? `<div class="cx-rr">${esc(pv.blockedWindow ? cpMsg({ code: "quiet_window" }) : "现在不能保存。")}</div>` : ""}
+      ${needAck ? `<label class="switchrow" style="margin-top:12px;min-height:44px"><input type="checkbox" id="cp-ack"> <span>我知道重载期间 QQ 可能短暂收不到回复</span></label>` : ""}
+      <div class="cp-btns"><button type="button" class="btn" data-no>再想想</button><button type="button" class="btn ${enabled ? "primary" : "danger"}" data-yes ${pv.canApply === false || pv.blockedWindow ? "disabled" : needAck ? "disabled" : ""}>${enabled ? "确认启用" : "确认停用"}</button></div>`, (el, close) => {
+      const yes = el.querySelector("[data-yes]"), ack = el.querySelector("#cp-ack");
+      if (ack) ack.onchange = () => { yes.disabled = !ack.checked || pv.canApply === false || pv.blockedWindow; };
+      el.querySelector("[data-no]").onclick = () => { fin(false); close(true); };
+      yes.onclick = async () => {
+        if (yes.disabled) return; yes.disabled = true;
+        try {
+          const r = await rawReq("POST", "/api/plugins/toggle", { id, enabled, baseHash: pv.baseHash, confirm: true });
+          close(true); fin(r);
+          toast(enabled ? "已启用" : "已停用");
+          if (r?.restartRequired) await confirmDialog({ title: "已保存", body: "已保存，但网关说要重启才完全生效。重启只有凛能批准，控制台不会重启。", ok: "知道了" });
+        } catch (e) {
+          if (cpStale(e)) { close(true); if (await confirmDialog({ title: "预览之后配置又变了", body: esc(CP_MSG.baseHash_mismatch), ok: "重新预览" })) { fin(await cpPluginToggle({ id, name, enabled })); return; } fin(false); return; }
+          yes.disabled = false; toast(cpMsg(e));
+        }
+      };
+      const host = [...document.querySelectorAll("[data-v3sheet]")].at(-1); if (host) host._onclose = () => fin(false);
+    }, "cptoggle");
+  });
+  return ok;
+}
+async function cpSkillToggle({ skillKey, name, enabled }) {
+  let pv;
+  try { pv = await rawReq("POST", "/api/skills/toggle/preview", { skillKey, enabled }); }
+  catch (e) { if (e.status === 401) return false; await confirmDialog({ title: "没法预览", body: esc(cpMsg(e)), ok: "知道了" }); return false; }
+  const needAck = !enabled;
+  const ok = await new Promise(res => {
+    let done = false; const fin = v => { if (!done) { done = true; res(v); } };
+    sheet(`<h2>${enabled ? "启用" : "停用"}技能「${esc(name || skillKey)}」？</h2>
+      <div>状态 <s>${pv.enabledBefore ? "可用" : "已停用"}</s> → <b>${pv.enabledAfter ? "可用" : "已停用"}</b> · ${cpApplyPill(pv.apply, pv.applyLabel)}</div>
+      <div class="faint" style="margin-top:8px">保存即生效，新回合起${enabled ? "会再用它" : "不再用它"}。</div>
+      ${pv.blockedWindow || pv.canApply === false ? `<div class="cx-rr">${esc(pv.blockedWindow ? cpMsg({ code: "quiet_window" }) : "现在不能保存。")}</div>` : ""}
+      ${needAck ? `<label class="switchrow" style="margin-top:12px;min-height:44px"><input type="checkbox" id="cp-ack"> <span>我知道停用后新回合不会再用这个技能</span></label>` : ""}
+      <div class="cp-btns"><button type="button" class="btn" data-no>再想想</button><button type="button" class="btn ${enabled ? "primary" : "danger"}" data-yes ${pv.canApply === false || pv.blockedWindow ? "disabled" : needAck ? "disabled" : ""}>${enabled ? "确认启用" : "确认停用"}</button></div>`, (el, close) => {
+      const yes = el.querySelector("[data-yes]"), ack = el.querySelector("#cp-ack");
+      if (ack) ack.onchange = () => { yes.disabled = !ack.checked || pv.canApply === false || pv.blockedWindow; };
+      el.querySelector("[data-no]").onclick = () => { fin(false); close(true); };
+      yes.onclick = async () => {
+        if (yes.disabled) return; yes.disabled = true;
+        try {
+          const r = await rawReq("POST", "/api/skills/toggle", { skillKey, enabled, baseHash: pv.baseHash, confirm: true });
+          close(true); fin(r); toast(enabled ? "已启用" : "已停用");
+        } catch (e) {
+          if (cpStale(e)) { close(true); if (await confirmDialog({ title: "预览之后配置又变了", body: esc(CP_MSG.baseHash_mismatch), ok: "重新预览" })) { fin(await cpSkillToggle({ skillKey, name, enabled })); return; } fin(false); return; }
+          yes.disabled = false; toast(cpMsg(e));
+        }
+      };
+      const host = [...document.querySelectorAll("[data-v3sheet]")].at(-1); if (host) host._onclose = () => fin(false);
+    }, "cstoggle");
+  });
+  return ok;
+}
 VIEWS.plugins = async v => {
+  await ensureFeatures().catch(() => {});
+  const plugOn = cpOn("pluginToggle"), skillOn = cpOn("skillToggle");
   const [p, s] = await Promise.all([api.plugins(), api.skills().catch(() => null)]);
   const skills = asArr(s?.skills ?? s);
   let tab = "plugins", q = "";
-  const root = paint(v, top("插件与技能") + `<div class="toolbar"><div class="seg"><button data-tab="plugins" aria-pressed="true">插件 ${p.plugins.length}</button><button data-tab="skills" aria-pressed="false">技能 ${skills.length}</button></div><div class="search" style="flex:1;min-width:180px">${ic("search")}<input class="input" placeholder="搜一搜" aria-label="搜索"></div></div><div id="pl"></div>`);
+  const note = (!plugOn && !skillOn)
+    ? `这里只看状态：插件和技能的开关还没开放。也不能在这里安装。 <a href="#/abilities#plugin-center">打开插件中心 ›</a>`
+    : `开关会先预览再确认。受保护的插件不能开关。不能在这里安装。 <a href="#/abilities#plugin-center">打开插件中心 ›</a>`;
+  const root = paint(v, top("插件与技能") + `<div class="toolbar"><div class="seg"><button data-tab="plugins" aria-pressed="true">插件 ${p.plugins.length}</button><button data-tab="skills" aria-pressed="false">技能 ${skills.length}</button></div><div class="search" style="flex:1;min-width:180px">${ic("search")}<input class="input" placeholder="搜一搜" aria-label="搜索"></div></div><p class="faint cp-note" data-cp="plugins">${note}</p>${cpQuietBar()}<div id="pl"></div>`);
+  const protTxt = r => CP_PROT[r] || r || "";
   const draw = () => {
-    const f = x => !q || JSON.stringify([x.name, x.id, x.description]).toLowerCase().includes(q);
+    const f = x => !q || JSON.stringify([x.name, x.id, x.skillKey, x.description]).toLowerCase().includes(q);
     $("#pl", root).innerHTML = tab === "plugins"
-      ? `<div class="list">${p.plugins.filter(f).map(x => `<div class="row"><div class="grow"><div class="t">${esc(x.name || x.id)} <span class="faint mono">${esc(x.version || "")}</span></div><div class="d">${esc(x.description || x.origin || "")}</div></div><div class="r">${x.enabled ? pill(x.runtime === "error" || x.state === "error" ? "出错" : "已启用", x.runtime === "error" || x.state === "error" ? "bad" : "ok") : pill("已停用")}</div></div>`).join("") || `<div class="empty">没有找到</div>`}</div>`
-      : `<div class="list">${skills.filter(f).map(x => { const on = x.eligible !== false && !x.disabled; return `<button class="row" data-skill="${esc(x.name || x.id)}"><div class="grow"><div class="t">${x.pinned ? "📌 " : ""}${x.emoji ? esc(x.emoji) + " " : ""}${esc(x.name || x.id)}</div><div class="d">${esc(x.description || x.source || "")}</div></div><div class="r">${pill(x.disabled ? "已停用" : on ? "可用" : "缺依赖", x.disabled ? "" : on ? "ok" : "warn")}</div></button>`; }).join("") || `<div class="empty">没有找到</div>`}</div>`;
+      ? `<div class="list">${p.plugins.filter(f).map(x => `<div class="row cp-plrow" data-pid="${esc(x.id)}"><div class="grow"><div class="t">${esc(x.name || x.id)} <span class="faint mono">${esc(x.version || "")}</span></div><div class="d">${esc(x.description || x.origin || "")}</div></div><div class="r cp-pr">${x.enabled ? pill(cpPlErr(x) ? "出错" : "已启用", cpPlErr(x) ? "bad" : "ok") : pill("已停用")}${x.protected ? pill("受保护", "ac") : ""}</div>
+          ${x.protected ? `<div class="cp-perr"><span class="faint">🔒 受保护 · ${esc(protTxt(x.protectedReason))} · 不能开关</span></div>` : plugOn ? `<label class="switchrow cp-tg"><span class="switch"><input type="checkbox" data-ptoggle="${esc(x.id)}" ${x.enabled ? "checked" : ""} aria-label="${x.enabled ? "停用" : "启用"} ${esc(x.name || x.id)}"><i></i></span></label>` : ""}
+          ${cpPlErr(x) ? `<div class="cp-perr"><span class="faint">${esc(scrub(cpPlErrorText(x)))}</span>${x.missingSecret ? `<a class="btn" href="#/system#secrets" data-cpjump>缺密钥 · 去密钥页</a>` : ""}</div>` : ""}</div>`).join("") || `<div class="empty">没有找到</div>`}</div>`
+      : `<div class="list">${skills.filter(f).map(x => { const key = x.skillKey || x.name || x.id; const on = x.eligible !== false && !x.disabled; return `<div class="row cp-plrow" data-skill="${esc(key)}"><div class="grow"><div class="t">${x.pinned ? "📌 " : ""}${x.emoji ? esc(x.emoji) + " " : ""}${esc(x.name || x.id)}</div><div class="d">${esc(x.description || x.source || "")}</div></div><div class="r">${pill(x.disabled ? "已停用" : on ? "可用" : "缺依赖", x.disabled ? "" : on ? "ok" : "warn")}</div>
+          ${skillOn ? `<label class="switchrow cp-tg"><span class="switch"><input type="checkbox" data-stoggle="${esc(key)}" ${x.disabled ? "" : "checked"} aria-label="${x.disabled ? "启用" : "停用"} ${esc(x.name || key)}"><i></i></span></label>` : ""}</div>`; }).join("") || `<div class="empty">没有找到</div>`}</div>`;
   };
   root.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { tab = b.dataset.tab; root.querySelectorAll("[data-tab]").forEach(x => x.setAttribute("aria-pressed", x === b)); draw(); });
   $("input", root).oninput = e => { q = e.target.value.toLowerCase().trim(); draw(); };
-  root.addEventListener("click", e => { const b = e.target.closest("[data-skill]"); if (b) skillSheet(b.dataset.skill, skills.find(x => (x.name || x.id) === b.dataset.skill)); });
+  root.addEventListener("click", e => { const b = e.target.closest("[data-skill]"); if (b && !e.target.closest("[data-stoggle]")) skillSheet(b.dataset.skill, skills.find(x => (x.skillKey || x.name || x.id) === b.dataset.skill)); });
+  root.addEventListener("change", async e => {
+    const pt = e.target.closest("[data-ptoggle]"), st = e.target.closest("[data-stoggle]");
+    if (pt) {
+      const want = pt.checked, id = pt.dataset.ptoggle, plugin = p.plugins.find(x => x.id === id);
+      pt.checked = !want; pt.disabled = true;
+      const r = await cpPluginToggle({ id, name: plugin?.name || id, enabled: want });
+      pt.disabled = false;
+      if (r) { try { const fresh = await api.plugins(); p.plugins = fresh.plugins || p.plugins; } catch {} draw(); }
+      else draw();
+    }
+    if (st) {
+      const want = st.checked, key = st.dataset.stoggle, sk = skills.find(x => (x.skillKey || x.name || x.id) === key);
+      st.checked = !want; st.disabled = true;
+      const r = await cpSkillToggle({ skillKey: key, name: sk?.name || key, enabled: want });
+      st.disabled = false;
+      if (r) { try { const fresh = await api.skills(); const next = asArr(fresh?.skills ?? fresh); skills.length = 0; skills.push(...next); } catch {} draw(); }
+      else draw();
+    }
+  });
   draw();
 };
 
@@ -811,7 +1639,7 @@ VIEWS.logs = async v => {
   $("input", root).oninput = e => { q = e.target.value.toLowerCase(); draw(); };
   const refresh = async () => { data = await api.logs(300, lv === "ALL" || lv === "DEBUG" ? undefined : lv); draw(); };
   root.querySelector("[data-x=rf]").onclick = () => refresh().then(() => toast("已刷新")).catch(e => toast(e.message));
-  timers.push(setInterval(() => $("#live", root)?.checked && refresh().catch(() => {}), 5000));
+  viewInterval(v, () => $("#live", root)?.checked && refresh().catch(() => {}), 5000);
   draw();
 };
 
@@ -894,9 +1722,9 @@ async function memSheet(id, after) {
     ${m.flag?.wrong ? `<button class="btn" data-x="unflag" style="width:100%">↩︎ 撤销「记错」标记</button>` : `<label class="field"><span>哪里记错了？<span class="faint fs">（可不填）</span></span><input class="input" id="fnote" maxlength="500" placeholder="比如：她不喝咖啡，是乌龙茶"></label><button class="btn" data-x="flag" style="width:100%">🏷️ 标记为记错</button>`}
     <div class="faint fs" style="margin:6px 0 14px">“记错”只是个标记，不会改动她的记忆。</div>
     <button class="btn danger" data-x="del" style="width:100%">${ic("trash")}删除这条记忆…</button>`, (el, close) => {
-    el.querySelector("[data-x=flag]")?.addEventListener("click", async e => { e.target.disabled = true; if (await act(() => api.memFlag(id, true, el.querySelector("#fnote").value.trim()), "已标记为记错")) { close(); after?.(); toastUndo(id, after); } else e.target.disabled = false; });
-    el.querySelector("[data-x=unflag]")?.addEventListener("click", async () => { if (await act(() => api.memFlag(id, false, ""), "已撤销标记")) { close(); after?.(); } });
-    el.querySelector("[data-x=del]").onclick = () => { close(); memDeleteFlow(m, after); };
+    el.querySelector("[data-x=flag]")?.addEventListener("click", async e => { e.target.disabled = true; if (await act(() => api.memFlag(id, true, el.querySelector("#fnote").value.trim()), "已标记为记错")) { close(true); after?.(); toastUndo(id, after); } else e.target.disabled = false; });
+    el.querySelector("[data-x=unflag]")?.addEventListener("click", async () => { if (await act(() => api.memFlag(id, false, ""), "已撤销标记")) { close(true); after?.(); } });
+    el.querySelector("[data-x=del]").onclick = async () => { if (await close()) memDeleteFlow(m, after); };
   });
 }
 function toastUndo(id, after) {
@@ -960,7 +1788,7 @@ function cliNewSheet(after) {
     <div class="row-h"><span class="faint fs">选一个工具</span><button type="button" class="btn sm" data-x="rf">↻ 刷新状态</button></div><div class="list" id="ct"><div class="skel" style="height:120px"></div></div>
     <div id="cmw" hidden><label class="field" style="margin-top:12px"><span>模型</span><select class="input" id="cmd"></select></label><button type="button" class="btn primary" data-x="go" style="width:100%">用 <span id="cmt"></span> 开始</button></div>`, async (el, close) => {
     let pick = null;
-    const create = async (tool, btn) => { btn.disabled = true; const act = async fn => { try { return await fn(); } catch (x) { toast(x.code === "forbidden" ? "原生 CLI 只有主人能用" : x.code === "not_installed" ? `「${cliToolNm(tool)}」未安装或不可用` : x.code === "not_authed" ? `「${cliToolNm(tool)}」未登录` : x.status === 400 ? "这个模型不在可选列表里，点「刷新状态」后再选一次" : x.message); return null; } }; const md0 = el.querySelector("#cmd").value; const s = await act(() => api.cliCreate(tool, el.querySelector("#cti").value.trim(), cliModels(CLI_TOOLS.find(t => t.id === tool)).length ? md0 : undefined)); if (s) { close(); location.hash = `#/cli/${s.id}`; after?.(); } else btn.disabled = false; };
+    const create = async (tool, btn) => { btn.disabled = true; const act = async fn => { try { return await fn(); } catch (x) { toast(x.code === "forbidden" ? "原生 CLI 只有主人能用" : x.code === "not_installed" ? `「${cliToolNm(tool)}」未安装或不可用` : x.code === "not_authed" ? `「${cliToolNm(tool)}」未登录` : x.status === 400 ? "这个模型不在可选列表里，点「刷新状态」后再选一次" : x.message); return null; } }; const md0 = el.querySelector("#cmd").value; const s = await act(() => api.cliCreate(tool, el.querySelector("#cti").value.trim(), cliModels(CLI_TOOLS.find(t => t.id === tool)).length ? md0 : undefined)); if (s) { close(true); location.hash = `#/cli/${s.id}`; after?.(); } else btn.disabled = false; };
     draw(el, await cliTools());
     el.querySelector("[data-x=rf]").onclick = async e => { e.target.disabled = true; draw(el, await cliTools(true)); e.target.disabled = false; toast("已刷新"); };
     el.addEventListener("click", async e => {
@@ -1032,9 +1860,9 @@ async function cliPane(pane, id, ctx) {
   tray.onChange = sync;
   cm.addEventListener("click", e => { const f = e.target.closest("[data-full]"); if (f) lightbox(f.dataset.full, f.getAttribute("aria-label")); });
   let t0 = 0; const tick = () => { if (running) crt.textContent = t0 ? `运行中… ${Math.round((Date.now() - t0) / 1000)} 秒` : "还在运行（可能是之前发起的）…"; };
-  timers.push(setInterval(tick, 1000));
+  viewInterval(pane, tick, 1000);
   const reload = async () => { try { const n = await api.cliGet(id); cm.innerHTML = (n.messages || []).map(cliMsg).join(""); running = !!n.session?.running; sync(); scroll(); } catch {} };
-  if (running) { timers.push(setInterval(() => running && !ctrl && reload(), 3000)); tick(); }
+  if (running) { viewInterval(pane, () => running && !ctrl && reload(), 3000); tick(); }
   sync(); scroll();
   cin.oninput = sync;
   if (ctx.text) { cin.value = ctx.text; sync(); }
@@ -1051,8 +1879,8 @@ async function cliPane(pane, id, ctx) {
     running = true; t0 = Date.now(); ctrl = new AbortController(); cin.value = ""; const kept = [...tray.items]; tray.clear(); sync(); tick();
     let cur = null, txt = "", got = false;
     cm.insertAdjacentHTML("beforeend", `<div class="cli-wait"><div class="cli-spin" aria-hidden="true"></div><div><b>${esc(cliToolNm(sess.tool))} 正在思考…</b><div class="fs">${esc(cliWaitTxt(sess))}</div><div class="fs faint">已等待 <span class="cw-s">0</span> 秒</div></div></div>`); scroll();
-    const wait = cm.lastElementChild, wt = setInterval(() => { const n = wait.querySelector(".cw-s"); if (n) n.textContent = Math.round((Date.now() - t0) / 1000); }, 1000); timers.push(wt);
-    const unwait = () => { if (!got) { got = true; wait.remove(); clearInterval(wt); } };
+    const wait = cm.lastElementChild, wt = viewInterval(pane, () => { const n = wait.querySelector(".cw-s"); if (n) n.textContent = Math.round((Date.now() - t0) / 1000); }, 1000);
+    const unwait = () => { if (!got) { got = true; wait.remove(); stopViewInterval(wt); } };
     let lastErr = "";
     const bubble = () => { if (!cur) { cm.insertAdjacentHTML("beforeend", `<div class="msg assistant md cli-a"></div>`); cur = cm.lastElementChild; txt = ""; } return cur; };
     try {
@@ -1232,28 +2060,83 @@ const HL_SEC = [
   ["quirk", "口癖", "偶尔带点小口头禅、小瑕疵", [["enabled", "开启", "b"], ["probability", "每轮出现的概率", "p"], ["phrases", "口癖表", "tags", 10, 20], ["selfCorrect", "用 * 自我更正", "b"], ["trailOff", "说一半", "b"]]],
   ["mood", "察觉情绪", "群友情绪和平时不一样时关心一下", [["enabled", "开启", "b"], ["perPersonDailyCap", "每人每天最多关心", "n", 0, 3, "次"], ["deviation", "偏离平时多少算异常", "p"], ["minBaselineMsgs", "至少攒够多少条消息才开始判断", "n", 5, 500, "条"]]],
   ["protect", "护短", "有人被一群人损过头时，站出来帮他说句话", [["enabled", "开启", "b"], ["roastWindowMin", "统计损话的时间窗口", "n", 1, 60, "分钟"], ["roastMinHits", "窗口里针对同一个人的损话至少", "n", 1, 20, "条"], ["roastMinPeople", "至少几个人在损他", "n", 1, 10, "人"], ["probability", "达到门槛后出手的概率", "p"], ["perGroupDailyCap", "每群每天最多", "n", 0, 10, "次"], ["perTargetDailyCap", "同一个人每天最多被护", "n", 0, 5, "次"], ["mediateRealFights", "真吵起来时改为劝和，不护短", "b"], ["roastKeywords", "损话词", "tags", 50, 20], ["fightKeywords", "真吵架词", "tags", 50, 20]]],
-  ["morning", "抢早安沙发", "有早安习惯的群，早上抢先道一声早", [["enabled", "开启", "b"], ["mode", "模式", "seg", [["passive", "被动"], ["heartbeat", "心跳"]]], ["greetingKeywords", "早安词", "tags", 20, 20], ["windowStartHour", "早安时段从", "hr", 0, 23], ["windowEndHour", "到", "hr", 1, 24], ["habitWindowDays", "看最近多少天", "n", 3, 60, "天"], ["habitMinDays", "其中至少几天有人说早安", "n", 1, 60, "天"], ["perGroupDailyCap", "每群每天最多", "n", 0, 1, "次"], ["heartbeatHour", "心跳模式在几点抢", "hr", 0, 23]]],
+  ["morning", "抢早安沙发", "有早安习惯的群，早上抢先道一声早", [["enabled", "开启", "b"], ["mode", "模式", "seg", [["passive", "被动"], ["heartbeat", "心跳"]]], ["greetingKeywords", "早安词", "tags", 20, 20], ["windowStartHour", "早安时段从", "hr", 0, 23], ["windowEndHour", "到", "hr", 1, 24], ["habitWindowDays", "看最近多少天", "n", 3, 60, "天"], ["habitMinDays", "其中至少几天有人说早安", "n", 0, 60, "天"], ["perGroupDailyCap", "每群每天最多", "n", 0, 1, "次"], ["heartbeatHour", "心跳模式在几点抢", "hr", 0, 23]]],
   ["robotBit", "被叫人机就破防", "被叫「人机」时小小破防一下", [["enabled", "开启", "b"], ["keywords", "触发词", "tags", 30, 20], ["sincereKeywords", "认真问的信号", "tags", 30, 30], ["segmentGapMin", "沉默多久算新的一段对话（每段最多破防一次）", "n", 5, 720, "分钟"], ["perGroupDailyCap", "每群每天最多", "n", 0, 20, "次"]]],
   ["mbti", "盲猜 MBTI", "只在有人请她猜的时候才猜", [["enabled", "开启", "b"], ["includeZodiac", "也接受「猜星座」", "b"], ["minPublicMsgs", "群消息少于这个数就说素材不够", "n", 0, 500, "条"], ["perPersonDailyCap", "每人每天最多", "n", 0, 5, "次"], ["perGroupDailyCap", "每群每天最多", "n", 0, 20, "次"], ["forbiddenTopics", "绝不涉及的话题", "tags", 30, 20]]],
   ["sensitive", "敏感话题", "这些话题的追问和关心要不要做", [["mode", "什么时候可以", "seg", [["never", "从不"], ["dmOnly", "只在私聊"], ["always", "都可以"]]], ["topics", "敏感话题", "tags", 50, 20]]],
 ];
 const HL_TOP = ["enabled", "optOutPhrase"];
 const hlKey = s => String(s).replace(/\s+/g, "").toLowerCase();
+const hlScrub = t => scrub(t).replace(/延迟/g, "等待");
+const C2C_KEYS = ["c2c", "c2cMerge", "c2cClosing", "c2cTyping", "c2cContinuity", "c2cFollowup", "c2cProactive"];
+const C2C_DEF = {
+  c2c: { enabled: false, respectTechMode: true },
+  c2cMerge: { enabled: false, minMs: 1500, maxMs: 4000, totalMs: 8000 },
+  c2cClosing: { enabled: false, windowMin: 30, hint: true },
+  c2cTyping: { enabled: false },
+  c2cContinuity: { enabled: false, lookbackMin: 30, maxLines: 3 },
+  c2cFollowup: { enabled: false },
+  c2cProactive: { enabled: false, quietThresholdMin: 240, minIntervalMin: 360, dailyCap: 1, quietHoursStart: 0, quietHoursEnd: 9, checkEveryMin: 30, pauseAfterUnanswered: 2, requireReason: true },
+};
+const C2C_RANGE = {
+  c2cMerge: { minMs: [300, 10000], maxMs: [500, 15000], totalMs: [1000, 30000] },
+  c2cClosing: { windowMin: [5, 180] },
+  c2cContinuity: { lookbackMin: [5, 180], maxLines: [1, 8] },
+  c2cProactive: { quietThresholdMin: [30, 1440], minIntervalMin: [60, 1440], dailyCap: [1, 5], quietHoursStart: [0, 23], quietHoursEnd: [0, 23], checkEveryMin: [10, 240], pauseAfterUnanswered: [1, 10] },
+};
+const C2C_MS = new Set(["minMs", "maxMs", "totalMs"]);
+const C2C_TITLE = { c2c: "只对凛的私聊拟人", c2cMerge: "连发合并", c2cClosing: "收尾不复读", c2cTyping: "打字节奏", c2cContinuity: "群里的话私聊接得上", c2cFollowup: "私聊里也追问近况", c2cProactive: "私聊主动找我" };
+const c2cMsView = ms => Math.round(Number(ms) / 1000 * 10) / 10;
+const c2cMsToApi = s => Math.round(Number(s) * 1000);
+const c2cEnsure = H => { for (const k of C2C_KEYS) H[k] = { ...C2C_DEF[k], ...(H[k] && typeof H[k] === "object" ? H[k] : {}) }; return H; };
+const c2cStatusClass = s => ({ active: "ok", idle: "", blocked: "bad", off: "", pending: "" }[s] || "");
+const hlSaveErr = e => (notReady(e) && (!e?.code || e.code === "not_found" || e.code === "not_implemented")) ? "功能还没开放" : hlScrub(e?.message || funErr(e));
 VIEWS.humanlike = async (v, sub) => {
-  if (sub === "voice") return voiceTtsView(v); if (sub === "voices") return voicesView(v);
+  const only = String(sub || "").startsWith("only:") ? sub.slice(5) : ""; // v4：技术模式 / 主动搭话 单独成分区
   const tab = sub === "followups" ? "followups" : "";
+  const SECS = HL_SEC.filter(x => only ? x[0] === only : x[0] !== "techMode" && x[0] !== "proactive");
   const tabs = `<div class="toolbar"><div class="seg stk-tabs" role="tablist">${[["", "设置"], ["followups", "待追问"]].map(([k, t]) => `<a role="tab" href="#/humanlike${k ? "/" + k : ""}" aria-pressed="${k === tab}">${t}</a>`).join("")}</div></div>`;
-  const [d, ss] = await Promise.all([api.hlGet(), api.sessions().catch(() => ({ sessions: [] })), loadAliases()]);
+  const rtP = api.hlRuntime ? api.hlRuntime().catch(e => { if (e?.status === 401) throw e; return { __err: e }; }) : Promise.resolve(null); /* HOSINO-PERSONA-RUNTIME v1 */
+  let d, ss, rtWrap;
+  try {
+    [d, ss, , rtWrap] = await Promise.all([api.hlGet(), api.sessions().catch(() => ({ sessions: [] })), loadAliases(), rtP]);
+  } catch (e) {
+    if (e?.status === 401) throw e;
+    const msg = notReady(e) ? "功能还没开放" : hlScrub(e?.message || "出错了");
+    const head = only ? "" : top("拟人化", "让星野更像人") + tabs;
+    const root0 = paint(v, head + `<div class="card empty" id="c2c" data-c2c="unavailable"><b>🛠</b>${esc(msg)}<div class="faint fs" style="margin-top:8px">过一会儿再试一次，或者看看后台是不是还没上这个功能。</div><div style="margin-top:12px"><button type="button" class="btn" data-c2cretry>再试一次</button></div></div>`);
+    root0.addEventListener("click", ev => { if (ev.target.closest("[data-c2cretry]")) route(); });
+    return;
+  }
+  let rtAll = (!rtWrap?.__err) ? rtWrap : null; /* HOSINO-PERSONA-RUNTIME v1 */
+  let RT = rtAll?.c2c || null;
   const req = d.requires || {}; const HLS = new Set(HL_SEC.map(x => x[0]));
   const reqTop = Object.entries(req).filter(([k]) => !k.includes("=") && !HLS.has(k.split(".")[0]));
   const reqCard = sec => Object.entries(req).filter(([k]) => !k.includes("=") && k.split(".")[0] === sec);
   const banner = d.consumers === false || reqTop.length ? `<div class="fun-warn" role="status">🚧 <b>${d.consumers === false ? "暂未生效：功能还没上线，这里只保存设置" : "部分取值有前置条件"}</b>${d.note ? `<span>${esc(scrub(d.note))}</span>` : ""}${reqTop.length ? `<ul class="hl-req">${reqTop.map(([k, t]) => `<li><code>${esc(k)}</code>：${esc(scrub(t))}</li>`).join("")}</ul>` : ""}</div>` : "";
-  const head = top("拟人化", "让星野更像人") + banner + tabs;
+  const RTL = rtAll?.live; const liveBar = RTL ? `<div class="${RTL.running ? "hl-need soft" : "hl-need"}" role="status">${RTL.running ? "🟢 网关里在跑" : "🔴 最近 3 天没看到网关用这些设置"}：最近一次 ${esc(hlScrub(RTL.lastHintText || "—"))} · 近 7 天 ${esc(RTL.hints7d)} 轮带了拟人提示 · ${esc(hlScrub(RTL.scope))}</div>` : ""; /* HOSINO-PERSONA-RUNTIME v1 */
+  const RTS = { active: "🟢 在生效", idle: "⚪ 开着，最近没触发", partial: "🟡 部分生效", blocked: "🔴 开着但卡住了", off: "⚫ 没开", notInstalled: "🔴 网关没装" };
+  /* HOSINO-MORNING-STATUS v1：优先读 code/statusText。code 来自 staging/morning-20261111（notWorking / collecting）。 */
+  const HL_CODE_TONE = { notWorking: "bad", collecting: "warn", active: "ok" };
+  const hlFeatLabel = f => String(f.statusText || RTS[f.status] || f.status || "");
+  const hlFeatTone = f => {
+    if (f.code && HL_CODE_TONE[f.code]) return HL_CODE_TONE[f.code];
+    const lead = String(f.statusText || (!RTS[f.status] ? f.status : "") || "");
+    if (/^\s*🔴/.test(lead)) return "bad";
+    if (/^\s*🟡/.test(lead)) return "warn";
+    if (/^\s*🟢/.test(lead)) return "ok";
+    if (f.status === "blocked" || f.status === "partial") return "warn";
+    if (f.status === "active") return "ok";
+    return "soft";
+  };
+  const liveLine = sec => { const f = rtAll?.features?.[sec]; if (!f) return ""; const fr = f.fired, tone = hlFeatTone(f), label = hlFeatLabel(f);
+    return `<div class="${tone === "soft" ? "hl-need soft" : "hl-need " + tone}" role="status" data-hl-live="${esc(sec)}" data-hl-tone="${esc(tone)}"${f.code ? ` data-hl-code="${esc(f.code)}"` : ""}">${esc(hlScrub(label))}${fr ? ` · 近 7 天 ${esc(fr.n7)} 次${fr.lastText ? " · 最近 " + esc(hlScrub(fr.lastText)) : ""}` : ""}${(f.notes || []).length ? "<br>" + f.notes.map(x => esc(hlScrub(x))).join("<br>") : ""}${(f.blockers || []).length ? "<br>⚠️ " + f.blockers.map(x => esc(hlScrub(x))).join("<br>⚠️ ") : ""}</div>`; };
+  const head = only ? banner + liveBar : top("拟人化", "让星野更像人") + banner + liveBar + tabs;
   const groups0 = (ss.sessions || []).map(x => ({ x, t: qqTarget(x.key) })).filter(o => o.t?.kind === "group").map(o => ({ k: "group:" + o.t.id.toLowerCase(), name: sessName(o.x) }));
   if (tab === "followups") { const f = await api.hlFollowups().catch(() => ({ items: [] })); const it = f.items || [];
     return paint(v, head + `<div class="faint fs" style="margin-bottom:8px">以后由技能写进来的「改天问问」事件，这里只读。${f.updatedAt ? "更新于 " + fmtTime(f.updatedAt) : ""}</div>` + (it.length ? `<div class="list">${it.map(x => `<div class="row"><div class="grow"><div class="t">${esc(x.topic || "（没写事件）")}</div><div class="d">${esc([x.name || (x.person ? funName(x.person) : ""), x.group ? funGroupName(String(x.group).startsWith("group:") ? String(x.group).toLowerCase() : "group:" + String(x.group).toLowerCase(), groups0) : "私聊"].filter(Boolean).join(" · "))}</div><div class="d">${esc(["记下 " + (x.createdAt ? fmtTime(x.createdAt) : "—"), "该问 " + (x.dueAt ? fmtTime(x.dueAt) : "—")].join(" · "))}</div></div>${x.askedAt ? `<span class="pill ok" title="${esc(fmtTime(x.askedAt))}">已问 ${esc(fmtTime(x.askedAt))}</span>` : `<span class="pill">还没问</span>`}</div>`).join("")}</div>` : `<div class="card empty"><b>🗓️</b>还没有待追问的事件</div>`)); }
   const groups = (ss.sessions || []).map(x => ({ x, t: qqTarget(x.key) })).filter(o => o.t?.kind === "group").map(o => ({ k: "group:" + o.t.id.toLowerCase(), name: sessName(o.x) }));
-  const H0 = JSON.parse(JSON.stringify(d.params || {})); let H = JSON.parse(JSON.stringify(H0)); const sug = d.suggestions?.quirkPhrases || [];
+  const H0 = c2cEnsure(JSON.parse(JSON.stringify(d.params || {}))); let H = JSON.parse(JSON.stringify(H0)); const sug = d.suggestions?.quirkPhrases || [];
   const sw = (attr, on, lab = "") => `<span class="switch"><input type="checkbox" ${attr} ${on ? "checked" : ""} ${lab ? `aria-label="${esc(lab)}"` : ""}><i></i></span>`;
   const ctl = (sec, [k, l, t, a, b2, unit]) => { const val = H[sec]?.[k], at = `data-hs="${sec}" data-k="${k}"`;
     const dim = (sec === "morning" && k === "heartbeatHour" && H.morning?.mode !== "heartbeat") || sec === "proactive" && ((k === "heartbeatIntervalMin" && H.proactive.mode !== "heartbeat") || (k !== "mode" && k !== "heartbeatIntervalMin" && H.proactive.mode === "off"));
@@ -1271,29 +2154,96 @@ VIEWS.humanlike = async (v, sub) => {
         ${sec === "quirk" && k === "phrases" && sug.length ? `<div class="hl-sug">建议：${sug.map(x => `<button type="button" class="chip" data-sug="${esc(x)}" ${used.has(hlKey(x)) || list.length >= a ? "disabled" : ""}>＋ ${esc(x)}</button>`).join("")}</div>` : ""}`); }
     return ""; };
   const secCard = ([sec, t, desc, fs]) => { const on = sec === "proactive" ? H.proactive.mode !== "off" : sec === "sensitive" ? true : H[sec]?.enabled;
-    return `<div class="section">${esc(t)} <span class="faint fs" style="font-weight:400">${esc(desc)}</span></div><div class="card form fun-sec ${on ? "" : "off"}">${fs.map(f => ctl(sec, f)).join("")}${sec === "robotBit" ? `<div class="hl-fixed">🔒 有人认真问是不是真人时一律如实回答，不受开关影响</div>` : ""}${reqCard(sec).map(([, t]) => `<div class="hl-need soft">ℹ️ ${esc(scrub(t))}</div>`).join("")}<div class="fun-reset"><button type="button" class="btn sm" data-hreset="${sec}">↺ 恢复默认…</button></div></div>`; };
+    return `<div class="section">${esc(t)} <span class="faint fs" style="font-weight:400">${esc(desc)}</span></div><div class="card form fun-sec ${on ? "" : "off"}">${fs.map(f => ctl(sec, f)).join("")}${sec === "robotBit" ? `<div class="hl-fixed">🔒 有人认真问是不是真人时一律如实回答，不受开关影响</div>` : ""}${reqCard(sec).map(([, t]) => `<div class="hl-need soft">ℹ️ ${esc(scrub(t))}</div>`).join("")}${liveLine(sec)}<div class="fun-reset"><button type="button" class="btn sm" data-hreset="${sec}">↺ 恢复默认…</button></div></div>`; };
   const KINDS = { all: "全部", ...HL_FEAT };
-  const draw = () => { const y = scrollY;
-    root.querySelector("#hf").innerHTML = `<div class="card form"><label class="switchrow"><div class="grow"><b>拟人化总开关</b><div class="faint fs">关掉后下面所有效果都不生效（技术模式除外，它只负责关效果）</div></div>${sw(`data-ht="enabled"`, H.enabled)}</label>
+  let c2cOpen = new Set();
+  const c2cRemember = () => { const box = root.querySelector("#c2c"); if (!box) return; c2cOpen = new Set([...box.querySelectorAll("details.c2c-more[open]")].map(el => el.dataset.c2cMore)); };
+  const c2cSw = (sec, k, on, lab) => `<span class="switch"><input type="checkbox" data-c2c-sec="${sec}" data-c2c-k="${k}" ${on ? "checked" : ""} aria-label="${esc(lab)}"><i></i></span>`;
+  const c2cPill = sec => { const f = RT?.features?.[sec]; if (!f) return ""; const tip = [f.text, f.detail, f.last ? "上次 " + f.last : "", f.n7d != null && f.n7d > 0 ? "近 7 天 " + f.n7d + " 次" : ""].filter(Boolean).join(" · "); return ` <span class="pill ${c2cStatusClass(f.status)}" title="${esc(hlScrub(tip))}">${esc(hlScrub(f.text || ""))}</span>`; };
+  const c2cNum = (sec, k, lab, unit) => { const r = C2C_RANGE[sec][k], isMs = C2C_MS.has(k), val = H[sec][k], view = isMs ? c2cMsView(val) : val, mn = isMs ? c2cMsView(r[0]) : r[0], mx = isMs ? c2cMsView(r[1]) : r[1];
+    return `<div class="field"><label><span>${esc(lab)}</span><div class="inrow"><input class="input" type="number" min="${mn}" max="${mx}" step="${isMs ? "0.1" : "1"}" inputmode="${isMs ? "decimal" : "numeric"}" value="${esc(view ?? "")}" data-c2c-sec="${sec}" data-c2c-k="${k}" data-c2c-unit="${isMs ? "ms" : "n"}" data-min="${r[0]}" data-max="${r[1]}" aria-label="${esc(lab)}"><span class="faint">${esc(unit)}（${mn}–${mx}）</span></div></label></div>`; };
+  const c2cHr = (sec, k, lab) => `<div class="field"><label><span>${esc(lab)}</span><select class="input" data-c2c-sec="${sec}" data-c2c-k="${k}" data-c2c-unit="hr" aria-label="${esc(lab)}">${Array.from({ length: 24 }, (_, h) => `<option value="${h}" ${h === H[sec][k] ? "selected" : ""}>${String(h).padStart(2, "0")}:00</option>`).join("")}</select></label></div>`;
+  const c2cMore = (sec, inner) => `<details class="c2c-more" data-c2c-more="${sec}" ${c2cOpen.has(sec) ? "open" : ""}><summary>更多设置</summary>${inner}</details>`;
+  const c2cReset = sec => `<div class="fun-reset"><button type="button" class="btn sm" data-c2c-reset="${sec}">↺ 恢复默认…</button></div>`;
+  const c2cHtml = () => {
+    if (only || tab === "followups") return "";
+    if (!RT) return `<div class="section" id="c2c-sec">私聊（只对凛）</div><div class="card empty" id="c2c" data-c2c="unavailable"><b>🛠</b>功能还没开放<div class="faint fs" style="margin-top:8px">过一会儿再试一次，或者看看后台是不是还没上这个功能。</div><div style="margin-top:12px"><button type="button" class="btn" data-c2cretry>再试一次</button></div></div>`;
+    const localOpt = Object.entries(H.optOut || {}).some(([id, a]) => (a || []).includes("all") && funName(id) === "凛");
+    const optedOut = !!(RT.optedOut || localOpt);
+    const banners = [];
+    if (optedOut) banners.push(`<div class="c2c-banner c2c-optout" role="status">凛在退出名单里（退出了全部拟人效果），私聊这些都先不生效。下面的开关还能改，会记住你保存的状态，但要先把她移出退出名单，才会真正跑起来。</div>`);
+    if (d.c2cConsumers === false || RT.installed === false) banners.push(`<div class="c2c-banner" role="status">网关补丁还没上线，这里的设置暂时只保存。</div>`);
+    if (RT.techUntil) banners.push(`<div class="c2c-banner c2c-tech" role="status">技术模式中，到 ${esc(hlScrub(RT.techUntil))}结束</div>`);
+    if (RT.errors7d > 0) banners.push(`<div class="c2c-banner" role="status">近 7 天有 ${esc(String(RT.errors7d))} 条报错，<a href="#/system#audit">看日志</a></div>`);
+    if (RT.proactive?.resumePending) banners.push(`<div class="c2c-banner c2c-info" role="status">已请求恢复，1 分钟内生效</div>`);
+    const dim = !H.c2c?.enabled;
+    const card = (sec, desc, extra = "", more = "") => `<div class="card form c2c-card ${dim && sec !== "c2c" ? "c2c-dim" : ""}"><label class="switchrow"><div class="grow"><b>${esc(C2C_TITLE[sec])}</b>${c2cPill(sec)}<div class="faint fs">${desc}</div></div>${c2cSw(sec, "enabled", !!H[sec].enabled, C2C_TITLE[sec])}</label>${extra}${more ? c2cMore(sec, more) : ""}${c2cReset(sec)}</div>`;
+    const pr = RT.proactive || {};
+    let proExtra = `<p class="c2c-note">QQ 官方对主动消息有额度，具体额度没实测过；如果 QQ 连续两次拒发，会自动停 2 小时（页面会显示）。</p>`;
+    if (pr.circuit?.open) proExtra += `<div class="c2c-blocked" role="status"><span>QQ 连续拒发，${esc(hlScrub(pr.circuit.until || "过一会儿"))}前暂停</span></div>`;
+    if (pr.paused && !pr.resumePending) proExtra += `<div class="c2c-blocked" role="status"><span>${esc(hlScrub(RT.features?.c2cProactive?.detail || "连着几次没回，已暂停"))}</span><button type="button" class="btn" data-c2c-resume>恢复</button></div>`;
+    const followNote = `<p class="c2c-note">私聊里问过的事，群里那边可能还不知道，可能会在群里再问一次。${H.followup?.enabled === false ? "上面的「追问近况」没开时，私聊里也没有可问的事。" : ""}</p>`;
+    return `<div class="section" id="c2c-sec">私聊（只对凛） <span class="faint fs" style="font-weight:400">只在和凛的私聊里生效，不进各个群的覆盖</span></div><div id="c2c" data-c2c="ok">${banners.join("")}
+      <div class="card form c2c-card"><label class="switchrow"><div class="grow"><b>只对凛的私聊拟人</b><div class="faint fs">关掉之后，下面各项都不跑，但还可以改。</div></div>${c2cSw("c2c", "enabled", !!H.c2c.enabled, "只对凛的私聊拟人")}</label>${c2cMore("c2c", `<label class="switchrow"><div class="grow"><b>技术模式时也一起关掉</b><div class="faint fs">凛切到技术模式时，私聊这些也先停。</div></div>${c2cSw("c2c", "respectTechMode", !!H.c2c.respectTechMode, "技术模式时也一起关掉")}</label>`)}${c2cReset("c2c")}</div>
+      ${card("c2cMerge", "凛连着发好几条时，先等一等再一次性回。时间在这里用「秒」，保存时按毫秒交给后台。", "", c2cNum("c2cMerge", "minMs", "最短等待", "秒") + c2cNum("c2cMerge", "maxMs", "最长等待", "秒") + c2cNum("c2cMerge", "totalMs", "合计最多等", "秒"))}
+      ${card("c2cClosing", "对话收尾时，不再把同一句结束语用一遍。", "", c2cNum("c2cClosing", "windowMin", "算同一轮的时间窗口", "分钟") + `<label class="switchrow"><div class="grow"><b>给模型一个收尾提示</b></div>${c2cSw("c2cClosing", "hint", !!H.c2cClosing.hint, "给模型一个收尾提示")}</label>`)}
+      ${card("c2cTyping", "开：凛一发消息就显示「对方正在输入…」，等她连发完的这段时间也显示。关：和现在一样，星野开始回复时才显示（那是 QQ 插件自带的，这个开关关不掉它）。")}
+      ${card("c2cContinuity", "私聊里能接上刚才在群里说过的话。", "", c2cNum("c2cContinuity", "lookbackMin", "往回看多久", "分钟") + c2cNum("c2cContinuity", "maxLines", "最多带几句群里的话", "句"))}
+      ${card("c2cFollowup", "私聊里也会追问近况。", followNote)}
+      ${card("c2cProactive", "凉了很久之后，偶尔主动找凛说一句。免打扰按新加坡时间。", proExtra, c2cNum("c2cProactive", "quietThresholdMin", "安静多久才考虑找她", "分钟") + c2cNum("c2cProactive", "minIntervalMin", "两次至少间隔", "分钟") + c2cNum("c2cProactive", "dailyCap", "每天最多", "次") + c2cHr("c2cProactive", "quietHoursStart", "免打扰开始（新加坡时间）") + c2cHr("c2cProactive", "quietHoursEnd", "免打扰结束（新加坡时间）") + c2cNum("c2cProactive", "checkEveryMin", "多久检查一次", "分钟") + c2cNum("c2cProactive", "pauseAfterUnanswered", "连着几次没回就停", "次") + `<label class="switchrow"><div class="grow"><b>必须有理由</b></div>${c2cSw("c2cProactive", "requireReason", !!H.c2cProactive.requireReason, "必须有理由")}</label>`)}
+    </div>`;
+  };
+  const draw = () => { const y = scrollY; c2cRemember();
+    root.querySelector("#hf").innerHTML = only ? SECS.map(secCard).join("") : `<div class="card form"><label class="switchrow"><div class="grow"><b>拟人化总开关</b><div class="faint fs">关掉后下面所有效果都不生效（技术模式除外，它只负责关效果）</div></div>${sw(`data-ht="enabled"`, H.enabled)}</label>
         <label class="field"><span>群友一句话退出全部拟人效果的口令</span><input class="input" maxlength="20" value="${esc(H.optOutPhrase ?? "")}" data-ht="optOutPhrase" autocomplete="off"></label><div class="faint fs">所有口令 1–20 字，不能重复，也不能和小脾气的口令重复。</div></div>
-      ${HL_SEC.map(secCard).join("")}
+      ${SECS.map(secCard).join("")}
       <div class="section">各个群</div><div class="card form"><div class="list flat">${groups.map(g => g.k).concat(Object.keys(H.perGroup || {}).filter(k => !groups.some(g => g.k === k))).map(gk => { const c = H.perGroup?.[gk], nm = funGroupName(gk, groups);
         return `<div class="fun-g"><div class="row"><div class="grow"><div class="t">${esc(nm)}</div><div class="d">${c ? "单独设置" + (Object.keys(c).filter(k => k !== "enabled" && c[k] === false).length ? ` · 关了 ${Object.keys(c).filter(k => k !== "enabled" && c[k] === false).map(k => HL_FEAT[k]).join("、")}` : "") : "跟随总开关"}</div></div>${c ? `<button type="button" class="btn sm" data-hgunset="${esc(gk)}">恢复默认</button>` : ""}${sw(`data-hg="${esc(gk)}"`, c ? c.enabled !== false : true, nm)}</div>
           ${c ? `<details class="fun-ov"><summary>这个群单独关掉某些功能</summary><div class="fun-ovs">${Object.entries(HL_FEAT).map(([f, t]) => `<label class="tg">${sw(`data-hgf="${esc(gk)}" data-f="${f}"`, c[f] !== false, t)}${esc(t)}</label>`).join("")}</div></details>` : ""}</div>`; }).join("") || `<div class="faint">还没有群会话</div>`}</div></div>
       <div class="section">退出名单 <span class="faint fs" style="font-weight:400">这些人不会收到拟人效果</span></div>
       <div class="card form"><div class="list flat">${Object.entries(H.optOut || {}).filter(([, a]) => a).map(([id, a]) => `<div class="row fun-opt"><div class="grow"><div class="t">${esc(funName(id))}</div><div class="d mono">${esc(shortId(id))}</div><div class="chips">${Object.entries(KINDS).map(([k, t]) => `<button type="button" class="chip" aria-pressed="${a.includes(k)}" data-hopt="${esc(id)}" data-kind="${k}" ${k !== "all" && a.includes("all") ? "disabled" : ""}>${t}</button>`).join("")}</div></div><button type="button" class="btn sm" data-hoptdel="${esc(id)}">移出</button></div>`).join("") || `<div class="faint fs">还没有人退出</div>`}</div>
-        <div class="inrow wrap" style="margin-top:8px"><input class="input" id="hnoid" placeholder="群友的 32 位 openid" autocomplete="off" style="flex:1;min-width:200px"><button type="button" class="btn sm" data-hoptadd>加入（退出全部）</button></div></div>`;
+        <div class="inrow wrap" style="margin-top:8px"><input class="input" id="hnoid" placeholder="群友的 32 位 openid" autocomplete="off" style="flex:1;min-width:200px"><button type="button" class="btn sm" data-hoptadd>加入（退出全部）</button></div></div>${c2cHtml()}`;
     root.querySelector("#hsb").hidden = !Object.keys(changes()).length; scrollTo(0, y); };
   const eq = (a, b) => JSON.stringify(a ?? null) === JSON.stringify(b ?? null);
   const changes = () => { const o = {};
     for (const k of HL_TOP) if (!eq(H[k], H0[k])) o[k] = H[k];
     for (const m of ["optOut", "perGroup"]) { const x = {}; for (const id of new Set([...Object.keys(H0[m] || {}), ...Object.keys(H[m] || {})])) if (!eq(H[m]?.[id], H0[m]?.[id])) x[id] = H[m]?.[id] ?? null; if (Object.keys(x).length) o[m] = x; }
     for (const [sec] of HL_SEC) { const a = H0[sec] || {}, b = H[sec] || {}, so = {}; for (const k of Object.keys(b)) if (!eq(a[k], b[k])) so[k] = b[k]; if (Object.keys(so).length) o[sec] = so; }
+    for (const sec of C2C_KEYS) { const a = H0[sec] || {}, b = H[sec] || {}, so = {}; for (const k of Object.keys({ ...a, ...b })) if (!eq(a[k], b[k])) so[k] = b[k]; if (Object.keys(so).length) o[sec] = so; }
     return o; };
-  const root = paint(v, head + `<div class="card mlist vt-entry"><a class="mrow" href="#/humanlike/voice"><span class="mic">${ic("tune")}</span><span class="grow"><b>语音设置</b><small>语音引擎、情绪标记、Fish 和 MiMo 的声音</small></span><span class="mchev">${ic("chev")}</span></a><a class="mrow" href="#/humanlike/voices"><span class="mic">${ic("play")}</span><span class="grow"><b>音色</b><small>音色手册、在线找音色、添加备用音色</small></span><span class="mchev">${ic("chev")}</span></a></div>` + `<div id="hf"></div>` + dirtyBar("hsb", "保存设置"));
+  const root = paint(v, head + `<div id="hf"></div>` + dirtyBar("hsb", "保存设置"));
   const addTag = (sec, k, raw) => { const s = String(raw || "").trim(); const spec = HL_SEC.find(x => x[0] === sec)[3].find(f => f[0] === k); if (!s) return; if ([...s].length > spec[4] || /\n/.test(s)) return toast(`每条最多 ${spec[4]} 字，一行`); const list = H[sec][k] || []; if (list.length >= spec[3]) return toast(`最多 ${spec[3]} 条`); if (list.some(x => hlKey(x) === hlKey(s))) return toast("已经有了"); H[sec] = { ...H[sec], [k]: [...list, s] }; draw(); };
   root.addEventListener("keydown", e => { const t = e.target; if (t.dataset?.tagin && e.key === "Enter" && !e.isComposing) { e.preventDefault(); addTag(t.dataset.tagin, t.dataset.k, t.value); } });
   root.addEventListener("change", e => { const t = e.target, sec = t.dataset.hs, k = t.dataset.k;
+    if (t.dataset.c2cSec) {
+      const s = t.dataset.c2cSec, ck = t.dataset.c2cK;
+      if (!H[s]) H[s] = { ...C2C_DEF[s] };
+      if (t.type === "checkbox") H[s] = { ...H[s], [ck]: t.checked };
+      else if (t.tagName === "SELECT") {
+        const n = +t.value;
+        if (s === "c2cProactive" && (ck === "quietHoursStart" || ck === "quietHoursEnd")) {
+          const other = ck === "quietHoursStart" ? H[s].quietHoursEnd : H[s].quietHoursStart;
+          if (n === other) { toast("免打扰的开始和结束不能相同"); return draw(); }
+        }
+        H[s] = { ...H[s], [ck]: n };
+      } else if (t.type === "number") {
+        const raw = t.value.trim(), n0 = Number(raw);
+        if (raw === "" || !Number.isFinite(n0) || n0 < 0) { toast("请填一个数字"); return draw(); }
+        const isMs = t.dataset.c2cUnit === "ms";
+        let n = isMs ? c2cMsToApi(n0) : Math.round(n0);
+        const mn = +t.dataset.min, mx = +t.dataset.max;
+        const clamped = Math.min(mx, Math.max(mn, n));
+        if (clamped !== n) { n = clamped; toast("已调整到范围内"); }
+        const next = { ...H[s], [ck]: n };
+        if (s === "c2cMerge") {
+          const minMs = ck === "minMs" ? n : next.minMs, maxMs = ck === "maxMs" ? n : next.maxMs, totalMs = ck === "totalMs" ? n : next.totalMs;
+          if (minMs > maxMs) { toast("最短等待不能长过最长等待"); return draw(); }
+          if (maxMs > totalMs) { toast("最长等待不能长过合计上限"); return draw(); }
+        }
+        H[s] = next;
+      } else return;
+      return draw();
+    }
     if (t.dataset.ht) { if (t.type === "checkbox") H.enabled = t.checked; else { const s = t.value.trim(); if (!s || [...s].length > 20) { toast("口令要是 1–20 字的一行"); return draw(); } H.optOutPhrase = s; } }
     else if (t.dataset.hg) { H.perGroup = { ...(H.perGroup || {}), [t.dataset.hg]: { ...(H.perGroup?.[t.dataset.hg] || {}), enabled: t.checked } }; }
     else if (t.dataset.hgf) { const g = t.dataset.hgf, c = { ...H.perGroup[g] }; if (t.checked) delete c[t.dataset.f]; else c[t.dataset.f] = false; H.perGroup = { ...H.perGroup, [g]: c }; }
@@ -1304,6 +2254,24 @@ VIEWS.humanlike = async (v, sub) => {
     else return;
     draw(); });
   root.addEventListener("click", async e => { const b = e.target.closest("button"); if (!b) return;
+    if (b.hasAttribute("data-c2cretry")) { route(); return; }
+    if (b.hasAttribute("data-c2c-resume")) {
+      if (!await confirmDialog({ title: "恢复私聊主动找我？", body: "清掉「连着没回」的暂停。不会马上发消息。网关最多 1 分钟内生效，而且只在「私聊主动找我」开着时才读。", ok: "恢复" })) return;
+      try {
+        await api.hlC2cResume();
+        toast("已请求恢复，1 分钟内生效");
+        const nxt = await api.hlRuntime().catch(() => null);
+        if (nxt) rtAll = nxt;
+        if (nxt && nxt.c2c) RT = nxt.c2c;
+        else if (RT) RT = { ...RT, proactive: { ...(RT.proactive || {}), resumePending: true } };
+        draw();
+      } catch (x) { toast(hlSaveErr(x)); }
+      return;
+    }
+    if (b.hasAttribute("data-c2c-reset")) { const sec = b.dataset.c2cReset, nm = C2C_TITLE[sec];
+      if (!await confirmDialog({ title: `「${nm}」恢复默认？`, body: "这一整段设置都会回到默认值。", ok: "继续", danger: true })) return;
+      if (!await confirmDialog({ title: "确定恢复默认吗？", body: "旧设置会备份。其他还没保存的改动不会一起提交。", ok: "恢复默认", danger: true })) return;
+      try { const r = await api.hlSet({ [sec]: null }); toast(`「${nm}」已恢复默认${r && "backup" in r ? (r.backup ? "，备份：" + r.backup : "（第一次写入，没有旧备份）") : ""}`); route(); } catch (x) { toast(hlSaveErr(x)); } return; }
     if (b.dataset.seg) { H[b.dataset.seg] = { ...H[b.dataset.seg], [b.dataset.k]: b.dataset.o }; return draw(); }
     if (b.dataset.tagdel) { const sec = b.dataset.tagdel, k = b.dataset.k; H[sec] = { ...H[sec], [k]: H[sec][k].filter((_, i) => i !== +b.dataset.i) }; return draw(); }
     if (b.dataset.tagadd) { const i = root.querySelector(`[data-tagin="${b.dataset.tagadd}"][data-k="${b.dataset.k}"]`); return addTag(b.dataset.tagadd, b.dataset.k, i.value); }
@@ -1318,7 +2286,7 @@ VIEWS.humanlike = async (v, sub) => {
       try { const r = await api.hlSet({ [sec]: null }); toast(`「${nm}」已恢复默认${r && "backup" in r ? (r.backup ? "，备份：" + r.backup : "（第一次写入，没有旧备份）") : ""}`); route(); } catch (x) { toast(funErr(x)); } return; }
     if (b.hasAttribute("data-reset")) { H = JSON.parse(JSON.stringify(H0)); return draw(); }
     if (b.hasAttribute("data-save")) { const c = changes(); if (!Object.keys(c).length) return; b.disabled = true;
-      try { const r = await api.hlSet(c); toast(`已保存${r && "backup" in r ? (r.backup ? "，备份：" + r.backup : "（第一次写入，没有旧备份）") : ""}`); route(); } catch (x) { toast(funErr(x)); b.disabled = false; } }
+      try { const r = await api.hlSet(c); toast(`已保存${r && "backup" in r ? (r.backup ? "，备份：" + r.backup : "（第一次写入，没有旧备份）") : ""}`); route(); } catch (x) { toast(hlSaveErr(x)); b.disabled = false; } }
   });
   draw();
 };
@@ -1330,13 +2298,12 @@ const VT_BOOL = new Set(["voiceEmotion.enabled", "fish.emotionTags", "fish.perSe
 const VT_LABEL = { provider: "语音引擎", "fish.fallback": "Fish 失败时改用", "voiceEmotion.enabled": "让星野给语音加情绪标记", "voiceEmotion.markers": "允许的标记", "fish.emotionMap": "情绪映射表", "fish.defaultTag": "没有标记时用", "fish.emotionTags": "给每句加情绪标签", "fish.model": "Fish 模型", "fish.referenceId": "音色", "fish.temperature": "温度 temperature", "fish.topP": "top_p", "fish.timeoutSec": "每句超时", "fish.perSentence": "逐句合成再拼接", "fish.stripLeadingUm": "去掉开头的「嗯……」", "mimo.model": "MiMo 模型", "mimo.voice": "MiMo 音色" };
 // 与后端校验一致：标记 1–8 字、不含【】[]
 const vtMarkOk = k => typeof k === "string" && !!k.trim() && k.trim().length <= 8 && !/[【】\[\]]/.test(k);
-const vtFreqLink = () => `<div class="section">发语音的频率</div><div class="card mlist vt-freq"><a class="mrow" href="#/voice#rules"><span class="mic">${ic("tune")}</span><span class="grow"><b>语音频率设置</b><small>概率、冷却、每日上限、静默时段、单句字数都在「表情库 → 参数」的语音那一段，这里不重复</small></span><span class="mchev">${ic("chev")}</span></a></div>`;
 // ---------- 音色页（#/humanlike/voices），规格 staging/fish/voices-console-spec.md ----------
 const VV_LANGS = [["", "全部语言"], ["zh", "中文"], ["ja", "日语"], ["en", "英语"], ["ko", "韩语"], ["fr", "法语"], ["de", "德语"], ["es", "西语"]];
 const VV_LN = Object.fromEntries(VV_LANGS.filter(x => x[0]));
 const vvT = t => scrub(t).replace(/好感度/g, "··").replace(/延迟/g, "耗时");
 const vvE = t => esc(vvT(t));
-const vvErr = x => x?.status === 423 ? "默认音色（星野）已锁定，不能删除" : notReady(x) ? "音色接口后台还没上线，再等等哦" : vvT(x?.message || "出错了");
+const vvErr = x => x?.code === "quiet_window" ? CP_MSG.quiet_window : x?.status === 423 && x?.code === "locked" ? "默认音色（星野）已锁定，不能删除" : notReady(x) ? "音色接口后台还没上线，再等等哦" : vvT(x?.message || "出错了");
 const vvLangs = a => [].concat(a || []).map(x => VV_LN[x] || String(x)).join(" / ") || "未知";
 const vvNum = n => n == null ? "—" : Number(n) >= 10000 ? (Number(n) / 10000).toFixed(1) + " 万" : String(n);
 const VV_ID_RE = /^[0-9a-f]{32}$/, VV_ALIAS_RE = /^[a-z][a-z0-9_]{1,23}$/;
@@ -1382,7 +2349,7 @@ async function vvPlay(btn, key, text) {
 }
 async function voicesView(v) {
   vvStop();
-  const head = top("音色", "拟人化 · 星野的声音库").replace('href="#/more" aria-label="返回更多"', 'href="#/humanlike" aria-label="返回拟人化"');
+  const head = top("音色库", "语音");
   let L; try { L = await api.vvList(); } catch (x) {
     paint(v, head + `<div class="card empty"><div class="em">🎙️</div><div>${notReady(x) ? "音色接口后台还没上线，上线后这里会显示音色手册" : "音色手册没读出来：" + vvE(x.message)}</div><button class="btn" data-vvre style="margin-top:14px">再试一次</button></div>`);
     v.querySelector("[data-vvre]").onclick = () => route(); return;
@@ -1476,7 +2443,7 @@ function vvAddForm(id) {
       const body = { id, alias, nicknames, description }; yes.disabled = true;
       let pv; try { pv = await api.vvAdd(body, false); }
       catch (x) { toast(x?.status === 409 && x.code !== "dup_id" ? vvErr(x) + "，换个别名或叫法吧" : vvErr(x)); yes.disabled = false; if (x?.status === 409 || x?.status === 400) { al.focus(); al.select(); } return; }
-      close();
+      close(true);
       const e = pv?.preview?.entry || {}, f = pv?.preview?.fish || {};
       const ok = await confirmDialog({ title: "确认添加音色", ok: "确认添加", body: `<b>${vvE(e.title || f.title || alias)}</b>${f.author ? ` · by ${vvE(f.author)}` : ""}<br>别名 <code>${vvE(e.alias || alias)}</code>；中文叫法：${(e.nicknames || nicknames).map(vvE).join("、") || "—"}<br>素材语言：${esc(vvLangs(e.source_lang))}；可输出语言：${esc(vvLangs(e.output_langs))}<br>${e.style || description ? "用途说明：" + vvE(e.style || description) + "<br>" : ""}手册表格新增一行：<pre class="vv-row">${vvE(pv?.preview?.manualRow || "")}</pre><b>仅在点名时使用，默认音色不变。</b>` });
       if (!ok) return;
@@ -1486,7 +2453,7 @@ function vvAddForm(id) {
   });
 }
 async function voiceTtsView(v) {
-  const head = top("语音设置", "拟人化 · 星野的声音").replace('href="#/more" aria-label="返回更多"', 'href="#/humanlike" aria-label="返回拟人化"');
+  const head = top("合成", "语音");
   const [g, o, lb] = await Promise.allSettled([api.vtGet(), api.vtOptions(), api.vvList()]);
   const libDef = lb.status === "fulfilled" && Array.isArray(lb.value?.voices) ? lb.value.voices.find(x => x?.isDefault === true) || null : null;
   if (g.status === "rejected") { const x = g.reason; if (x?.status === 401) throw x;
@@ -1551,7 +2518,7 @@ async function voiceTtsView(v) {
         <label class="field"><span>${VT_LABEL["mimo.voice"]}</span><input class="input" value="${esc(P.mimo.voice ?? "")}" maxlength="40" data-vt="mimo.voice" autocomplete="off"></label>
       </div>
       <button type="button" class="btn danger" data-vtall style="width:100%;margin-top:14px">全部恢复默认…</button>
-      ${vtFreqLink()}`;
+      `;
     root.querySelector("#vtsb").hidden = !Object.keys(changes()).length; scrollTo(0, y); };
   const root = paint(v, head + `<div class="hl-need soft vt-tip">ℹ️ 改动下一次合成就生效；情绪标记提示约 5 秒内生效，不用重启。</div><div id="vtf" class="vt"></div>` + dirtyBar("vtsb", "保存语音设置"));
   root.classList.add("vt-page");
@@ -1610,11 +2577,10 @@ function confirmDialog({ title, body = "", ok = "确定", danger = false, typeTe
       <div style="display:flex;gap:10px;margin-top:6px"><button class="btn" data-no style="flex:1">再想想</button><button class="btn ${danger ? "danger solid" : "primary"}" data-yes style="flex:1" ${typeText ? "disabled" : ""}>${esc(ok)}</button></div>`, el => {
       const yes = el.querySelector("[data-yes]"), inp = el.querySelector("#cf-in");
       if (inp) { inp.oninput = () => { yes.disabled = inp.value.trim() !== typeText; }; setTimeout(() => inp.focus(), 50); }
-      el.querySelector("[data-no]").onclick = () => { fin(false); close(); };
-      yes.onclick = () => { fin(true); close(); };
+      el.querySelector("[data-no]").onclick = () => { fin(false); close(true); };
+      yes.onclick = () => { fin(true); close(true); };
     });
-    [...document.querySelectorAll(".scrim")].at(-1)?.addEventListener("click", () => fin(false));
-    const host = [...document.querySelectorAll("[data-v3sheet]")].at(-1); if (host) host._onclose = () => fin(false);
+    const host = [...document.querySelectorAll("[data-v3sheet]")].at(-1); if (host) { host.dataset.confirm = "1"; host._onclose = () => fin(false); }
   });
 }
 // 调用包装：接口没开放时温柔提示
@@ -1648,7 +2614,7 @@ function newSessionSheet() {
   sheet(`<h2>新建会话</h2><form id="ns"><label class="field"><span>名称</span><input class="input" name="label" placeholder="比如：周末旅行计划"></label>
     <div style="display:flex;gap:10px;margin-top:8px"><button type="button" class="btn" data-close style="flex:1">取消</button><button class="btn primary" style="flex:2">创建</button></div></form>`, (el, close) => {
     el.querySelector("[data-close]").onclick = close;
-    el.querySelector("#ns").onsubmit = async e => { e.preventDefault(); const r = await act(() => api.sessionCreate({ label: e.target.label.value.trim() || undefined }), "新会话已创建"); if (r) { close(); location.hash = r.key ? "#/sessions/" + encodeURIComponent(r.key) : "#/sessions"; } };
+    el.querySelector("#ns").onsubmit = async e => { e.preventDefault(); const r = await act(() => api.sessionCreate({ label: e.target.label.value.trim() || undefined }), "新会话已创建"); if (r) { close(true); location.hash = r.key ? "#/sessions/" + encodeURIComponent(r.key) : "#/sessions"; } };
   });
 }
 
@@ -1703,22 +2669,34 @@ function cronEdit(j) {
       const schedule = k === "cron" ? { kind: "cron", expr: f.expr.value.trim(), tz: s.tz || "Asia/Shanghai" } : { kind: "every", everyMs: Math.max(1, +f.mins.value) * 60000 };
       const body = { name: f.name.value.trim(), schedule, payload: { kind: "agentTurn", message: f.msg.value.trim() } };
       const ok = await act(() => j ? api.cronUpdate(j.id, body) : api.cronAdd({ ...body, sessionTarget: "isolated", wakeMode: "now", enabled: true, delivery: { mode: "none" } }), j ? "任务已保存" : "任务已创建 ⏰");
-      if (ok) { close(); route(); }
+      if (ok) { close(true); route(); }
     };
   });
 }
 
 // ---- 4 费用 / 5 凭据与探测 ----
 function costSection(el) {
-  return section(el, "费用 · 近 30 天", () => api.usageCost(30), d => {
-    const daily = d.daily || [], t = d.totals || {}; const max = Math.max(...daily.map(x => +x.totalCost || 0), 0.0001);
+  return section(el, "API 等价估价 · 近 30 天", () => api.usageCost(30), d => {
+    const daily = d.daily || [], t = d.totals || {}, equivalent = d.billingMode === "api-equivalent";
+    const max = Math.max(...daily.map(x => +x.totalCost || 0), .0001), low = +t.totalCost || 0, high = Math.max(low, +t.totalCostUpper || 0);
+    const amount = low.toFixed(2) + (high - low > .000001 ? "–" + high.toFixed(2) : "");
     const parts = [["输入", t.inputCost], ["输出", t.outputCost], ["缓存读取", t.cacheReadCost], ["缓存写入", t.cacheWriteCost]].filter(x => x[1] > 0);
-    const miss = Object.entries(t.missingCostByModel || {}).sort((a, b) => b[1] - a[1]);
-    return `<div class="grid g2"><div class="card uc"><div class="uc-head"><b>总花费</b>${pill(num(t.totalTokens) + " tokens")}</div><div class="big tnum"><span class="uc-sym">$</span>${(+t.totalCost || 0).toFixed(2)}<small>USD</small></div>
-      <div class="spark" aria-label="每日花费">${daily.map(x => `<i style="height:${Math.max(3, (+x.totalCost || 0) / max * 100)}%" title="${esc(x.date)} $${(+x.totalCost || 0).toFixed(2)}"></i>`).join("")}</div>
+    const issues = (d.models || []).filter(m => m.missingCostEntries || m.missingUsageEntries || m.invalidUsageEntries);
+    const assumptions = new Set(d.assumptions || []), sourceErrors = d.sourceErrors || [];
+    const coverage = Number.isFinite(t.tokenCoverage) ? (t.tokenCoverage * 100).toFixed(1) + "%" : "无 token 数据";
+    return `<div class="grid g2"><div class="card uc"><div class="uc-head"><b>${equivalent ? "API 等价估价" : "旧版统计"}</b>${pill(num(t.totalTokens) + " tokens")}</div><div class="big tnum"><span class="uc-sym">$</span>${amount}<small>USD</small></div>
+      <div class="uc-sub" style="min-height:0">${equivalent ? "非实际账单，不含订阅费；全部 " + (d.agents || []).length + " 个 agent · 新加坡时间" : "旧版后端尚未统一按官方 API 价格估算，请先更新后端。"}</div>
+      <div class="spark" aria-label="每日 API 等价估价">${daily.map(x => `<i style="height:${Math.max(3, (+x.totalCost || 0) / max * 100)}%" title="${esc(x.date)} $${(+x.totalCost || 0).toFixed(2)}"></i>`).join("")}</div>
       <div class="uc-sub" style="min-height:0;display:flex;justify-content:space-between"><span>${esc(daily[0]?.date || "")}</span><span>${esc(daily.at(-1)?.date || "")}</span></div></div>
-      <div class="card uc"><div class="uc-head"><b>花在哪里</b></div>${parts.map(([k, v]) => `<div class="uc-mini" style="grid-template-columns:5em 1fr auto;border:0;padding-top:0"><span>${k}</span><div class="bar thin"><i style="width:${v / (t.totalCost || 1) * 100}%"></i></div><b class="tnum">$${v.toFixed(2)}</b></div>`).join("") || `<div class="faint">暂无数据</div>`}
-      ${miss.length ? `<div class="uc-sub" style="min-height:0;margin-top:12px">有 ${t.missingCostEntries} 次调用没有计价（${miss.slice(0, 3).map(([m, n]) => esc(m.split("/").pop()) + " ×" + n).join("、")}），实际花费可能更高</div>` : ""}</div></div>`;
+      <div class="card uc"><div class="uc-head"><b>Token 估价明细${high - low > .000001 ? "（区间下界）" : ""}</b></div>${parts.map(([k,v]) => `<div class="uc-mini" style="grid-template-columns:5em 1fr auto;border:0;padding-top:0"><span>${k}</span><div class="bar thin"><i style="width:${v / (low || 1) * 100}%"></i></div><b class="tnum">$${v.toFixed(2)}</b></div>`).join("") || `<div class="faint">暂无已记录用量</div>`}
+      ${equivalent ? `<div class="uc-sub" style="min-height:0">已记录 token 计价覆盖 ${coverage}${Number.isFinite(t.officialTokenCoverage) ? "；同型号官方价覆盖 " + (t.officialTokenCoverage * 100).toFixed(1) + "%" : ""} · 当前价目 ${esc(d.priceDate || "")}；不代表全部上游消费，不含独立工具、音视频等费用。</div>` : ""}
+      ${high - low > .000001 ? `<div class="uc-sub" style="min-height:0">区间按公开价格上下界计算：${assumptions.has("cache_ttl_unknown") ? "部分缓存写入 TTL 未记录（5 分钟至 1 小时）；" : ""}${assumptions.has("openai_cache_ttl_unknown") ? "部分 OpenAI 缓存写入 TTL 未记录（30 分钟至 12 小时）；" : ""}${assumptions.has("deepseek_peak_offpeak_range") ? "DeepSeek 峰谷时段价格；" : ""}没有跳过这些 token。</div>` : ""}
+      ${assumptions.has("grok_build_fast_reference") ? `<div class="uc-sub" style="min-height:0">Grok Build Fast 按官方 Fast 变体公开价参考计算；不是公共 API 的同名型号。</div>` : ""}
+      ${d.refresh ? `<div class="uc-sub" style="min-height:0">${d.refresh.status === "stale" ? "旧快照 · 刷新失败" : "已读取真实统计"} · ${d.updatedAt ? esc(new Date(d.updatedAt).toLocaleString("zh-CN", { timeZone: "Asia/Singapore", hour12: false })) + " SGT" : "时间未知"} · 缓存 TTL ${(d.refresh.ttlMs || 120000) / 1000} 秒</div>` : ""}
+      ${t.customPriceEntries ? `<div class="uc-sub" style="min-height:0">${t.customPriceEntries} 条使用自定义单价（非官方价）。</div>` : ""}
+      ${sourceErrors.length ? `<div class="uc-sub" style="min-height:0">${sourceErrors.length} 项数据源读取异常，统计不完整，请核对服务器权限和存储格式。</div>` : ""}
+      ${t.missingUsageEntries || t.invalidUsageEntries || d.untimestampedEntries ? `<div class="uc-sub" style="min-height:0">${t.missingUsageEntries || 0} 条缺 token 数据，${t.invalidUsageEntries || 0} 条 token 无效，${d.untimestampedEntries || 0} 条缺时间，无法据实推算。</div>` : ""}
+      ${issues.length ? `<div class="uc-sub" style="min-height:0">需要补充型号或 token 分量证据：${issues.slice(0,8).map(m => esc(m.model) + " ×" + ((m.missingCostEntries || 0) + (m.missingUsageEntries || 0) + (m.invalidUsageEntries || 0))).join("、")}。可通过服务器自定义价格文件明确补充，绝不静默套用相近型号。</div>` : ""}</div></div><a class="btn ud-go" href="#/models/cost">查看消耗详情</a>`;
   });
 }
 async function authSection(el) {
@@ -1780,7 +2758,7 @@ VIEWS.approvals = async v => {
     if (p) { if (await act(() => p.dataset.d === "approve" ? api.pairingApprove(p.dataset.ch, p.dataset.acc, p.dataset.pr) : api.pairingDismiss(p.dataset.ch, p.dataset.acc, p.dataset.pr), p.dataset.d === "approve" ? "配对成功，欢迎新朋友 🐾" : "已忽略")) load(); }
     if (g) { if (!await confirmDialog({ title: "撤销授权？", body: `<span class="mono">${esc(g.dataset.p)}</span><br>以后执行这条命令会重新询问你。`, ok: "撤销", danger: true })) return; if (await act(() => api.grantRevoke(g.dataset.gr), "已撤销")) load(); }
   });
-  timers.push(setInterval(() => document.visibilityState === "visible" && !document.querySelector(".sheet") && load(), 15000));
+  viewInterval(v, () => document.visibilityState === "visible" && !document.querySelector(".sheet") && load(), 15000);
 };
 
 // ---- 9 工具 / Hooks ----
@@ -1825,26 +2803,59 @@ VIEWS.files = async (v, name) => {
     <div class="list">${(d.files || []).map(f => `<a class="row" href="#/files/${encodeURIComponent(f.name)}"><div class="avatar" style="font-size:12px">${esc(f.name.replace(/\.md$/i, "").slice(0, 2))}</div><div class="grow"><div class="t mono">${esc(f.name)}</div><div class="d">${f.missing ? "还没有创建" : bytes(f.size) + (f.updatedAtMs ? " · " + ago(f.updatedAtMs) + "修改" : "")}</div></div>${f.missing ? pill("空") : EDITABLE.has(f.name) ? pill("可编辑", "ac") : pill("只读")}</a>`).join("") || `<div class="empty">没有文件</div>`}</div>`);
   if (d && name) fileEditor(name);
 };
+// 行级改动统计：去掉首尾相同行，中间段小的话用 LCS，大的话按段长估算
+function lineDiff(a, b) {
+  const A = a.split("\n"), B = b.split("\n"); let i = 0, j = 0;
+  while (i < A.length && i < B.length && A[i] === B[i]) i++;
+  while (j < A.length - i && j < B.length - i && A[A.length - 1 - j] === B[B.length - 1 - j]) j++;
+  const x = A.slice(i, A.length - j), y = B.slice(i, B.length - j);
+  if (!x.length || !y.length || x.length * y.length > 4e6) return { add: y.length, del: x.length };
+  let prev = new Uint32Array(y.length + 1);
+  for (const l of x) { const cur = new Uint32Array(y.length + 1); for (let k = 0; k < y.length; k++) cur[k + 1] = l === y[k] ? prev[k] + 1 : Math.max(prev[k + 1], cur[k]); prev = cur; }
+  const same = prev[y.length]; return { add: y.length - same, del: x.length - same };
+}
+const diffTxt = d => d.add || d.del ? `+${d.add} −${d.del} 行` : "";
+// 键盘弹出时跟着可视区域收缩（iOS/Android 的 visualViewport）
+function trackViewport(el) {
+  const vv = window.visualViewport; if (!vv) return () => {};
+  const fit = () => { el.style.setProperty("--vvh", vv.height + "px"); el.style.setProperty("--vvt", vv.offsetTop + "px"); };
+  fit(); vv.addEventListener("resize", fit); vv.addEventListener("scroll", fit);
+  return () => { vv.removeEventListener("resize", fit); vv.removeEventListener("scroll", fit); };
+}
 async function fileEditor(name) {
   let f; try { const r = await api.agentFile(name, "main"); f = r.file || r; } catch (e) { return toast(notReady(e) ? "文件接口还没开放" : e.message); }
   const ro = !EDITABLE.has(name);
-  sheet(`<h2 class="mono">${esc(name)} ${ro ? pill("只读") : ""}</h2><div class="seg" style="margin-bottom:10px"><button data-m="edit" aria-pressed="true">编辑</button><button data-m="view" aria-pressed="false">预览</button></div>
-    <textarea class="input mono editor" spellcheck="false" ${ro ? "readonly" : ""}>${esc(f.content || "")}</textarea><div class="md mdbox" hidden></div>
-    <div style="display:flex;gap:10px;margin-top:12px;align-items:center"><span class="faint" id="dirty" style="font-size:12.5px;flex:1">${f.updatedAtMs ? ago(f.updatedAtMs) + "修改" : ""}</span><button class="btn" data-close>关闭</button>${ro ? "" : `<button class="btn primary" data-save disabled>保存</button>`}</div>`, (el, cl) => {
-    el.classList.add("wide");
-    const ta = el.querySelector("textarea"), pv = el.querySelector(".mdbox"), sv = el.querySelector("[data-save]") || { disabled: true }, dirty = el.querySelector("#dirty");
-    ta.oninput = () => { const ch = ta.value !== (f.content || ""); sv.disabled = !ch; dirty.textContent = ch ? "有未保存的修改" : ""; };
-    el.querySelectorAll("[data-m]").forEach(b => b.onclick = () => { const view = b.dataset.m === "view"; el.querySelectorAll("[data-m]").forEach(x => x.setAttribute("aria-pressed", x === b)); ta.hidden = view; pv.hidden = !view; if (view) pv.innerHTML = md(ta.value); });
-    el.querySelector("[data-close]").onclick = async () => { if (!sv.disabled && !await confirmDialog({ title: "放弃修改？", body: "改动还没有保存。", ok: "放弃", danger: true })) return; cl(); location.hash = "#/files"; };
+  sheet(`<header class="fse-bar"><button class="iconbtn" data-close aria-label="关闭编辑">${ic("back")}</button>
+      <div class="fse-title"><b class="mono">${esc(name)}</b><span class="fse-sub" id="dirty" aria-live="polite">${ro ? "只读" : f.updatedAtMs ? ago(f.updatedAtMs) + "修改" : ""}</span></div>
+      <i class="fse-dot" hidden aria-hidden="true"></i>${ro ? "" : `<button class="btn primary fse-save" data-save disabled>保存</button>`}</header>
+    <div class="fse-tools"><div class="seg"><button data-m="edit" aria-pressed="true">编辑</button><button data-m="view" aria-pressed="false">预览</button></div><span class="fse-meta mono" id="fsemeta"></span></div>
+    <textarea class="mono editor fse-ta" spellcheck="false" autocapitalize="off" autocomplete="off" aria-label="${esc(name)} 内容" placeholder="${ro ? "" : "文件是空的，从这里开始写…"}" ${ro ? "readonly" : ""}>${esc(f.content || "")}</textarea><div class="md fse-pv" hidden></div>`, (el, cl) => {
+    el.classList.add("fse"); el.setAttribute("aria-label", "编辑 " + name);
+    const host = el.parentElement; host.classList.add("fse-host");
+    const untrack = trackViewport(el); const prevClose = host._onclose; host._onclose = () => { untrack(); prevClose?.(); };
+    const ta = el.querySelector("textarea"), pv = el.querySelector(".fse-pv"), sv = el.querySelector("[data-save]") || { disabled: true }, dirty = el.querySelector("#dirty"), dot = el.querySelector(".fse-dot"), meta = el.querySelector("#fsemeta");
+    let saving = false, savedNote = dirty.textContent;
+    let t;
+    const syncStats = () => { clearTimeout(t); const ch = ta.value !== (f.content || ""), d = ch ? diffTxt(lineDiff(f.content || "", ta.value)) : ""; dirty.textContent = ch ? "未保存" + (d ? " · " + d : "") : savedNote; meta.textContent = `${ta.value ? ta.value.split("\n").length : 0} 行`; };
+    const syncDirty = () => { const ch = ta.value !== (f.content || ""); sv.disabled = saving || !ch; dot.hidden = !ch; syncStats(); };
+    ta.oninput = () => { const ch = ta.value !== (f.content || ""); sv.disabled = saving || !ch; dot.hidden = !ch; clearTimeout(t); t = setTimeout(syncStats, 120); };
+    syncDirty();
+    el.querySelectorAll("[data-m]").forEach(b => b.onclick = () => { const view = b.dataset.m === "view"; el.querySelectorAll("[data-m]").forEach(x => x.setAttribute("aria-pressed", x === b)); ta.hidden = view; pv.hidden = !view; if (view) pv.innerHTML = ta.value.trim() ? md(ta.value) : `<div class="faint">还没有内容</div>`; });
+    el.querySelector("[data-close]").onclick = async () => { if (await cl()) location.hash = "#/files"; };
     sv.onclick = async () => {
-      const diff = ta.value.split("\n").length - (f.content || "").split("\n").length;
-      if (!await confirmDialog({ title: `保存 ${name}？`, body: `这会改变星野のねこ 的行为（${diff >= 0 ? "+" : ""}${diff} 行）。<br>旧版本会自动备份，需要时可以找回。`, ok: "保存" })) return;
-      sv.disabled = true; sv.textContent = "保存中…";
-      try { const r = await api.agentFileSet(name, ta.value, "main"); f = { ...f, ...(r.file || {}), content: ta.value }; toast(r.backup ? "已保存，旧版本已备份 ✓" : "已保存 ✓"); dirty.textContent = r.backup ? "备份：" + r.backup.split("/").pop() : "刚刚保存"; sv.textContent = "保存"; }
-      catch (e) { sv.disabled = false; sv.textContent = "保存";
+      if (saving) return;
+      const submitted = ta.value, d = lineDiff(f.content || "", submitted);
+      saving = true; syncDirty();
+      try {
+        if (!await confirmDialog({ title: `保存 ${name}？`, body: `这会改变星野のねこ 的行为（${diffTxt(d) || "无行变化"}）。<br>旧版本会自动备份，需要时可以找回。`, ok: "保存" })) return;
+        sv.textContent = "保存中…";
+        const r = await api.agentFileSet(name, submitted, "main"); f = { ...f, ...(r.file || {}), content: submitted }; cl.markSaved(new Map([[ta, submitted]])); savedNote = r.backup ? "备份：" + r.backup.split("/").pop() : "刚刚保存";
+        toast(ta.value !== submitted ? "已保存提交内容，后续修改还没保存" : r.backup ? "已保存，旧版本已备份 ✓" : "已保存 ✓");
+      } catch (e) {
         if (e.status === 409 || /hash|conflict|changed|modified|stale|冲突|已被修改/i.test(e.message)) {
-          if (await confirmDialog({ title: "文件刚被别处改过了", body: "为了不覆盖别人的修改，这次没有保存。<br>重新加载后会看到最新内容——你的改动会丢失，建议先复制一份。", ok: "重新加载" })) { cl(); fileEditor(name); }
+          if (await confirmDialog({ title: "文件刚被别处改过了", body: "为了不覆盖别人的修改，这次没有保存。<br>重新加载后会看到最新内容——你的改动会丢失，建议先复制一份。", ok: "重新加载" })) { cl(true); fileEditor(name); }
         } else toast(notReady(e) ? "保存接口还没开放" : e.message); }
+      finally { saving = false; sv.textContent = "保存"; syncDirty(); }
     };
   });
 }
@@ -1990,12 +3001,12 @@ function stkSheet(x, after) {
       if (c === (m.category || x.emotion)) return toast("已经在这个分类里啦");
       if (!await confirmDialog({ title: `换到「${c}」？`, body: "文件会按规则重新命名，原图会先备份到回收目录。" , ok: "继续" })) return;
       if (!await confirmDialog({ title: "再确认一次", body: `把这张表情从「${esc(m.category || x.emotion || "?")}」换到「${esc(c)}」。群聊里 5–30 秒内生效。`, ok: "确定换分类" })) return;
-      if (await act(() => api.stickerRename(x.file, c).catch(e => { throw new Error(stkErr(e)); }), `已换到「${c}」`)) { close(); after?.(); }
+      if (await act(() => api.stickerRename(x.file, c).catch(e => { throw new Error(stkErr(e)); }), `已换到「${c}」`)) { close(true); after?.(); }
     };
     el.querySelector("[data-x=del]").onclick = async () => {
       if (!await confirmDialog({ title: "把这张挪进回收目录？", body: "不会真的删掉，文件会挪进回收目录，需要时还能找回来。", ok: "继续", danger: true })) return;
       if (!await confirmDialog({ title: "再确认一次", body: `<span class="mono">${esc(x.file)}</span> 会挪进回收目录，群聊里之后就不会再用它。`, ok: "挪进回收目录", danger: true })) return;
-      if (await act(() => api.stickerDelete(x.file).catch(e => { throw new Error(stkErr(e)); }), "已挪进回收目录")) { close(); after?.(); }
+      if (await act(() => api.stickerDelete(x.file).catch(e => { throw new Error(stkErr(e)); }), "已挪进回收目录")) { close(true); after?.(); }
     };
   });
 }
@@ -2013,7 +3024,7 @@ function importSheet(after) {
       for (const f of e.target.files) { const t = await sniff(f); files.push(f.size > 5 * 1024 * 1024 ? { f, st: "bad", p: 0, msg: "超过 5MB 了" } : !t ? { f, st: "bad", p: 0, msg: "不是 png / jpg / webp / gif" } : { f, st: "ready", p: 0, msg: `${t} · 等待导入` }); }
       e.target.value = ""; draw();
     };
-    el.querySelector("[data-close]").onclick = () => { close(); if (did) after?.(); };
+    el.querySelector("[data-close]").onclick = async () => { if (await close() && did) after?.(); };
     go.onclick = async () => {
       const c = catVal(el); if (!CAT_RE.test(c)) return toast("分类名要 1–16 个中文、字母或数字，不能有 -");
       busy = true; draw();
@@ -2171,7 +3182,7 @@ async function stkParams(v, tabs) {
     const norm = m => Object.fromEntries(Object.entries(m || {}).sort(([a], [b]) => a < b ? -1 : 1).map(([k, v]) => [k, { enabled: v.enabled !== false, ...(v.probability != null ? { probability: v.probability } : {}) }]));
     if (JSON.stringify(norm(P0.sessions)) !== JSON.stringify(norm(P.sessions))) o.sessions = norm(P.sessions); return o; };
   const root = paint(v, top("表情库", "参数") + tabs + `<div id="pf"></div>` + dirtyBar("psb") + `<div id="vf"></div>`);
-  if (v.closest?.(".v3body")) root.querySelector("#vf").innerHTML = `<div class="section">语音</div><div class="card mlist"><a class="mrow" href="#/voice#rules"><span class="mic">${ic("play")}</span><span class="grow"><b>发语音的规则搬到了「语音」</b><small>概率、冷却、每日上限、静默时段、按群开关</small></span><span class="mchev">${ic("chev")}</span></a></div>`; else voiceSection(root.querySelector("#vf"), d, groups);
+  api.behavior().then(b => { const el = root.querySelector("#vf"); if (!el || !b || !("lurkSticker" in b)) return; el.innerHTML = `<div class="section">潜水表情 <span class="faint fs" style="font-weight:400">网关当前值，只读</span></div><div class="card bh">${typeof b.lurkSticker === "object" && b.lurkSticker ? bval(b.lurkSticker, "lurkSticker") : `<div>${bval(b.lurkSticker, "lurkSticker")}</div>`}</div>`; }).catch(() => {});
   root.addEventListener("input", e => { const t = e.target; if (t.dataset.p === "attachProbability") { P.attachProbability = +t.value / 100; root.querySelector("#prv").textContent = t.value + "%"; root.querySelector("#psb").hidden = !Object.keys(changes()).length; } });
   root.addEventListener("change", e => { const t = e.target, k = t.dataset.p;
     if (t.dataset.prob) { const v = t.value.trim(); const c = { ...P.sessions[t.dataset.prob] }; if (v === "") delete c.probability; else { const n = +v; if (!(n >= 0 && n <= 1)) { toast("概率要在 0 到 1 之间"); t.value = c.probability ?? ""; return; } c.probability = Math.round(n * 100) / 100; } P.sessions = { ...P.sessions, [t.dataset.prob]: c }; }
@@ -2262,7 +3273,7 @@ async function profileSheet(id, after, sessKey) {
     el.querySelector("#pf").onsubmit = async e => {
       e.preventDefault(); const f = new FormData(e.target), name = String(f.get("name")).trim(), note = String(f.get("note")).trim();
       if (!name && !note && d.profile && !await confirmDialog({ title: "删除这份档案？", body: "称呼和备注都清空了，保存会删除这份档案。", ok: "删除", danger: true })) return;
-      if (await act(() => api.profileSet(id, name, note), !name && !note ? "档案已删除" : "档案已保存")) { close(); after?.(); }
+      if (await act(() => api.profileSet(id, name, note), !name && !note ? "档案已删除" : "档案已保存")) { close(true); after?.(); }
     };
   });
 }
@@ -2294,9 +3305,9 @@ function promptSheet(title, val, ph) {
   return new Promise(res => { let done = false; const fin = v => { if (!done) { done = true; res(v); } };
     const close = sheet(`<h2>${esc(title)}</h2><form id="ps"><input class="input" name="v" maxlength="40" value="${esc(val)}" placeholder="${esc(ph)}" aria-label="${esc(title)}"><div style="display:flex;gap:10px;margin-top:16px"><button type="button" class="btn" data-close style="flex:1">取消</button><button class="btn primary" style="flex:2">好</button></div></form>`, (el, c) => {
       const inp = el.querySelector("input"); setTimeout(() => inp.focus(), 60);
-      el.querySelector("[data-close]").onclick = () => { fin(null); c(); };
-      el.querySelector("#ps").onsubmit = e => { e.preventDefault(); fin(inp.value); c(); };
-      el.parentElement.querySelector(".scrim").addEventListener("click", () => fin(null));
+      el.querySelector("[data-close]").onclick = async () => { if (await c()) fin(null); };
+      el.querySelector("#ps").onsubmit = e => { e.preventDefault(); fin(inp.value); c(true); };
+      el.parentElement._onclose = () => fin(null);
     });
     void close;
   });
@@ -2354,31 +3365,455 @@ document.addEventListener("keydown", e => {
 
 // ---- 6 PWA ----
 if ("serviceWorker" in navigator && (location.protocol === "https:" || location.hostname === "localhost")) {
-  addEventListener("load", () => navigator.serviceWorker.register("/sw.js?v=20261101195157").catch(() => {}));
+  addEventListener("load", () => navigator.serviceWorker.register("/sw.js?v=2026.11.15.1-model-collapse").catch(() => {}));
 }
 
+
+// ================= console-panels（2026.11.3.7）：语义搜索 · 白名单 · 密钥 · 插件状态 =================
+const CP_AP = { immediate: ["立即", "cp-im"], reload: ["重载", "cp-re"], restart: ["重启", "cp-rs"], none: ["立即", "cp-im"], hot: ["重载", "cp-re"] };
+const cpAp = a => CP_AP[a] ? `<span class="pill cp-ap ${CP_AP[a][1]}">${CP_AP[a][0]}</span>` : "";
+const cpPlErr = x => !!(x.error || x.lastError || [x.status, x.state, x.runtime?.state || x.runtime].some(s => ["error", "failed", "service-failed"].includes(s)));
+const cpPlErrorText = x => x.lastError || (typeof x.error === "string" ? x.error : x.error?.message) || "插件运行失败，暂未返回详细原因。";
+const CP_MSG = {
+  restart_required: "这项改动要重启网关才能生效，控制台不会保存。重启只有凛能批准。",
+  quiet_window: "当前处于静默时段，暂不能修改，稍后再试。",
+  stale: "别处刚改过，重新载入后再改。",
+  not_whitelisted: "这一项不在控制台能改的范围，没有保存。",
+  in_use: "还有地方在用，先改那边。",
+  embed_unavailable: "语义搜索暂时用不了，可以先按条浏览。",
+  collection_missing: "记忆库没找到，语义搜索暂时用不了，可以先按条浏览。",
+  rate: "搜得太快了，等一会儿再搜。",
+  upstream: "语义搜索暂时用不了（向量服务出错或超时），可以先按条浏览。",
+  missing_xhs: "请求少了安全标记，刷新页面再试。",
+  baseHash_mismatch: "别处刚改过，重新载入后再改。",
+  user_required: "要先选是谁的记忆。现在不能一次查所有人，请在上面选一个人再搜。",
+  bad_request: "请求格式不对，刷新后再试。",
+  forbidden: "没有权限做这个操作。",
+  not_found: "要找的东西不存在了，刷新看看。",
+  confirm_required: "需要先确认一次。",
+  too_long: "内容太长了。",
+  invalid_name: "名字不合规。",
+  invalid_value: "值不合规。",
+  unsupported_kind: "这个密钥使用特殊存储格式，请在原来的管理入口修改。",
+  config_invalid: "当前配置无法读取，暂时不能确认密钥是否在用。",
+  not_ready: "当前网关不支持这个操作。",
+  secret_upstream: "密钥写入或运行时刷新尚未确认，请先检查当前状态。",
+  rate_limited: "操作太快了，等一会儿再试。",
+  internal_error: "服务器出错了，稍后再试。",
+  cross_origin: "只能在控制台页面里操作，刷新后再试。",
+  plugin_protected: "这个插件受保护，不能在这里开关。",
+  feature_off: "这个开关暂时还没开放。",
+  unexpected_paths: "改动牵连到了别的配置，没有保存。",
+  capability_review_required: "这个插件要先审核它申请的能力，控制台不代为确认，请找后端喵。",
+  busy: "网关正在处理别的变更，等一会儿再试。",
+  logout_unsupported: "这个账号由外部 CLI 或配置管理，控制台不能退出。",
+  default_model_auth: "默认模型只剩这个账号，退出后 QQ 没有模型可用。控制台不执行，要退出请先找凛。",
+  oauth_managed: "这个模型用 OAuth 登录，不能改 key，请用「重新登录」。",
+  shadow_slot: "这个名字和服务器文件里的密钥重名，不能在密钥库里再建一份。",
+  order_locked: "这个供应商的账号顺序已锁定，不能调整。",
+  bad_params: "请求格式不对，刷新后再试。",
+  gateway_rejected: "网关没有接受这次改动。",
+  embed_key_unresolved: "记忆搜索的密钥找不到，暂时搜不了。可以先用「按人看」。",
+  embed_config_missing: "记忆搜索的配置缺失，暂时搜不了。可以先用「按人看」。",
+  embed_config_unreadable: "记忆搜索的配置读不到，暂时搜不了。可以先用「按人看」。",
+  embed_timeout: "算向量超时了，稍后再搜，或先用「按人看」。",
+  embed_unreachable: "算向量的服务连不上，暂时搜不了。可以先用「按人看」。",
+  embed_bad_response: "算向量的返回格式不对，暂时搜不了。可以先用「按人看」。",
+  qdrant_timeout: "记忆库超时了，稍后再搜，或先用「按人看」。",
+  qdrant_unreachable: "记忆库连不上，暂时搜不了。可以先用「按人看」。",
+  qdrant_bad_response: "记忆库返回格式不对，暂时搜不了。可以先用「按人看」。",
+};
+const CP_PROT = { "channel:qqbot": "QQ 渠道", "slot:memory": "记忆用的", "local-guard": "本地守卫", fixed: "默认模型要用" };
+const cpClosedTxt = "功能还没开放";
+const cpClosedCard = (extra = "后台接口上线后这里就会出现内容。其他功能照常能用。") => `<div class="card empty cp-err" data-err="closed"><b>🛠</b>${cpClosedTxt}<div class="faint" style="margin-top:8px">${esc(extra)}</div></div>`;
+const cpQuietBar = () => {
+  if (CXF?.quiet) {
+    const until = CXF.quietUntil ? esc(fmtTime(CXF.quietUntil)) : "";
+    return `<div class="cp-pend" data-quiet role="status">21:55–22:10（新加坡时间）是静默时段，这段时间只能看、不能保存。${until ? "大约到 " + until : ""}</div>`;
+  }
+  return "";
+};
+const cpMsg = (e, dflt = "没成功，稍后再试。") => {
+  if (cpClosed(e)) return cpClosedTxt;
+  if (e?.status === 429 || e?.code === "rate_limited") return /embed|memory|search/i.test(e?.message || "") ? CP_MSG.rate : (CP_MSG.rate_limited || CP_MSG.rate);
+  if (e?.code === "quiet_window") {
+    const ms = e.data?.retryAfterMs; const m = ms != null ? Math.max(1, Math.ceil(ms / 60000)) : null;
+    return m ? `现在是静默时段（21:55–22:10），大约 ${m} 分钟后再试。` : CP_MSG.quiet_window;
+  }
+  if (e?.code === "plugin_protected") {
+    const why = CP_PROT[e.data?.protectedReason] || e.data?.protectedReason || "";
+    return why ? `这个插件受保护（${why}），不能在这里开关。` : CP_MSG.plugin_protected;
+  }
+  if (e?.code === "invalid_value" || e?.code === "gateway_rejected") return e.message || CP_MSG[e.code] || dflt;
+  if (e?.code && /^embed_upstream_/.test(e.code)) return "记忆搜索暂时用不了（算向量那边出错了）。可以先用「按人看」。";
+  if (e?.code && /^qdrant_upstream_/.test(e.code)) return "记忆库出错了，暂时搜不了。可以先用「按人看」。";
+  return CP_MSG[e?.code] || dflt;
+};
+const cpStale = e => e?.status === 409 && ["stale", "conflict", "baseHash_mismatch", "base_hash_mismatch", "revision_mismatch"].includes(e.code);
+const cpPending = d => d?.pendingRestart ? `<div class="cp-pend" role="note">有改动等重启后生效（需凛批准）</div>` : "";
+const cpRaw = e => esc(scrub(e?.message || "未知错误"));
+
+// ---- 1 记忆 › 语义搜索 ----
+const CP_MSCACHE = new Map();
+async function cpMemSearch(body) {
+  await ensureFeatures().catch(() => {});
+  let scopes = [], scopeErr = null, status = null, statusErr = null;
+  try { scopes = await memSearch.scopes(); } catch (e) { scopeErr = e; }
+  try { status = memSearch.status ? await memSearch.status() : null; } catch (e) { if (e.status === 401) throw e; if (!cpClosed(e)) statusErr = e; }
+  const searchable = !status || status.searchable !== false;
+  const statusLine = () => {
+    if (!status && !statusErr) return "";
+    if (statusErr) return `<div class="faint cp-note">记忆库状态没取到（${cpRaw(statusErr)}），先按原来的方式搜。</div>`;
+    if (!status) return "";
+    const q = status.qdrant || {}, pts = q.points != null ? q.points + " 条" : "";
+    const backend = status.backend === "mem0+qdrant" ? "mem0 + 本机向量库" : esc(status.backend || "记忆库");
+    if (searchable) return `<div class="faint cp-note" data-ms-status="ok">记忆库正常 · ${backend}${pts ? " · " + esc(String(pts)) : ""}</div>`;
+    const why = status.embedding?.ok === false && status.embedding?.code === "embed_key_unresolved" ? "记忆搜索的密钥找不到"
+      : status.qdrant?.ok === false ? "记忆库连不上" : "记忆搜索暂时用不了";
+    return `<div class="card cp-err" data-ms-status="off">${esc(why)}</div>`;
+  };
+  const defScope = pickDefaultScope(scopes);
+  const scopeOpts = scopes.map(s => `<option value="${esc(s.id)}"${s.id === defScope ? " selected" : ""}>${esc(s.label)}${s.count != null ? `（${s.count}）` : ""}</option>`).join("") + `<option value="${MS_ALL}">全部</option>`;
+  const whoLabel = (who) => {
+    if (!who || !who.id) return "（没起名）";
+    const fromScope = scopes.find(s => s.id === who.id || s.name === who.id || (s.id && String(s.id).toLowerCase() === String(who.id).toLowerCase()));
+    const name = aliasFor(who.id) || fromScope?.name || MEMCTX.names[who.id] || who.name || "";
+    const tail = who.tail || (String(who.id).length > 6 ? String(who.id).slice(-6) : String(who.id));
+    if (name && name !== who.id) return `${name} …${tail}`;
+    if (name) return name;
+    return `（没起名） …${tail}`;
+  };
+  body.innerHTML = `<div class="cpx" data-cp="memsearch">${statusLine()}<form class="cp-ms" role="search" novalidate>
+    <label class="field"><span>想找什么</span><input class="input" id="cp-q" type="search" enterkeyhint="search" autocomplete="off" placeholder="比如：芙芙喜欢吃什么" maxlength="500" ${searchable ? "" : "disabled"}></label>
+    <div class="cp-row"><label class="field cp-grow"><span>查谁的记忆</span><select class="select" id="cp-scope" ${searchable ? "" : "disabled"}>${scopeOpts}</select></label>
+    <label class="field"><span>相关度</span><select class="select" id="cp-min" ${searchable ? "" : "disabled"}><option value="0.3">宽一点</option><option value="0.5" selected>一般</option><option value="0.7">严一点</option></select></label></div>
+    <button type="submit" class="btn primary cp-go" id="cp-go" ${searchable ? "" : "disabled"}>搜索</button>
+    <div class="faint cp-note">点「搜索」或回车才查，打字时不查。每分钟最多 30 次。每次搜索会请千帆算一次向量（花极少的钱），同一句 5 分钟内复用。只想翻看就用「按人看」，不花钱。默认先查凛的记忆。也可以选「全部」，每条会标出是谁的。${scopeErr ? `<br>范围列表没取到（${cpRaw(scopeErr)}），请稍后重试，或先去「按人看」。` : ""}</div></form>
+    <div id="cp-res" aria-live="polite"></div></div>`;
+  const f = body.querySelector("form"), q = f.querySelector("#cp-q"), sc = f.querySelector("#cp-scope"), mn = f.querySelector("#cp-min"), go = f.querySelector("#cp-go"), out = body.querySelector("#cp-res");
+  let items = [];
+  const draw = (r, scope, cached = false) => { items = r.items;
+    const took = r.tookMs ? ((r.tookMs.embed || 0) + (r.tookMs.search || 0)) / 1000 : null;
+    const tookTxt = took != null ? ` · 用时 ${took < 0.1 && took > 0 ? took.toFixed(2) : took.toFixed(1)} 秒` : "";
+    const scopeTxt = scope === MS_ALL ? " · 全部人" : "";
+    const cacheTxt = (cached || r.cached) ? (cached ? "复用 30 秒内的相同查询结果" : "复用了缓存") : "";
+    out.innerHTML = (cacheTxt ? `<div class="faint cp-cache" role="note">${cacheTxt}</div>` : "") + (!items.length ? `<div class="card empty cp-empty"><b>🔍</b>没找到相关的记忆。换个说法，或者把相关度调宽一点；也可以去「按人看」慢慢翻。</div>`
+      : `<div class="faint cp-cnt">找到 ${r.count ?? items.length} 条${scopeTxt}${tookTxt}${r.cached && !cached ? " · 复用了缓存" : ""}</div><div class="list">${items.map((x, i) => `<button type="button" class="row cp-hit" data-hit="${i}"><div class="grow"><div class="mem-t">${esc(x.text)}</div><div class="d">${x.score != null ? `<span class="pill ac">相关度 ${Math.round(x.score * 100)}%</span> ` : ""}${x.category ? `<span class="pill">${esc(x.category)}</span> ` : ""}${(x.who || scope === MS_ALL) ? `<span class="pill" data-who="${esc(x.who?.id || "")}">${esc(whoLabel(x.who))}</span> ` : ""}${x.createdAt ? esc(fmtTime(x.createdAt)) : ""}</div></div><span class="faint">›</span></button>`).join("")}</div>`); };
+  const run = async () => {
+    const text = q.value.trim(); if (!text) { q.focus(); out.innerHTML = `<div class="faint cp-hint">先输入一句话再搜。</div>`; return; }
+    if (go.disabled) return;
+    const scope = sc.value, key = JSON.stringify([text, scope, mn.value]), hit = CP_MSCACHE.get(key);
+    if (hit && Date.now() - hit.at < 30000) return draw(hit.r, scope, true);
+    go.disabled = true; go.textContent = "搜索中…"; out.innerHTML = `<div class="skel" style="height:72px"></div><div class="skel" style="height:72px;margin-top:8px"></div>`;
+    try { const r = await memSearch.search({ q: text, scope, minScore: +mn.value, limit: 20 }); CP_MSCACHE.set(key, { at: Date.now(), r }); draw(r, scope); }
+    catch (e) {
+      if (e.status === 401) return;
+      if (e.code === "user_required") {
+        const fallback = pickDefaultScope(scopes);
+        if (sc.value === MS_ALL && fallback) sc.value = fallback;
+        sc.focus();
+        out.innerHTML = `<div class="card cp-err" data-err="user_required">${esc(CP_MSG.user_required)}</div>`;
+        return;
+      }
+      const m = e.status === 429 ? CP_MSG.rate : cpMsg(e, "");
+      const closed = cpClosed(e) || (notReady(e) && !e.code);
+      out.innerHTML = `<div class="card cp-err" data-err="${esc(e.status === 429 ? "429" : e.code || e.status)}">${m ? `<b>${esc(closed ? "功能还没开放" : m)}</b><br>` : "<b>没搜成</b><br>"}<span class="faint">${cpRaw(e)}</span>${e.status === 429 ? "" : `<br><button type="button" class="btn cp-retry" data-x="retry">重试</button>`}${!closed && e.status !== 429 ? ` <a class="btn" href="#/memory#people">按人看</a>` : ""}</div>`;
+    } finally { if (searchable) { go.disabled = false; go.textContent = "搜索"; } }
+  };
+  f.onsubmit = e => { e.preventDefault(); run(); };
+  out.addEventListener("click", e => {
+    if (e.target.closest("[data-x=retry]")) return run();
+    const b = e.target.closest("[data-hit]"); if (!b) return; const x = items[+b.dataset.hit];
+    const who = x.who ? whoLabel(x.who) : (x.scope ? (aliasFor(x.scope) || shortId(x.scope)) : "");
+    sheet(`<h2>记忆全文</h2><p class="cp-full">${esc(x.text)}</p><dl class="kv">${x.score != null ? `<dt>相关度</dt><dd>${Math.round(x.score * 100)}%</dd>` : ""}${x.category ? `<dt>分类</dt><dd>${esc(x.category)}</dd>` : ""}${x.createdAt ? `<dt>记下时间</dt><dd>${esc(fmtTime(x.createdAt))}</dd>` : ""}${who ? `<dt>属于</dt><dd>${esc(who)}</dd>` : ""}</dl><button type="button" class="btn cp-wide" data-close>关闭</button>`, (el, close) => { el.querySelector("[data-close]").onclick = () => close(true); }, "cpmem");
+  });
+}
+
+// ---- 2 系统与权限 › 白名单 ----
+const cpEq = (a, b) => JSON.stringify(a) === JSON.stringify(b);
+async function cpAllowlist(body, keep) {
+  let d; try { d = await rawReq("GET", "/api/allowlist"); } catch (e) { if (e.status === 401) throw e; body.innerHTML = `<div class="card cp-err">${notReady(e) ? "白名单接口还没开放。" : "没加载出来："}<span class="faint">${cpRaw(e)}</span><br><button type="button" class="btn" data-x="reload">重试</button></div>`; body.querySelector("[data-x=reload]").onclick = () => cpAllowlist(body); return; }
+  const lists = (d.lists || []).map(L => ({ ...L, orig: [...(L.items || [])], cur: keep?.[L.path] ? [...keep[L.path]] : [...(L.items || [])] }));
+  const rev = d.baseHash ?? d.revision;
+  let previewing = false;
+  const paint1 = () => {
+    body.innerHTML = `<div class="cpx" data-cp="allowlist">${cpPending(d)}<p class="faint cp-note">改完先看改动对比，确认后才保存。每一项都标了生效方式：<span class="pill cp-ap cp-im">立即</span> <span class="pill cp-ap cp-re">重载</span> <span class="pill cp-ap cp-rs">重启</span>。要重启的改动控制台不保存。</p>${keep ? `<div class="cp-note cp-kept">已重新载入。下面保留了你刚才的改动，对照后再保存。</div>` : ""}
+      ${lists.map((L, i) => { const add = L.cur.filter(x => !L.orig.includes(x)).length, del = L.orig.filter(x => !L.cur.includes(x)).length, n = add + del;
+        return `<div class="card cp-blk" data-li="${i}"><div class="cp-bh"><b>${esc(L.label || L.path)}</b>${cpAp(L.apply)}</div><div class="faint mono cp-path">${esc(L.path)}</div>
+        <ul class="cp-items">${L.cur.map((x, j) => `<li class="${L.orig.includes(x) ? "" : "cp-new"}"><span class="mono">${esc(x)}</span><button type="button" class="iconbtn cp-x" data-del="${j}" aria-label="移除 ${esc(x)}">×</button></li>`).join("") || `<li class="faint">空的</li>`}
+        ${L.orig.filter(x => !L.cur.includes(x)).map(x => `<li class="cp-gone"><s class="mono">${esc(x)}</s><button type="button" class="btn cp-undo1" data-back="${esc(x)}">放回</button></li>`).join("")}</ul>
+        <form class="cp-add"><input class="input" placeholder="添加一项" aria-label="添加到 ${esc(L.label || L.path)}" autocomplete="off"><button class="btn">添加</button></form>
+        <div class="savebar cp-sb" ${n ? "" : "hidden"}><span class="faint">改了 ${n} 处</span><button type="button" class="btn" data-reset>撤销</button><button type="button" class="btn primary" data-save ${previewing ? "disabled" : ""}>保存</button></div></div>`; }).join("") || `<div class="card empty">没有可以改的白名单。</div>`}</div>`;
+  };
+  paint1();
+  body.onclick = async e => {
+    const blk = e.target.closest("[data-li]"); if (!blk) return; const L = lists[+blk.dataset.li];
+    if (e.target.closest("[data-del]")) { L.cur.splice(+e.target.closest("[data-del]").dataset.del, 1); return paint1(); }
+    if (e.target.closest("[data-back]")) { L.cur.push(e.target.closest("[data-back]").dataset.back); return paint1(); }
+    if (e.target.closest("[data-reset]")) { L.cur = [...L.orig]; return paint1(); }
+    const save = e.target.closest("[data-save]"); if (save && !previewing) { previewing = true; save.disabled = true; try { await cpAlPreview(body, d, rev, L, lists); } finally { previewing = false; body.querySelectorAll("[data-save]").forEach(b => b.disabled = false); } }
+  };
+  body.onsubmit = e => { const blk = e.target.closest("[data-li]"); if (!blk) return; e.preventDefault(); const L = lists[+blk.dataset.li], inp = e.target.querySelector("input"), v = inp.value.trim(); if (!v) return; if (!L.cur.includes(v)) L.cur.push(v); paint1(); };
+}
+// 只发改了的那一块：changes = [{ path, items }]
+async function cpAlPreview(body, d, rev, L, lists) {
+  const changes = [{ path: L.path, items: [...L.cur] }];
+  const keepAll = () => Object.fromEntries(lists.filter(x => !cpEq(x.cur, x.orig)).map(x => [x.path, x.cur]));
+  let pv;
+  try { pv = await rawReq("POST", "/api/allowlist/preview", { baseHash: rev, changes }); }
+  catch (e) { return cpAlErr(e, body, keepAll()); }
+  const diff = pv.diff?.length ? pv.diff : [{ path: L.path, before: L.orig, after: changes[0].items, apply: pv.apply || L.apply }];
+  const restart = pv.apply === "restart" || diff.some(x => x.apply === "restart");
+  sheet(`<h2>确认改动</h2><div class="faint">${esc(L.label || L.path)} · 改前 → 改后</div>
+    <div class="cp-diff">${diff.map(x => { const b = x.before || [], a = x.after || [], add = a.filter(v => !b.includes(v)), del = b.filter(v => !a.includes(v)); return `<div class="cx-dg${x.apply === "restart" ? " cx-blk" : ""}"><div class="cx-dp mono">${esc(x.path)} ${cpAp(x.apply || pv.apply)}</div>${add.map(v => `<div class="cx-dl add mono">＋ ${esc(v)}</div>`).join("")}${del.map(v => `<div class="cx-dl del mono">－ ${esc(v)}</div>`).join("")}${!add.length && !del.length ? `<div class="faint">没有变化</div>` : ""}</div>`; }).join("")}</div>
+    ${restart ? `<div class="cx-rr" data-blocked="restart_required">${esc(CP_MSG.restart_required)}</div><button type="button" class="btn cp-wide" data-copy>复制改动</button>` : ""}
+    ${pv.blockedWindow ? `<div class="cx-rr" data-blocked="quiet_window">${esc(CP_MSG.quiet_window)}</div>` : ""}
+    <div class="cp-btns"><button type="button" class="btn" data-no>再想想</button><button type="button" class="btn primary" data-yes ${restart || pv.blockedWindow ? "disabled" : ""}>确认保存</button></div>`, (el, close) => {
+    el.querySelector("[data-no]").onclick = () => close(true);
+    el.querySelector("[data-copy]")?.addEventListener("click", () => copyText(diff.map(x => `${x.path}\n- ${(x.before || []).join(", ")}\n+ ${(x.after || []).join(", ")}`).join("\n")));
+    el.querySelector("[data-yes]").onclick = async ev => { const b = ev.currentTarget; b.disabled = true;
+      try { const r = await rawReq("POST", "/api/allowlist/apply", { baseHash: rev, changes, confirm: true }); close(true); const later = !cpEq(L.cur, changes[0].items); toast(later ? "已保存提交的改动，后续修改仍未保存" : "已保存"); await cpAllowlist(body, Object.fromEntries(lists.filter(x => x === L ? later : !cpEq(x.cur, x.orig)).map(x => [x.path, [...x.cur]]))); body.querySelector(`[data-li="${lists.indexOf(L)}"] .cp-bh`)?.insertAdjacentHTML("beforeend", `<span class="cp-ok" role="status">已保存</span>`); if (r?.pendingRestart) cpWarnPend(); }
+      catch (e) { close(true); cpAlErr(e, body, keepAll()); } };
+  }, "cpaldiff");
+}
+const cpWarnPend = () => toast("有改动等重启后生效（需凛批准）");
+async function cpAlErr(e, body, keep) {
+  if (e.status === 401) return;
+  if (e.status === 409 && e.code === "restart_required") return confirmDialog({ title: "没有保存", body: `<div class="cx-rr" data-blocked="restart_required">${esc(CP_MSG.restart_required)}</div>`, ok: "知道了" });
+  // not_whitelisted：新后端 403、旧后端 409，同一个 blockedPaths/diff 界面
+  if ((e.status === 403 || e.status === 409) && e.code === "not_whitelisted") return cxBlocked("not_whitelisted", e.data || e);
+  // quiet_window：新后端 423，旧 409，只看 code
+  if (e.code === "quiet_window") return confirmDialog({ title: "现在不能改", body: `<div class="cx-rr" data-blocked="quiet_window">${esc(CP_MSG.quiet_window)}</div>`, ok: "知道了" });
+  if (cpStale(e)) { if (await confirmDialog({ title: "别处刚改过", body: esc(CP_MSG.stale) + "<br>重新载入后会保留你的改动，方便对照。", ok: "重新载入" })) await cpAllowlist(body, keep); return; }
+  toast(cpMsg(e));
+}
+
+
+// ---- 2b 系统与权限 › 常用配置 ----
+const CP_ENUM = { off: "关", minimal: "极少", low: "低", medium: "中", high: "高", xhigh: "很高", adaptive: "自适应", max: "最高", ultra: "极限", allow: "允许", disallow: "不允许", automatic: "自动回复", message_tool: "只用消息工具" };
+const cpEnumLabel = v => CP_ENUM[v] ?? String(v);
+const cpValTxt = (f, v) => v == null ? "没设（网关默认）" : f.type === "boolean" ? (v ? "开" : "关") : f.type === "enum" ? cpEnumLabel(v) : String(v);
+const cpApplyPill = (apply, label) => apply === "restart" ? `<span class="pill cp-ap cp-rs">${esc(label || "要重启网关（控制台不保存）")}</span>` : apply === "reload" ? `<span class="pill cp-ap cp-re">${esc(label || "网关热重载，不重启")}</span>` : `<span class="pill cp-ap cp-im">${esc(label || "保存即生效")}</span>`;
+function cpFieldCtrl(f, cur, dirty) {
+  const dis = f.editable === false ? "disabled" : "";
+  const hl = dirty ? " cp-dirty" : "";
+  if (f.type === "boolean") return `<label class="switchrow cp-sw${hl}"><span class="switch"><input type="checkbox" data-path="${esc(f.path)}" ${cur ? "checked" : ""} ${dis}><i></i></span><span>${cur ? "开" : "关"}</span></label>`;
+  if (f.type === "enum") return `<select class="select${hl}" data-path="${esc(f.path)}" ${dis}>${(f.enum || []).map(v => `<option value="${esc(v)}" ${v === cur ? "selected" : ""}>${esc(cpEnumLabel(v))}</option>`).join("")}</select>`;
+  if (f.type === "int") return `<input class="input${hl}" data-path="${esc(f.path)}" inputmode="numeric" value="${esc(cur ?? "")}" ${dis} autocomplete="off">`;
+  if (f.type === "timezone") {
+    let opts = "";
+    try { opts = (Intl.supportedValuesOf("timeZone") || []).map(z => `<option value="${esc(z)}">`).join(""); } catch {}
+    return `<input class="input${hl}" data-path="${esc(f.path)}" list="cp-tzs" value="${esc(cur ?? "")}" ${dis} autocomplete="off"><datalist id="cp-tzs">${opts}</datalist>`;
+  }
+  return `<input class="input${hl}" data-path="${esc(f.path)}" value="${esc(cur ?? "")}" ${dis} autocomplete="off">`;
+}
+function cpParseField(f, raw) {
+  if (f.type === "boolean") return raw;
+  if (f.type === "int") {
+    if (raw === "" || raw == null) return { error: "请填一个整数。" };
+    const n = Number(raw);
+    if (!Number.isInteger(n)) return { error: "请输入整数。" };
+    const min = f.min ?? (f.path.includes("timeout") ? 10 : 0), max = f.max ?? (f.path.includes("timeout") ? 900 : 200);
+    if (n < min || n > max) return { error: `请输入 ${min}–${max} 的整数。` };
+    return n;
+  }
+  if (f.type === "duration") {
+    const s = String(raw || "").trim();
+    if (!/^\d+(s|m|h)$/.test(s)) return { error: "请用 25m / 1h / 90s 这种格式。" };
+    const m = /^(\d+)(s|m|h)$/.exec(s), n = +m[1], sec = m[2] === "h" ? n * 3600 : m[2] === "m" ? n * 60 : n;
+    if (sec < 60 || sec > 86400) return { error: "心跳间隔要在 1 分钟到 24 小时之间。" };
+    return s;
+  }
+  if (f.type === "timezone") {
+    const s = String(raw || "").trim();
+    try { new Intl.DateTimeFormat("en", { timeZone: s }); return s; } catch { return { error: "时区不认识。" }; }
+  }
+  return raw;
+}
+async function cpSettings(body, keep) {
+  await ensureFeatures().catch(() => {});
+  let d;
+  try { d = await rawReq("GET", "/api/config-fields"); }
+  catch (e) {
+    if (e.status === 401) throw e;
+    body.innerHTML = cpClosed(e) || notReady(e) ? cpClosedCard() : `<div class="card cp-err">没加载出来：<span class="faint">${cpRaw(e)}</span><br><button type="button" class="btn" data-x="reload">重试</button></div>`;
+    body.querySelector("[data-x=reload]")?.addEventListener("click", () => cpSettings(body, keep));
+    return;
+  }
+  const fields = (d.fields || []).map(f => ({ ...f, orig: f.value, cur: keep && Object.prototype.hasOwnProperty.call(keep, f.path) ? keep[f.path] : f.value, err: "", _serverChanged: keep && Object.prototype.hasOwnProperty.call(keep, "__changed__" + f.path) ? keep["__changed__" + f.path] : undefined }));
+  const byGroup = [];
+  for (const f of fields) { const g = byGroup.find(x => x.name === f.group) || (byGroup.push({ name: f.group || "其他" }), byGroup.at(-1)); g.fields ? g.fields.push(f) : (g.fields = [f]); }
+  const dirtyOf = g => g.fields.filter(f => JSON.stringify(f.cur) !== JSON.stringify(f.orig));
+  const paint = () => {
+    body.innerHTML = `<div class="cpx" data-cp="settings">${cpQuietBar()}${cpPending(d)}<p class="faint cp-note">一共 ${(d.fields || []).length} 项。每组单独保存：先看改动对比，确认后才写，只发你改过的项。每项都标了生效方式。</p>${keep ? `<div class="cp-note cp-kept">已重新载入。下面保留了你刚才的改动，对照后再保存。</div>` : ""}
+      ${byGroup.map((g, gi) => { const dirty = dirtyOf(g);
+        return `<div class="card cp-blk" data-gi="${gi}"><div class="cp-bh"><b>${esc(g.name)}</b></div>
+          ${g.fields.map((f, fi) => { const dirtyF = JSON.stringify(f.cur) !== JSON.stringify(f.orig);
+            return `<div class="cp-field" data-fi="${fi}"><div class="cp-fh"><span class="cp-flabel">${esc(f.label)}</span>${cpApplyPill(f.apply, f.applyLabel)}${f.editable === false ? "<span>🔒</span>" : ""}</div>
+              <div class="faint mono cp-path">${esc(f.path)}</div>
+              ${cpFieldCtrl(f, f.cur, dirtyF)}
+              ${dirtyF ? `<div class="faint cp-was">原来：${esc(cpValTxt(f, f.isSet === false && f.orig === f.value ? null : f.orig))}${f._serverChanged ? ` · 刚被别处改成了 ${esc(cpValTxt(f, f._serverChanged))}` : ""}</div>` : f._serverChanged ? `<div class="faint cp-was">刚被别处改成了 ${esc(cpValTxt(f, f._serverChanged))}</div>` : ""}
+              <div class="faint cp-fx">${esc(f.effect || "")}${f.isSet === false && !dirtyF ? " · 当前没设，用网关默认值" : ""}</div>
+              ${f.err ? `<div class="cp-ferr" role="alert">${esc(f.err)}</div>` : ""}</div>`; }).join("")}
+          <div class="savebar cp-sb" ${dirty.length ? "" : "hidden"}><span class="faint">「${esc(g.name)}」改了 ${dirty.length} 项</span><button type="button" class="btn" data-reset>撤销</button><button type="button" class="btn primary" data-preview>预览改动</button></div></div>`; }).join("")}
+      ${(d.excluded || []).length ? `<div class="card cp-excl"><b>这些在这里不能改</b>${(d.excluded || []).map(x => `<div class="faint" style="margin-top:6px"><span class="mono">${esc(x.path)}</span> · ${esc(x.reason || "")}</div>`).join("")}<a class="btn" href="#/models" style="margin-top:10px">去模型页</a></div>` : ""}</div>`;
+  };
+  paint();
+  const readCtrl = (f, el) => f.type === "boolean" ? !!el.checked : el.value;
+  body.onchange = body.oninput = e => {
+    const ctrl = e.target.closest("[data-path]"); if (!ctrl) return;
+    const blk = e.target.closest("[data-gi]"); const f = byGroup[+blk.dataset.gi].fields.find(x => x.path === ctrl.dataset.path);
+    const v = cpParseField(f, readCtrl(f, ctrl));
+    if (v && typeof v === "object" && v.error) { f.err = v.error; } else { f.cur = v; f.err = ""; }
+    paint();
+  };
+  body.onclick = async e => {
+    if (e.target.closest("[data-x=reload]")) return cpSettings(body, keep);
+    const blk = e.target.closest("[data-gi]"); if (!blk) return;
+    const g = byGroup[+blk.dataset.gi];
+    if (e.target.closest("[data-reset]")) { g.fields.forEach(f => { f.cur = f.orig; f.err = ""; }); return paint(); }
+    if (!e.target.closest("[data-preview]")) return;
+    for (const f of g.fields) {
+      const ctrl = body.querySelector(`[data-path="${CSS.escape(f.path)}"]`);
+      if (ctrl) { const v = cpParseField(f, readCtrl(f, ctrl)); if (v && typeof v === "object" && v.error) { f.err = v.error; paint(); return toast(v.error); } f.cur = v; f.err = ""; }
+    }
+    const dirty = dirtyOf(g); if (!dirty.length) return toast("没有变化");
+    const changes = dirty.map(f => ({ path: f.path, value: f.cur }));
+    let pv;
+    try { pv = await rawReq("POST", "/api/config-fields/preview", { baseHash: d.baseHash, changes }); }
+    catch (err) { return cpSettingsErr(err, body, Object.fromEntries(fields.filter(f => JSON.stringify(f.cur) !== JSON.stringify(f.orig)).map(f => [f.path, f.cur]))); }
+    const diff = pv.diff || [];
+    const restart = pv.restartRequired || pv.apply === "restart" || diff.some(x => x.apply === "restart");
+    const blocked = !pv.canApply || pv.blockedWindow || restart || !pv.changed;
+    sheet(`<h2>确认改动 · ${esc(g.name)}</h2>
+      <div class="cp-diff">${diff.map(x => `<div class="cx-dg${x.apply === "restart" ? " cx-blk" : ""}"><div class="cx-dp">${esc(x.label || x.path)} ${cpApplyPill(x.apply, x.applyLabel)}</div><div><s>${esc(cpValTxt({ type: fields.find(f => f.path === x.path)?.type }, x.before))}</s> → <b>${esc(cpValTxt({ type: fields.find(f => f.path === x.path)?.type }, x.after))}</b></div><div class="faint">${esc(x.effect || "")}</div></div>`).join("") || `<div class="faint">没有变化</div>`}</div>
+      ${restart ? `<div class="cx-rr" data-blocked="restart_required">${esc(CP_MSG.restart_required)}</div>` : ""}
+      ${pv.blockedWindow ? `<div class="cx-rr" data-blocked="quiet_window">${esc(cpMsg({ code: "quiet_window", data: pv }))}</div>` : ""}
+      ${!pv.changed ? `<div class="faint">没有变化</div>` : ""}
+      <div class="cp-btns"><button type="button" class="btn" data-no>再想想</button>${pv.changed ? `<button type="button" class="btn primary" data-yes ${blocked ? "disabled" : ""}>确认保存</button>` : ""}</div>`, (el, close) => {
+      el.querySelector("[data-no]").onclick = () => close(true);
+      el.querySelector("[data-yes]")?.addEventListener("click", async ev => {
+        const b = ev.currentTarget; if (b.disabled) return; b.disabled = true;
+        try {
+          const r = await rawReq("POST", "/api/config-fields/apply", { baseHash: d.baseHash, changes, confirm: true });
+          close(true); toast(r?.changed === false ? "没有变化" : `已保存 · ${r?.applyLabel || pv.applyLabel || ""}`.trim());
+          if (r?.pendingRestart) cpWarnPend();
+          const later = Object.fromEntries(fields.filter(f => !changes.some(c => c.path === f.path) && JSON.stringify(f.cur) !== JSON.stringify(f.orig)).map(f => [f.path, f.cur]));
+          await cpSettings(body, Object.keys(later).length ? later : undefined);
+        } catch (err) { close(true); cpSettingsErr(err, body, Object.fromEntries(fields.filter(f => JSON.stringify(f.cur) !== JSON.stringify(f.orig)).map(f => [f.path, f.cur]))); }
+      });
+    }, "cpsetdiff");
+  };
+}
+async function cpSettingsErr(e, body, keep) {
+  if (e.status === 401) return;
+  if (e.status === 409 && e.code === "restart_required") return confirmDialog({ title: "没有保存", body: `<div class="cx-rr">${esc(CP_MSG.restart_required)}</div>`, ok: "知道了" });
+  if ((e.status === 403 || e.status === 409) && e.code === "not_whitelisted") return confirmDialog({ title: "不能改", body: esc(CP_MSG.not_whitelisted), ok: "知道了" });
+  if (e.code === "quiet_window") return confirmDialog({ title: "现在不能改", body: esc(cpMsg(e)), ok: "知道了" });
+  if (cpStale(e)) {
+    if (await confirmDialog({ title: "别处刚改过", body: esc(CP_MSG.baseHash_mismatch) + "<br>重新载入后会保留你的改动，方便对照。", ok: "重新载入" })) {
+      let fresh; try { fresh = await rawReq("GET", "/api/config-fields"); } catch (x) { return toast(cpMsg(x)); }
+      const next = {};
+      for (const [path, val] of Object.entries(keep || {})) {
+        const nf = (fresh.fields || []).find(f => f.path === path);
+        next[path] = val;
+        if (nf && JSON.stringify(nf.value) !== JSON.stringify(val)) { /* mark in keep via side channel */ next["__changed__" + path] = nf.value; }
+      }
+      await cpSettings(body, next);
+    }
+    return;
+  }
+  if (e.code === "invalid_value" || e.code === "gateway_rejected") {
+    const path = e.data?.path; toast(e.message || cpMsg(e));
+    if (path) { const row = body.querySelector(`[data-path="${CSS.escape(path)}"]`)?.closest(".cp-field"); if (row) row.insertAdjacentHTML("beforeend", `<div class="cp-ferr" role="alert">${esc(e.message || cpMsg(e))}</div>`); }
+    return;
+  }
+  toast(cpMsg(e));
+}
+
+// ---- 3 系统与权限 › 密钥 ----
+const cpSecretWarning = r => r?.warning && confirmDialog({ title: "密钥库已更新", body: esc(scrub(typeof r.warning === "string" ? r.warning : r.warning.message || "运行时刷新尚未确认，请检查当前状态。")), ok: "知道了" });
+const CP_SHADOW = new Set(["FISH_API_KEY", "QIANFAN_API_KEY", "QIANFAN_AK", "QIANFAN_SK", "DEEPSEEK_API_KEY"]);
+const cpSlotStorage = s => ({ "fish-env-file": "Fish 独立文件", "openclaw-env-file": "网关环境文件", "model-auth-profile": "模型账号" }[s] || s || "未知位置");
+async function cpSecrets(body) {
+  await ensureFeatures().catch(() => {});
+  const canWrite = cpOn("secretWrite");
+  let d, slots = null;
+  try { d = await rawReq("GET", "/api/secrets"); }
+  catch (e) { if (e.status === 401) throw e; body.innerHTML = cpClosed(e) || notReady(e) ? cpClosedCard() : `<div class="card cp-err">${notReady(e) ? "密钥接口还没开放。" : "没加载出来："}<span class="faint">${cpRaw(e)}</span><br><button type="button" class="btn" data-x="reload">重试</button></div>`; body.querySelector("[data-x=reload]").onclick = () => cpSecrets(body); return; }
+  try { slots = await rawReq("GET", "/api/secrets/slots"); } catch (e) { if (e.status === 401) throw e; if (!cpClosed(e)) slots = { __err: e }; else slots = null; }
+  const list = d.secrets || [];
+  const slotRows = (slots && slots.slots) ? slots.slots.map(s => {
+    const present = s.present === true ? `<span class="pill ok">已设置</span>` : s.present === false ? `<span class="pill warn">没设置</span>` : `<span class="pill">查不到</span>`;
+    const write = s.writable === false ? `<div class="faint">🔒 在服务器文件里，控制台只看不改</div>` : s.writeVia && /models/.test(s.writeVia || "") ? `<a class="btn" href="#/models">去模型页</a>` : "";
+    return `<div class="row cp-slot"><div class="grow"><div class="t">${esc(s.label || s.name)} <span class="faint mono">${esc(s.name)}</span></div><div class="d">${present} · ${esc(cpSlotStorage(s.storage))}${s.usedBy?.length ? " · 在用：" + esc((s.usedBy || []).join("、")) : ""}</div>${s.note ? `<div class="faint cp-fx">${esc(s.note)}</div>` : ""}${write}</div></div>`;
+  }).join("") : "";
+  body.innerHTML = `<div class="cpx" data-cp="secrets">${cpQuietBar()}${cpPending(d)}
+    ${slots && slots.slots ? `<div class="card cp-slots" data-cp="secret-slots"><div class="cp-bh"><b>常用密钥放在哪</b></div>${slotRows || `<div class="faint">没有说明。</div>`}</div>` : ""}
+    <p class="faint cp-note">这里永远不显示密钥内容。改完立即保存，是否需重载取决于使用它的组件。旧值不留底。${canWrite ? "" : ""}</p>
+    ${canWrite ? "" : `<div class="cp-note cp-kept" data-cp="secret-write-off">这里暂时只能看：新增、替换和清除还没开放。</div>`}
+    ${canWrite ? `<button type="button" class="btn" data-new-secret>新增密钥</button>` : ""}
+    ${list.length ? `<div class="list">${list.map((s, i) => `<div class="row cp-sec" data-si="${i}"><div class="grow"><div class="t mono">${esc(s.name)}</div><div class="d">${s.set !== false ? `<span class="pill ok">已设置</span>` : `<span class="pill warn">未设置</span>`}${s.updatedAt ? " · 更新于 " + esc(fmtTime(s.updatedAt)) : ""}${s.usedBy?.length ? " · 在用：" + esc(s.usedBy.join("、")) : ""}</div></div>
+      ${canWrite ? `<div class="cp-acts"><button type="button" class="btn" data-set>${s.set !== false ? "替换" : "设置"}</button>${s.set !== false && !s.usedBy?.length ? `<button type="button" class="btn danger" data-clear>清除</button>` : ""}</div>` : ""}</div>`).join("")}</div>` : `<div class="card empty">还没有密钥。</div>`}</div>`;
+  body.onclick = async e => {
+    if (e.target.closest("[data-x=reload]")) return cpSecrets(body);
+    if (!canWrite) return;
+    const isNew = !!e.target.closest("[data-new-secret]"), row = e.target.closest("[data-si]"); if (!isNew && !row) return; const s = isNew ? { set: false } : list[+row.dataset.si];
+    if (isNew || e.target.closest("[data-set]")) return sheet(`<h2>${isNew ? "新增" : s.set !== false ? "替换" : "设置"}密钥</h2>${isNew ? "" : `<div class="mono faint">${esc(s.name)}</div>`}<form class="cp-secf" autocomplete="off">
+      ${isNew ? `<label class="field"><span>名称</span><input class="input mono" name="n" maxlength="64" pattern="[A-Z][A-Z0-9_]{1,63}" placeholder="例如 SERVICE_API_KEY" autocomplete="off" autocapitalize="characters" spellcheck="false" required></label><p class="faint cp-note">2–64 位，以大写字母开头，只能含大写字母、数字和下划线。</p><div class="cp-shadow" hidden></div>` : ""}
+      <label class="field"><span>新的值（只写不读）</span><input class="input" type="password" name="v" maxlength="8192" autocomplete="new-password" autocapitalize="off" spellcheck="false" data-lpignore="true" required></label>
+      <p class="faint cp-note">保存后写入密钥库，是否需重载取决于使用它的组件。旧值不留底，没法撤回到旧值。</p>
+      ${isNew ? "" : ""}
+      <div class="cp-btns"><button type="button" class="btn" data-no>取消</button><button class="btn primary" data-go>${isNew ? "保存" : "保存"}</button></div></form>`, (el, close) => {
+      const f = el.querySelector("form"), inp = f.v, warn = el.querySelector(".cp-shadow");
+      const checkShadow = () => {
+        if (!isNew || !warn) return false;
+        const name = (f.elements.namedItem("n").value || "").trim().toUpperCase();
+        const hit = (slots?.slots || []).find(x => x.writable === false && String(x.name).toUpperCase() === name) || (CP_SHADOW.has(name) ? { name, label: name } : null);
+        if (hit) { warn.hidden = false; warn.className = "cp-pend cp-shadow"; warn.textContent = `${hit.label || hit.name} 读的是独立文件里的 key，在这里新建同名密钥它不会用到。后端也会拒绝创建。`; return true; }
+        warn.hidden = true; return false;
+      };
+      if (isNew) f.elements.namedItem("n").oninput = checkShadow;
+      el.querySelector("[data-no]").onclick = () => { inp.value = ""; close(true); };
+      f.onsubmit = async ev => { ev.preventDefault(); const b = f.querySelector("[data-go]"); if (b.disabled) return; const name = isNew ? f.elements.namedItem("n").value.trim() : s.name, value = inp.value;
+        if (isNew && !/^[A-Z][A-Z0-9_]{1,63}$/.test(name)) { toast("名称要用 2–64 位大写字母、数字或下划线，并以字母开头。"); return f.elements.namedItem("n").focus(); }
+        if (isNew && list.some(x => x.name === name)) { toast("这个名称已存在，请在列表里替换。"); return f.elements.namedItem("n").focus(); }
+        if (isNew && (CP_SHADOW.has(name.toUpperCase()) || (slots?.slots || []).some(x => x.writable === false && String(x.name).toUpperCase() === name.toUpperCase()))) { checkShadow(); toast(CP_MSG.shadow_slot); return; }
+        if (!isNew && !await confirmDialog({ title: "确认替换？", body: "旧值不留底，替换后没法换回旧的。", ok: "替换", danger: true })) return;
+        if (!value.trim()) return inp.focus(); inp.value = ""; b.disabled = true;
+        try { const r = await rawReq("POST", "/api/secrets/set", { name, value, confirm: true }); close(true); toast("已保存"); await cpSecrets(body); await cpSecretWarning(r); }
+        catch (x) { b.disabled = false; if (x.status === 401) return; toast(cpMsg(x)); } };
+    }, "cpsecset");
+    if (e.target.closest("[data-clear]")) {
+      if (!await confirmDialog({ title: `清除 ${s.name}？`, body: "清掉就找不回来了。", ok: "清除", danger: true, typeText: s.name })) return;
+      try { const r = await rawReq("POST", "/api/secrets/clear", { name: s.name, confirm: true }); toast("已清除"); await cpSecrets(body); await cpSecretWarning(r); }
+      catch (x) { if (x.status === 401) return; if (x.code === "in_use") { const ub = x.data?.usedBy || []; return confirmDialog({ title: "还在用", body: esc(CP_MSG.in_use) + (ub.length ? "<br>在用：" + esc(ub.join("、")) : ""), ok: "知道了" }); } toast(cpMsg(x)); }
+    }
+  };
+}
 
 // ================= v3：一个主题一页（更多 → 主题页，最多两层） =================
 const OLDV = { ...VIEWS };
 const V3T = [
-  ["persona", "人设", "people", "技术模式 · 拟人化 · 小脾气 · 人设文件", [
-    ["tech", "技术模式", { fn: v3Tech }, "一眼看开没开"], ["humanlike", "拟人化", { v: "humanlike", s: "" }, "追问、主见、口癖、护短…"], ["followups", "待追问", { v: "humanlike", s: "followups" }, "过几天要问的事"],
-    ["fun", "小脾气", { v: "fun", s: "" }, "记仇、群梗、吃醋"], ["grudges", "记仇本", { v: "fun", s: "grudges" }, ""], ["gags", "群梗", { v: "fun", s: "gags" }, ""],
-    ["play", "玩梗（准备中）", { fn: v3Play }, "还没上线"], ["files", "人设文件", { v: "files", s: "" }, "人设、说话风格"], ["backup", "小脾气备份", { v: "fun", s: "trash" }, ""]]],
+  ["persona", "性格", "people", "人设 · 拟人化 · 主动搭话 · 小脾气", [
+    ["files", "人设文件", { v: "files", s: "" }, "人设、说话风格"], ["humanlike", "拟人化", { v: "humanlike", s: "" }, "追问、主见、口癖、护短…"], ["proactive", "主动搭话", { fn: v4Proactive }, "冷场后接一句 · 网关心跳"],
+    ["followups", "待追问", { v: "humanlike", s: "followups" }, "过几天要问的事"], ["fun", "小脾气", { v: "fun", s: "" }, "记仇、群梗、吃醋"], ["grudges", "记仇本", { v: "fun", s: "grudges" }, ""], ["gags", "群梗", { v: "fun", s: "gags" }, ""],
+    ["play", "玩梗（准备中）", { fn: v3Play }, "还没上线"], ["backup", "性格备份", { v: "fun", s: "trash" }, "小脾气和拟人化的备份"]]],
   ["voice", "语音", "play", "发语音规则 · 合成 · 音色库", [
-    ["rules", "发语音规则", { fn: v3VoiceRules }, "概率、冷却、上限、静默、按群"], ["tts", "合成", { v: "humanlike", s: "voice" }, "合成服务和参数"], ["voices", "音色库", { v: "humanlike", s: "voices" }, "试听、添加、删除"]]],
+    ["rules", "发语音规则", { fn: v3VoiceRules }, "概率、冷却、上限、静默、按群"], ["tts", "合成", { fn: b => voiceTtsView(b) }, "引擎、回退、情绪标记"], ["voices", "音色库", { fn: b => voicesView(b) }, "试听、添加、删除、维护"]]],
   ["stickers", "表情", "smile", "表情库 · 生成 · 参数 · 形象与分类", [
-    ["list", "表情库", { v: "stickers", s: "" }, ""], ["gen", "生成", { v: "stickers", s: "gen" }, ""], ["params", "发表情参数", { v: "stickers", s: "params" }, ""], ["manifest", "形象与分类", { v: "stickers", s: "manifest" }, ""], ["trash", "回收目录", { v: "stickers", s: "trash" }, ""]]],
-  ["memory", "记忆", "brain", "按人看 · 记错的 · 文件 · 备份", [
-    ["people", "按人看", { v: "memory", s: "" }, ""], ["flags", "记错的", { v: "memory", s: "flags" }, ""], ["files", "记忆文件", { v: "memory", s: "files" }, "只能看"], ["backups", "删除备份", { v: "memory", s: "backups" }, ""]]],
-  ["groups", "群", "people", "群报 · 互动统计 · 审批与配对", [
-    ["digest", "群报", { v: "digest", s: "" }, "每天到点自动生成"], ["stats", "互动统计", { v: "interactions", s: "" }, ""], ["approvals", "审批与配对", { v: "approvals", s: "" }, "需要你点头的事"]]],
-  ["abilities", "能力与任务", "plug", "插件与技能 · 工具 · 定时任务", [
-    ["plugins", "插件与技能", { v: "plugins", s: "" }, ""], ["tools", "工具与扩展", { v: "tools", s: "" }, ""], ["cron", "定时任务", { v: "cron", s: "" }, ""]]],
-  ["system", "系统维护", "gear", "渠道 · 审计与诊断 · 主动行为 · 配置", [
-    ["channels", "渠道", { v: "channels", s: "" }, "连接状态"], ["audit", "审计与诊断", { v: "audit", s: "" }, ""], ["behavior", "主动行为参数", { v: "behavior", s: "" }, "只读；要改主动搭话请去 人设 › 拟人化"], ["config", "配置", { v: "config", s: "" }, "网关配置"]]],
+    ["list", "表情库", { v: "stickers", s: "" }, ""], ["gen", "生成", { v: "stickers", s: "gen" }, ""], ["params", "发表情参数", { v: "stickers", s: "params" }, "概率、冷却、按群"], ["manifest", "形象与分类", { v: "stickers", s: "manifest" }, ""], ["trash", "回收目录", { v: "stickers", s: "trash" }, ""]]],
+  ["memory", "记忆", "brain", "按人看 · 语义搜索 · 记错的 · 文件 · 备份", [
+    ["people", "按人看", { v: "memory", s: "" }, ""], ["search", "语义搜索", { fn: b => cpMemSearch(b) }, "用一句话找记忆 · 点了才查"], ["flags", "记错的", { v: "memory", s: "flags" }, ""], ["files", "记忆文件", { v: "memory", s: "files" }, "只能看"], ["backups", "删除备份", { v: "memory", s: "backups" }, ""]]],
+  ["groups", "群", "people", "群报 · 互动统计 · 各群一览", [
+    ["digest", "群报", { v: "digest", s: "" }, "每天到点自动生成"], ["stats", "互动统计", { v: "interactions", s: "" }, ""], ["overview", "各群一览", { fn: v4Overview }, "这个群开了什么（只看，点了去改）"]]],
+  ["abilities", "能力与任务", "plug", "插件与技能 · 插件中心 · 工具 · 定时任务", [
+    ["plugins", "插件与技能", { v: "plugins", s: "" }, ""], ["plugin-center", "插件中心", { fn: body => pluginCenter(body, { rawReq, sheet, confirmDialog, toast, md, cpOn, cpPluginToggle }) }, "原生插件 · 配置与变更预览"], ["tools", "工具与扩展", { v: "tools", s: "" }, ""], ["cron", "定时任务", { v: "cron", s: "" }, ""]]],
+  ["system", "系统与权限", "gear", "技术模式 · 渠道 · 审批与配对 · 诊断 · 白名单 · 密钥 · 常用配置 · 配置（只读）", [
+    ["tech", "技术模式", { fn: v3Tech }, "回复模式开关和关键词"], ["channels", "渠道", { v: "channels", s: "" }, "连接状态"], ["approvals", "审批与配对", { v: "approvals", s: "" }, "需要你点头的事"], ["audit", "审计与诊断", { v: "audit", s: "" }, ""], ["allowlist", "白名单", { fn: b => cpAllowlist(b) }, "先看改动再确认 · 标立即/重载/重启"], ["secrets", "密钥", { fn: b => cpSecrets(b) }, "只显示「已设置」 · 只写不读"], ["settings", "常用配置", { fn: b => cpSettings(b) }, "8 项白名单单值 · 先预览再保存"], ["config", "配置（只读）", { v: "config", s: "" }, "网关配置"]]],
 ];
-const V3G = [["她是谁", ["persona", "voice", "stickers", "memory"]], ["她在哪、做什么", ["groups", "abilities", "system"]]];
+const V4HUE = { persona: 14, voice: 172, stickers: 38, memory: 268, groups: 214, abilities: 140, system: 225 };
+const V3G = [["她怎么表达", ["persona", "voice", "stickers"]], ["她知道什么、在哪里", ["memory", "groups"]], ["后台", ["abilities", "system"]]];
 const TOPIC = Object.fromEntries(V3T.map(([k, t, i, d, secs]) => [k, { k, t, i, d, secs: secs.map(([id, title, src, sum]) => ({ id, title, src, sum })) }]));
 // 侧栏/搜索/标题：底部导航页 + 主题页
 { const keep = ROUTES.filter(r => TABS0.includes(r[0])); ROUTES.length = 0; ROUTES.push(...keep, ...V3T.map(([k, t, i]) => [k, t, i])); }
@@ -2394,11 +3829,12 @@ function v3alias(name, rest) {
     memory: () => a === "s" ? ["memory", "people", { v: "memory", s: rest, t: "这个人的记忆" }] : a === "files" ? (tail ? ["memory", "files", { v: "memory", s: rest, t: tail }] : ["memory", "files"]) : ({ flags: ["memory", "flags"], backups: ["memory", "backups"] })[rest],
     digest: () => rest ? ["groups", "digest", { v: "digest", s: rest, t: "群报" }] : ["groups", "digest"],
     interactions: () => rest ? ["groups", "stats", { v: "interactions", s: rest, t: "互动统计" }] : ["groups", "stats"],
-    approvals: () => ["groups", "approvals"], plugins: () => ["abilities", "plugins"], tools: () => ["abilities", "tools"], cron: () => ["abilities", "cron"],
-    channels: () => ["system", "channels"], audit: () => ["system", "audit"], behavior: () => ["system", "behavior"], config: () => ["system", "config"],
+    approvals: () => ["system", "approvals"], plugins: () => ["abilities", "plugins"], tools: () => ["abilities", "tools"], cron: () => ["abilities", "cron"],
+    channels: () => ["system", "channels"], audit: () => ["system", "audit"], behavior: () => ["persona", "proactive"], config: () => ["system", "config"],
   };
   const r = M[name]?.(); return r ? { t: r[0], sec: r[1], d: r[2] } : null;
 }
+const V4MOVE = { "persona#tech": ["system", "tech"], "groups#approvals": ["system", "approvals"], "system#behavior": ["persona", "proactive"] };
 const v3parse = h => { const m = /^#\/([^#]*)(?:#(.*))?$/.exec(h || "") || []; const path = m[1] || "overview"; const [name, ...r] = path.split("/"); let rest = ""; try { rest = r.map(decodeURIComponent).join("/"); } catch { rest = r.join("/"); } return { name: name || "overview", rest, sec: m[2] || "" }; };
 
 // ---- 状态（sessionStorage）：展开的分区、滚动、展开全部、搜索词 ----
@@ -2414,26 +3850,35 @@ addEventListener("scroll", () => { if (!V3 || !document.contains(V3.el)) return;
 
 // ---- 弹层接入历史：开弹层 pushState，返回键只关弹层 ----
 let v3pageHash = "";
-const v3closeAll = () => document.querySelectorAll("[data-v3sheet]").forEach(s => s.remove());
+const v3closeAll = async () => { for (const s of [...document.querySelectorAll("[data-v3sheet]")].reverse()) if (!await s._v3close()) return false; return true; };
 addEventListener("popstate", e => {
   const open = [...document.querySelectorAll("[data-v3sheet]")];
-  if (open.length) { const s = open.at(-1); if (s._v3dirty?.()) { history.pushState({ ...(history.state || {}), sheet: 1, i: v3hist }, ""); confirmDialog({ title: "还有改动没保存", body: "确定关掉吗？改动会丢掉。", ok: "关掉", danger: true }).then(ok => { if (ok) s.remove(); }); return; } s._v3close ? s._v3close() : s.remove(); return; }
+  // Hash navigation also fires popstate; route() owns its discard confirmation.
+  if (open.length && location.hash !== v3pageHash) return;
+  if (open.length) { const s = open.at(-1); if (s._v3dirty?.()) history.pushState({ ...(history.state || {}), sheet: 1, i: v3hist }, ""); s._v3close(); return; }
   // 弹层被界面关掉后留下的空历史：和当前页同一个地址时再退一步
   if (e.state?.sheet && v3parse(location.hash).name === v3parse(v3pageHash).name && v3parse(location.hash).rest === v3parse(v3pageHash).rest) history.back();
 });
 
 // ---- 主题页 ----
 async function v3renderSec(T, s, body) {
-  body.dataset.v3sec = s.id; V3.rendered.add(s.id);
+  const owner = V3; body.dataset.v3sec = s.id; owner.rendered.add(s.id);
   const st = v3st(T.k);
   try { if (s.src.fn) await s.src.fn(body); else await OLDV[s.src.v](body, s.src.s); }
   catch (e) { if (e.status === 401) throw e; body.innerHTML = `<div class="card empty"><b>😿</b>这一块没加载出来：${esc(scrub(e.message || ""))}<br><br><button class="btn" data-v3retry="${s.id}">再试一次</button></div>`; }
+  if (V3 !== owner || !body.isConnected) return;
   v3tidy(body, T.k, s.id);
   const q = st.q?.[s.id]; const inp = body.querySelector('input[type="search"]'); if (q && inp && !inp.value) { inp.value = q; inp.dispatchEvent(new Event("input", { bubbles: true })); }
 }
 // 去掉旧页面自带的标题栏和分页条；长列表只显示前几条
 function v3tidy(body, k, sid) {
-  body.querySelectorAll(":scope > .view > header.top, :scope > .view > .toolbar:has(.stk-tabs)").forEach(x => x.remove());
+  body.querySelectorAll(":scope > .view > header.top").forEach(header => {
+    if (!header.querySelector('[data-x="newcron"], [data-x="imp"]')) return header.remove();
+    // Keep the original action nodes inside their original delegated event root.
+    header.querySelectorAll("h1, .back, [data-act]").forEach(x => x.remove());
+    header.classList.remove("top"); header.classList.add("toolbar");
+  });
+  body.querySelectorAll(":scope > .view > .toolbar:has(.stk-tabs)").forEach(x => x.remove());
   const all = v3st(k).all || {};
   body.querySelectorAll(":scope > .view > .list, :scope > .view .card > .list:not(.flat), :scope > .view .dg-list, :scope > .view .stk-grid").forEach((L, i) => {
     const lim = L.classList.contains("stk-grid") ? 12 : 5, n = L.children.length, key = sid + ":" + i;
@@ -2447,7 +3892,7 @@ function v3tidy(body, k, sid) {
 function v3observe(body, k, sid) { const mo = new MutationObserver(() => { mo.disconnect(); v3tidy(body, k, sid); mo.observe(body, { childList: true, subtree: true }); }); mo.observe(body, { childList: true, subtree: true }); }
 
 async function v3topic(T, sec, opts = {}) {
-  const v = $("#view"); const st = v3st(T.k);
+  const st = v3st(T.k);
   // 同一个主题页：只滚到分区（或在原地重绘刚操作过的分区）
   if (V3 && V3.k === T.k && document.contains(V3.el) && !opts.fresh) {
     if (sec && sec !== V3.curSec && !opts.redraw) return v3goSec(sec, true);
@@ -2455,13 +3900,15 @@ async function v3topic(T, sec, opts = {}) {
     for (const id of ids) { const s = T.secs.find(x => x.id === id); const d = V3.el.querySelector(`#v3s-${id}`); if (s && d?.open) await v3renderSec(T, s, d.querySelector(".v3body")); }
     scrollTo(0, y); return;
   }
+  const v = replaceView(); if (!v) return;
   sessionStorage.setItem("v3last", T.k);
   const open = new Set(st.open || [T.secs[0].id]); if (sec) open.add(sec);
   const chips = T.secs.map(s => `<a class="v3chip" href="#/${T.k}#${s.id}" data-v3chip="${s.id}">${esc(s.title)}</a>`).join("");
-  const secs = T.secs.map(s => `<details class="v3sec card" id="v3s-${s.id}" data-sec="${s.id}" ${open.has(s.id) ? "open" : ""}><summary><b>${esc(s.title)}</b>${s.sum ? `<span class="v3sum">${esc(s.sum)}</span>` : ""}<span class="v3tg" aria-hidden="true"></span></summary><div class="v3body"></div></details>`).join("");
-  v.innerHTML = `<div class="view v3page" data-t="${T.k}"><div class="v3head"><div class="v3bc" aria-label="当前位置"><a href="#/more" data-v3back>更多</a> › <b>${esc(T.t)}</b><span id="v3bcs"></span></div>
-    <div class="v3row"><a class="v3back" href="#/more" data-v3back aria-label="返回更多">‹ 更多</a><h1>${esc(T.t)}</h1><button class="iconbtn" data-act="search" aria-label="全局搜索">${ic("search")}</button><button class="iconbtn" data-act="theme" aria-label="切换深浅色">${ic(isDark() ? "sun" : "moon")}</button></div>
+  const secs = T.secs.map((s, i) => `<details class="v3sec card" id="v3s-${s.id}" data-sec="${s.id}" ${open.has(s.id) ? "open" : ""}><summary><span class="v4n" aria-hidden="true">${String(i + 1).padStart(2, "0")}</span><b>${esc(s.title)}</b>${s.sum ? `<span class="v3sum">${esc(s.sum)}</span>` : ""}<span class="v3tg" aria-hidden="true"></span></summary><div class="v3body"></div></details>`).join("");
+  v.innerHTML = `<div class="view v3page" data-t="${T.k}" style="--hue:${V4HUE[T.k] || 200}"><div class="v3head"><div class="v3bc" aria-label="当前位置"><a href="#/more" data-v3back>更多</a><i class="v4sep" aria-hidden="true">›</i><b>${esc(T.t)}</b><span id="v3bcs"></span></div>
+    <div class="v3row"><a class="v3back" href="#/more" data-v3back aria-label="返回更多">‹ 更多</a><span class="v4badge" aria-hidden="true">${ic(T.i)}</span><h1>${esc(T.t)}<small class="v4sub">${esc(T.d)}</small></h1><button class="iconbtn" data-act="search" aria-label="全局搜索">${ic("search")}</button><button class="iconbtn" data-act="theme" aria-label="切换深浅色">${ic(isDark() ? "sun" : "moon")}</button></div>
     <nav class="v3chips" aria-label="分区">${chips}</nav></div>${secs}</div>`;
+  { const f = sessionStorage.getItem("v4from"); if (f && T.k !== "groups") v.querySelector(".v3bc").insertAdjacentHTML("afterbegin", `<a class="v4from" href="#/groups#overview" data-v4from>‹ 回到 各群一览</a>`); else if (T.k === "groups") sessionStorage.removeItem("v4from"); }
   V3 = { k: T.k, el: v.firstChild, rendered: new Set(), curSec: "", lastSec: "" };
   document.title = `${T.t} · 星野控制台`;
   const el = V3.el;
@@ -2485,7 +3932,7 @@ async function v3goSec(id, smooth) {
   // 上面的分区异步加载会把位置顶走，内容到齐后再对齐一次
   for (const t of [450, 1100, 2000]) setTimeout(() => { if (V3?.el === el && V3.curSec === id && Date.now() < V3.lock + 200) go("auto"); }, t);
 }
-function v3mark(id) { if (!V3) return; V3.curSec = id; V3.el.querySelectorAll("[data-v3chip]").forEach(c => c.classList.toggle("on", c.dataset.v3chip === id)); const s = TOPIC[V3.k].secs.find(x => x.id === id); const b = V3.el.querySelector("#v3bcs"); if (b) b.textContent = s ? " › " + s.title : "";
+function v3mark(id) { if (!V3) return; V3.curSec = id; V3.el.querySelectorAll("[data-v3chip]").forEach(c => c.classList.toggle("on", c.dataset.v3chip === id)); const s = TOPIC[V3.k].secs.find(x => x.id === id); const b = V3.el.querySelector("#v3bcs"); if (b) b.innerHTML = s ? `<i class="v4sep" aria-hidden="true">›</i><em>${esc(s.title)}</em>` : "";
   const c = V3.el.querySelector(`[data-v3chip="${id}"]`); if (c) { const n = c.parentElement; const l = c.offsetLeft - n.clientWidth / 2 + c.offsetWidth / 2; n.scrollTo({ left: Math.max(0, l) }); } }
 function v3spy() { if (!V3 || !document.contains(V3.el) || V3.pin || Date.now() < (V3.lock || 0)) return; const h = V3.el.querySelector(".v3head").getBoundingClientRect().bottom + 12; let cur = null;
   for (const d of V3.el.querySelectorAll("details.v3sec")) { if (d.getBoundingClientRect().top <= h) cur = d.dataset.sec; }
@@ -2504,11 +3951,13 @@ document.addEventListener("click", async e => {
   if (!a || e.defaultPrevented || e.button || e.metaKey || e.ctrlKey) return;
   const href = a.getAttribute("href"); const p = v3parse(href);
   // 返回「更多」：上一条历史就是「更多」时退回去，否则替换，不多留历史
-  if (a.hasAttribute("data-v3back")) { e.preventDefault(); if (!await v3leaveOk()) return; if (sessionStorage.getItem("v3prev") === "more" && history.length > 1) history.back(); else location.replace("#/more"); return; }
+  if (a.hasAttribute("data-v4from")) { e.preventDefault(); if (!await v3leaveOk()) return; sessionStorage.removeItem("v4from"); if (history.state?.v4 && history.length > 1) history.back(); else location.replace("#/groups#overview"); return; }
+  if (a.hasAttribute("data-v4tag")) { e.preventDefault(); sessionStorage.setItem("v4from", "1"); history.replaceState({ ...(history.state || {}), v4y: scrollY }, ""); v3saveScroll(); history.pushState({ v4: 1 }, "", href); route(); return; }
+  if (a.hasAttribute("data-v3back")) { sessionStorage.removeItem("v4from"); e.preventDefault(); if (!await v3leaveOk()) return; if (sessionStorage.getItem("v3prev") === "more" && history.length > 1) history.back(); else location.replace("#/more"); return; }
   if (a.closest(".sheet") && !a.closest("[data-v3sheet]")) return; // 其他弹层自己处理
   const al = !TOPIC[p.name] || p.rest ? v3alias(p.name, p.rest) : null;
   const tk = al ? al.t : TOPIC[p.name] ? p.name : null;
-  if (tk && V3 && V3.k === tk && document.contains(V3.el)) { e.preventDefault(); a.closest("[data-v3sheet]")?._v3close?.(true); const sec = al ? al.sec : p.sec; if (sec) await v3goSec(sec, true); if (al?.d) v3detail(al.d); return; }
+  if (tk && V3 && V3.k === tk && document.contains(V3.el)) { e.preventDefault(); const host = a.closest("[data-v3sheet]"); if (host && !await host._v3close()) return; const sec = al ? al.sec : p.sec; if (sec) await v3goSec(sec, true); if (al?.d) v3detail(al.d); return; }
   if (v3dirty() && !a.closest("[data-v3sheet]")) { e.preventDefault(); if (await v3leaveOk()) { v3skip = true; location.hash = href; } }
 }, true);
 let v3skip = false;
@@ -2527,11 +3976,33 @@ function v3detail(d) {
 // 分区：技术模式
 async function v3Tech(body) {
   const d = await api.hlGet(); const tm = d.params?.techMode || {}; const on = tm.enabled === true;
-  body.innerHTML = `<div class="view"><div class="card form"><label class="switchrow"><div class="grow"><b>技术模式 ${on ? pill("开着", "ac") : pill("关着")}</b><div class="faint fs">聊代码、日志、报错时，所有拟人效果全关。${tm.stickyMin != null ? `最后一条技术消息后保持 ${esc(tm.stickyMin)} 分钟。` : ""}</div></div><span class="switch"><input type="checkbox" data-v3tm ${on ? "checked" : ""} aria-label="开启技术模式"><i></i></span></label>
-    <div class="faint fs">关键词、口令等完整参数在下面「拟人化」分区的第一张卡里。</div></div></div>`;
-  body.querySelector("[data-v3tm]").onchange = async e => { const want = e.target.checked;
-    if (!await confirmDialog({ title: want ? "打开技术模式？" : "关掉技术模式？", body: want ? "打开后拟人效果全部暂停，直到你关掉。" : "关掉后，聊技术话题时拟人效果也会照常出现。", ok: want ? "打开" : "关掉", danger: !want })) { e.target.checked = !want; return; }
-    if (await act(() => api.hlSet({ techMode: { enabled: want } }), want ? "技术模式已打开" : "技术模式已关闭")) { V3.lastSec = "tech"; route(); } else e.target.checked = !want; };
+  body.innerHTML = `<div class="view"><div class="v4stat ${on ? "on" : ""}"><b>技术模式现在${on ? "开着" : "关着"}</b><span class="faint fs">聊代码、日志、报错时，所有拟人效果全关。${tm.stickyMin != null ? `最后一条技术消息后保持 ${esc(tm.stickyMin)} 分钟。` : ""}</span></div><div class="v4tmfull"></div></div>`;
+  await OLDV.humanlike(body.querySelector(".v4tmfull"), "only:techMode");
+}
+// 分区：主动搭话（可改的 humanlike.proactive + 网关心跳只读）
+async function v4Proactive(body) {
+  body.innerHTML = `<div class="v4pa"></div><details class="v4ro card"><summary><b>网关当前心跳（只读）</b><span class="faint fs">heartbeat · 追问闸门 · 媒体标签</span></summary><div class="v4rob"><div class="skel"></div></div></details>`;
+  const ro = body.querySelector("details"); let done = false;
+  ro.addEventListener("toggle", async () => { if (!ro.open || done) return; done = true; const host = ro.querySelector(".v4rob"); try { await OLDV.behavior(host); host.querySelectorAll("header.top").forEach(x => x.remove()); } catch (x) { if (x.status === 401) throw x; done = false; host.innerHTML = `<div class="faint">没读出来：${esc(scrub(x.message || ""))}</div>`; } });
+  await OLDV.humanlike(body.querySelector(".v4pa"), "only:proactive");
+}
+// 分区：群 › 各群一览（只读，不发任何 POST）
+async function v4Overview(body) {
+  const [sp, hl, dg, ss] = await Promise.all([api.stickerParams().catch(() => ({})), api.hlGet().catch(() => ({})), api.digestSettings().catch(() => ({})), api.sessions().catch(() => ({ sessions: [] }))]); await loadAliases();
+  const P = sp.params || sp || {}, V = P.voice || null, H = hl.params || {};
+  const gid = k => { const m = /group:([0-9a-f]{32})/i.exec(String(k || "")); return m ? "group:" + m[1].toLowerCase() : null; };
+  const names = new Map();
+  for (const x of ss.sessions || []) { const t = qqTarget(x.key); if (t?.kind === "group") names.set("group:" + t.id.toLowerCase(), sessName(x)); }
+  for (const x of dg.sessions || []) { const k = gid(x.sessionKey); if (k && !names.has(k)) names.set(k, x.name || funGroupName(k, [])); }
+  for (const k of [...Object.keys(V?.perConversation || {}), ...Object.keys(P.sessions || {}), ...Object.keys(H.perGroup || {})]) { const g = gid(k); if (g && !names.has(g)) names.set(g, funGroupName(g, [])); }
+  const tag = (on, label, href, why) => `<a class="v4tag ${on ? "on" : ""}" href="${href}" data-v4tag title="${esc(why)}"><i aria-hidden="true"></i>${esc(label)}<span class="sr">${on ? "开" : "关"}</span></a>`;
+  const rows = [...names].map(([k, nm]) => {
+    const vc = V?.perConversation?.[k]; const vOn = !!V && V.enabled !== false && (vc ? vc.enabled !== false : V.defaultEnabled === true);
+    const sc = P.sessions?.[k]; const sOn = P.enabled !== false && (sc ? sc.enabled !== false : P.defaultEnabled === true);
+    const hOn = H.enabled === true && H.perGroup?.[k]?.enabled !== false;
+    const dc = (dg.sessions || []).find(x => gid(x.sessionKey) === k); const dOn = dg.enabled !== false && dc?.enabled === true;
+    return `<div class="v4grow"><div class="v4gn"><b>${esc(nm)}</b><span class="faint mono fs">${esc(shortId(k.slice(6)))}</span></div><div class="v4tags">${tag(vOn, "语音", "#/voice#rules", "发语音规则 › 按群")}${tag(sOn, "表情", "#/stickers#params", "发表情参数 › 按群")}${tag(hOn, "拟人化", "#/persona#humanlike", "性格 › 拟人化 › 各个群")}${tag(dOn, "群报", "#/groups#digest", "群报 › 按群开关")}</div></div>`; }).join("");
+  body.innerHTML = `<div class="view"><div class="faint fs v4note">这里只看不改。点标签会跳到那个功能自己的设置，改完点「‹ 回到 各群一览」回来。</div>${rows ? `<div class="card v4glist">${rows}</div>` : `<div class="card empty"><b>🫥</b>还没有群会话</div>`}</div>`;
 }
 // 分区：玩梗（只预留，不发任何新字段）
 async function v3Play(body) {
@@ -2546,9 +4017,10 @@ async function v3VoiceRules(body) {
 
 // 「更多」：主题入口 + 刚才进去的那一行高亮
 VIEWS.more = async v => {
+  sessionStorage.removeItem("v4from");
   const last = sessionStorage.getItem("v3last");
   const row = (href, icon, t, d, extra = "", tag = "") => `<a class="mrow" href="${href}" ${extra}><span class="mic">${ic(icon)}</span><span class="grow"><b>${esc(t)}</b>${d ? `<small>${esc(d)}</small>` : ""}</span>${tag}<span class="mchev">${ic("chev")}</span></a>`;
-  const body = V3G.map(([g, ks]) => `<div class="section">${esc(g)}</div><div class="card mlist">${ks.map(k => { const T = TOPIC[k]; return row(`#/${k}`, T.i, T.t, T.d, `data-v3t="${k}"`, k === "persona" ? `<span class="pill" id="v3tmtag" hidden></span>` : ""); }).join("")}</div>`).join("");
+  const body = V3G.map(([g, ks]) => `<div class="section">${esc(g)}</div><div class="card mlist v4tiles">${ks.map(k => { const T = TOPIC[k]; return row(`#/${k}`, T.i, T.t, T.d, `data-v3t="${k}" style="--hue:${V4HUE[k]}"`, k === "system" ? `<span class="pill" id="v3tmtag" hidden></span>` : ""); }).join("")}</div>`).join("");
   const root = paint(v, top("更多") + body + `<div class="section">外观与账号</div><div class="card mlist">${row("#", isDark() ? "sun" : "moon", isDark() ? "切换到浅色" : "切换到深色", "跟随你的选择保存在这台设备", 'data-mx="theme"')}${row("#", "out", "退出登录", "", 'data-mx="out"')}</div>`);
   root.addEventListener("click", e => { const a = e.target.closest("[data-mx]"); if (!a) return; e.preventDefault(); if (a.dataset.mx === "theme") { toggleTheme(); route(); } else logout(); });
   api.hlGet().then(d => { const t = root.querySelector("#v3tmtag"); if (!t) return; const on = d.params?.techMode?.enabled === true; t.hidden = false; t.className = "pill" + (on ? " ac" : ""); t.textContent = "技术模式 " + (on ? "开" : "关"); }).catch(() => {});
@@ -2561,9 +4033,21 @@ matchMedia("(prefers-color-scheme: dark)").addEventListener("change", renderChro
 async function boot() {
   let me; try { me = await api.me(); } catch { me = { authed: false }; }
   if (!me.authed) return showLogin();
+  await ensureFeatures().catch(() => {});
+  if (suspendedUi && cliAllowed(me) === suspendedUi.canCli) { CAN_CLI = cliAllowed(me); restoreSuspendedUi(); return; }
+  discardSuspendedUi();
   CAN_CLI = cliAllowed(me); if ($(".shell") && !CAN_CLI) app.innerHTML = "";
   if (!$(".shell")) shell();
   route();
 }
 window.addEventListener("hashchange", () => $(".shell") ? route() : null);
 boot();
+
+// 2026.11.4.1：被省略号截断的单行文字自动补上 title，手机上点一下可展开全文
+{
+  const TRUNC = ".row .t,.row .d,.uc-head b,.cx-mg>summary b,.speaker,.top .sub,.top h1,.chip,.pill,.v4badge";
+  const fill = () => { for (const el of document.querySelectorAll(TRUNC)) { const tr = el.scrollWidth > el.clientWidth + 1 || el.scrollHeight > el.clientHeight + 2; if (tr && !el.title) { el.title = el.textContent.trim(); el.dataset.autotitle = "1"; } else if (!tr && el.dataset.autotitle && !el.classList.contains("unclip")) { el.removeAttribute("title"); delete el.dataset.autotitle; } } };
+  let q = 0; const sched = () => { if (!q) q = requestAnimationFrame(() => { q = 0; fill(); }); };
+  new MutationObserver(sched).observe(document.body, { childList: true, subtree: true }); addEventListener("resize", sched); sched();
+  document.addEventListener("click", e => { const el = e.target.closest?.("[data-autotitle]"); if (!el || el.closest("a,button,summary,label,[data-r]")) return; el.classList.toggle("unclip"); });
+}

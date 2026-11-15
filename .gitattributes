@@ -1,0 +1,4 @@
+# Preserve historical research/fixtures in git, but exclude them from source exports.
+staging/ export-ignore
+mock/ export-ignore
+screens/ export-ignore

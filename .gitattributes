@@ -2,3 +2,11 @@
 staging/ export-ignore
 mock/ export-ignore
 screens/ export-ignore
+# Historical shape probes/research can contain old private fixture identities.
+# Keep them browsable in existing git history/tree, not in newly downloaded exports.
+REAL_SHAPES.md export-ignore
+API.md export-ignore
+toolfp/ export-ignore
+docs/* export-ignore
+docs/API-EQUIVALENT-ESTIMATE.md -export-ignore
+docs/USAGE-DETAIL-CONTRACT.md -export-ignore

@@ -1,5 +1,5 @@
 import { modelCollapse, modelSummary, modelBodyId } from "./model-collapse.js?v=2026.11.15.1-model-collapse";
-import { openUsageDetailPage } from "./usage-detail.js?v=2026.11.14.1-usage";
+import { openUsageDetailPage } from "./usage-detail.js?v=2026.11.17.1-icons";
 import { api, setUnauthedHandler, notReady, mediaOf, rawReq } from "./api.js?v=2026.11.11.3";
 import { makeCred } from "./cred-adapter.js?v=2026.11.11.3";
 const cred = makeCred(rawReq);
@@ -7,6 +7,7 @@ import { makeMemSearch, ALL as MS_ALL, pickDefaultScope } from "./memsearch-adap
 const memSearch = makeMemSearch(rawReq);
 import { md } from "./md.js?v=2026.11.11.3";
 import { pluginCenter } from "./plugin-center.js?v=2026.11.11.3";
+import { ic, fileIcon } from "./icons.js?v=2026.11.17.1-icons";
 
 // ---------- 小工具 ----------
 const $ = (s, el = document) => el.querySelector(s);
@@ -30,47 +31,7 @@ let toastT; function toast(msg) { const t = $("#toast"); t.textContent = msg; t.
 const pill = (txt, cls = "", live) => h`<span class="pill ${cls}"><span class="dot ${live ? "live" : ""}"></span>${txt}</span>`;
 const stateOf = o => { if (o == null) return ["未知", ""]; if (typeof o === "boolean") return o ? ["正常", "ok"] : ["未连接", "bad"]; const c = pick(o, "connected", "ok", "running", "healthy", "enabled"); const st = String(pick(o, "status", "state") || "").toLowerCase(); if (o.lastError || o.error || /error|fail|down/.test(st)) return ["异常", "bad"]; if (c === true || /ok|run|connect|ready|online|loaded|active/.test(st)) return ["在线", "ok"]; if (c === false || /stop|off|disconn|idle/.test(st)) return ["离线", "warn"]; return [st || "未知", ""]; };
 
-// ---------- 图标 ----------
-const I = {
-  flame: '<path d="M12 3c1 3.5 5 5.5 5 10a5 5 0 0 1-10 0c0-2.5 1.5-4 2.5-5 .3 1.6 1 2.6 2 3 0-3 0-5.5.5-8z"/>',
-  term: '<rect x="3" y="4" width="18" height="16" rx="2"/><path d="m7 9 3 3-3 3M12 15h5"/>',
-  digest: '<rect x="4" y="3" width="16" height="18" rx="2"/><path d="M8 7h8M8 11h8M8 15h5"/>',
-  book: '<path d="M4 5a2 2 0 0 1 2-2h13v16H6a2 2 0 0 0-2 2z"/><path d="M4 19V5M9 7h6"/>',
-  people: '<circle cx="9" cy="8" r="3.5"/><path d="M2.5 20a6.5 6.5 0 0 1 13 0"/><path d="M16 4.5a3.5 3.5 0 0 1 0 7M18 14a6 6 0 0 1 3.5 6"/>',
-  smile: '<circle cx="12" cy="12" r="9"/><path d="M8.5 14.5a4 4 0 0 0 7 0"/><path d="M9 9.5h.01M15 9.5h.01"/>',
-  bolt: '<path d="M13 2 4 14h7l-1 8 9-12h-7z"/>',
-  home: '<path d="M3 10.5 12 3l9 7.5V20a1 1 0 0 1-1 1h-5v-6h-6v6H4a1 1 0 0 1-1-1z"/>',
-  chat: '<path d="M21 12a8 8 0 0 1-11.6 7.1L4 20l1-4.6A8 8 0 1 1 21 12z"/>',
-  model: '<path d="M12 2 3 7v10l9 5 9-5V7z"/><path d="m3 7 9 5 9-5M12 12v10"/>',
-  channel: '<path d="M4 12a8 8 0 0 1 16 0M7.5 12a4.5 4.5 0 0 1 9 0"/><circle cx="12" cy="13" r="1.6"/><path d="M12 15v6"/>',
-  plug: '<path d="M9 2v5M15 2v5M6 7h12v4a6 6 0 0 1-12 0zM12 17v5"/>',
-  clock: '<circle cx="12" cy="12" r="9"/><path d="M12 7v5l3 2"/>',
-  logs: '<path d="M4 6h16M4 12h16M4 18h10"/>',
-  brain: '<path d="M9 4a3 3 0 0 0-3 3 3 3 0 0 0-2 5 3 3 0 0 0 2 5 3 3 0 0 0 6 1V5a2 2 0 0 0-3-1zM15 4a3 3 0 0 1 3 3 3 3 0 0 1 2 5 3 3 0 0 1-2 5 3 3 0 0 1-6 1"/>',
-  gear: '<circle cx="12" cy="12" r="3"/><path d="M19.4 15a1.7 1.7 0 0 0 .3 1.8l.1.1a2 2 0 1 1-2.8 2.8l-.1-.1a1.7 1.7 0 0 0-1.8-.3 1.7 1.7 0 0 0-1 1.5V21a2 2 0 1 1-4 0v-.1a1.7 1.7 0 0 0-1.1-1.5 1.7 1.7 0 0 0-1.8.3l-.1.1a2 2 0 1 1-2.8-2.8l.1-.1a1.7 1.7 0 0 0 .3-1.8 1.7 1.7 0 0 0-1.5-1H3a2 2 0 1 1 0-4h.1a1.7 1.7 0 0 0 1.5-1.1 1.7 1.7 0 0 0-.3-1.8l-.1-.1a2 2 0 1 1 2.8-2.8l.1.1a1.7 1.7 0 0 0 1.8.3H9a1.7 1.7 0 0 0 1-1.5V3a2 2 0 1 1 4 0v.1a1.7 1.7 0 0 0 1 1.5 1.7 1.7 0 0 0 1.8-.3l.1-.1a2 2 0 1 1 2.8 2.8l-.1.1a1.7 1.7 0 0 0-.3 1.8V9a1.7 1.7 0 0 0 1.5 1H21a2 2 0 1 1 0 4h-.1a1.7 1.7 0 0 0-1.5 1z"/>',
-  back: '<path d="M15 5l-7 7 7 7"/>',
-  chev: '<path d="M9 5l7 7-7 7"/>',
-  more: '<circle cx="5" cy="12" r="1.6"/><circle cx="12" cy="12" r="1.6"/><circle cx="19" cy="12" r="1.6"/>',
-  sun: '<circle cx="12" cy="12" r="4"/><path d="M12 2v2M12 20v2M4.9 4.9l1.4 1.4M17.7 17.7l1.4 1.4M2 12h2M20 12h2M4.9 19.1l1.4-1.4M17.7 6.3l1.4-1.4"/>',
-  moon: '<path d="M21 12.8A9 9 0 1 1 11.2 3a7 7 0 0 0 9.8 9.8z"/>',
-  out: '<path d="M15 3h4a2 2 0 0 1 2 2v14a2 2 0 0 1-2 2h-4M10 17l5-5-5-5M15 12H3"/>',
-  back: '<path d="m15 18-6-6 6-6"/>',
-  send: '<path d="M5 12h14M13 6l6 6-6 6"/>',
-  stop: '<rect x="6" y="6" width="12" height="12" rx="2"/>',
-  tune: '<path d="M4 6h10M18 6h2M4 12h4M12 12h8M4 18h12M20 18h0"/><circle cx="16" cy="6" r="2"/><circle cx="10" cy="12" r="2"/><circle cx="18" cy="18" r="2"/>',
-  search: '<circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/>',
-  shield: '<path d="M12 3 4 6v6c0 5 3.5 8 8 9 4.5-1 8-4 8-9V6z"/><path d="m9 12 2 2 4-4"/>',
-  wrench: '<path d="M14.7 6.3a4 4 0 0 0 5 5L21 13a6 6 0 0 1-8 1l-6 6a2 2 0 1 1-3-3l6-6a6 6 0 0 1 1-8l1.7 1.3a4 4 0 0 0 2 3z"/>',
-  file: '<path d="M14 3H6a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V9z"/><path d="M14 3v6h6M8 13h8M8 17h5"/>',
-  pulse: '<path d="M3 12h4l3-8 4 16 3-8h4"/>',
-  plus: '<path d="M12 5v14M5 12h14"/>',
-  up: '<path d="m6 15 6-6 6 6"/>',
-  play: '<path d="M7 5v14l12-7z"/>',
-  trash: '<path d="M4 7h16M10 11v6M14 11v6M6 7l1 13h10l1-13M9 7V4h6v3"/>',
-  refresh: '<path d="M21 12a9 9 0 1 1-2.6-6.4M21 4v5h-5"/>',
-};
-const ic = n => `<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">${I[n]}</svg>`;
-
+// 图标：见 icons.js（星野·线标草稿）
 const ROUTES = [
   ["overview", "概览", "home"], ["sessions", "会话", "chat"], ["models", "模型与用量", "model"], ["channels", "渠道", "channel"],
   ["plugins", "插件与技能", "plug"], ["cron", "定时任务", "clock"], ["approvals", "审批与配对", "shield"], ["tools", "工具与扩展", "wrench"],
@@ -95,7 +56,7 @@ const shortId = id => String(id || "").length > 14 ? String(id).slice(0, 6) + "�
 const rawId = x => { const t = qqTarget(x.key); return t ? (t.kind === "group" ? "群 " : "私聊 ") + shortId(t.id) : x.key; };
 const isGroupNoName = x => !(x.alias || aliasFor(x.key)) && !x.label && qqTarget(x.key)?.kind === "group";
 const sessName = x => x.alias || aliasFor(x.key) || x.label || (isGroupNoName(x) ? "未命名的群" : "") || x.displayName || rawId(x);
-const nameHtml = x => `${esc(sessName(x))}${isGroupNoName(x) ? `<span class="namehint">点这里起个名字</span>` : ""}<span class="pen" aria-hidden="true">✎</span>`;
+const nameHtml = x => `${esc(sessName(x))}${isGroupNoName(x) ? `<span class="namehint">点这里起个名字</span>` : ""}<span class="pen" aria-hidden="true">${ic("pencil")}</span>`;
 function inlineRename(el, x, after) {
   if (el.querySelector("input")) return;
   const old = x.alias || aliasFor(x.key);
@@ -145,7 +106,7 @@ function shell() {
   app.innerHTML = `<div class="shell">
     <aside class="side"><div class="brand"><img src="icon.svg" alt=""><div><b>星野のねこ</b><small>凛的控制台</small></div></div>
       <nav class="nav">${ROUTES.filter(r => !hidden(r[0])).map(([k, t, i]) => `<a href="#/${k}" data-r="${k}">${ic(i)}${t}</a>`).join("")}</nav>
-      <div class="foot"><button class="iconbtn" data-act="theme" aria-label="切换深浅色"></button><button class="iconbtn" data-act="logout" aria-label="退出登录">${ic("out")}</button></div>
+      <div class="foot"><button class="iconbtn" data-act="theme" aria-label="切换深浅色">${ic("moon")}</button><button class="iconbtn" data-act="logout" aria-label="退出登录">${ic("out")}</button></div>
     </aside>
     <main class="main" id="view"></main>
     <nav class="tabbar">${TABS.map(k => { const [, t, i] = ROUTES.find(r => r[0] === k); return `<a class="tab" href="#/${k}" data-r="${k}">${ic(i)}<span>${t.replace("与用量", "")}</span></a>`; }).join("")}<a class="tab" href="#/more" data-r="more">${ic("more")}<span>更多</span></a></nav>
@@ -310,7 +271,7 @@ async function routeBase(generation) {
   const v = replaceView(); if (!v) return;
   v.innerHTML = `<div class="view">${top(routeTitle(r))}<div class="grid g2"><div class="skel"></div><div class="skel"></div><div class="skel"></div><div class="skel"></div></div></div>`;
   try { await VIEWS[r](v, decodeURIComponent(rest.join("/"))); }
-  catch (e) { if (e.status === 401 || generation !== routeGeneration || !v.isConnected) return; v.innerHTML = `<div class="view">${top(routeTitle(r))}<div class="card empty"><b>😿</b>出了点小状况：${esc(e.message)}<br><br><button class="btn" data-retry>再试一次</button></div></div>`; }
+  catch (e) { if (e.status === 401 || generation !== routeGeneration || !v.isConnected) return; v.innerHTML = `<div class="view">${top(routeTitle(r))}<div class="card empty"><span class="empty-ic">${ic("sad")}</span>出了点小状况：${esc(e.message)}<br><br><button class="btn" data-retry>再试一次</button></div></div>`; }
   if (generation !== routeGeneration || !v.isConnected) return;
   window.scrollTo(0, 0);
   const rb = v.querySelector("[data-retry]"); if (rb) rb.onclick = route;
@@ -340,7 +301,7 @@ VIEWS.more = async v => {
 };
 
 VIEWS.overview = async v => {
-  let linkHtml = `<div class="card link"><div class="link-h"><div class="avatar">🛡️</div><div class="grow"><b>线路状态</b><div class="faint" style="font-size:13px"><span class="spin-dot"></span> 正在看看线路的情况…</div></div></div></div>`;
+  let linkHtml = `<div class="card link"><div class="link-h"><div class="avatar">${ic("shield")}</div><div class="grow"><b>线路状态</b><div class="faint" style="font-size:13px"><span class="spin-dot"></span> 正在看看线路的情况…</div></div></div></div>`;
   const loadLink = async () => { try { linkHtml = linkCard(await api.link()); } catch (x) { linkHtml = linkCard({ error: notReady(x) ? "后台还没开放这个接口" : scrub(x.message), __fail: true }); } const el = $("#linkst"); if (v.isConnected && el && current === "overview") el.innerHTML = linkHtml; };
   loadLink(); viewInterval(v, loadLink, 30000);
   const load = async first => {
@@ -354,7 +315,7 @@ VIEWS.overview = async v => {
     const ver = pick(o.server, "version") || pick(o.status, "runtimeVersion") || pick(o.info, "version") || "";
     const card = (title, val, unit, p, sub) => `<div class="card"><h3>${title}</h3><div class="big">${val}<small>${unit}</small></div>${p != null ? `<div class="bar ${barCls(p)}"><i style="width:${p.toFixed(1)}%"></i></div>` : ""}<div class="faint" style="font-size:12.5px;margin-top:8px">${sub}</div></div>`;
     const html = top("概览", "") + `
-      <div class="card hero"><div class="hi">${hi}，凛 ✨</div><div class="muted" style="margin:4px 0 14px">${ok ? "星野のねこ 一切安好，正在认真值班。" : "网关好像不太舒服，去日志看看吧。"}</div>
+      <div class="card hero"><div class="hi">${hi}，凛 <span class="hi-spark">${ic("sparkle")}</span></div><div class="muted" style="margin:4px 0 14px">${ok ? "星野のねこ 一切安好，正在认真值班。" : "网关好像不太舒服，去日志看看吧。"}</div>
         <div style="display:flex;gap:8px;flex-wrap:wrap">${pill(ok ? "网关运行中" : "网关异常", ok ? "ok" : "bad", ok)}${pill("QQ " + qt, qc, qc === "ok")}${ver ? pill("版本 " + ver) : ""}</div></div>
       <div class="section">主机</div>
       <div class="grid g4">
@@ -394,14 +355,14 @@ VIEWS.sessions = async (v, key) => {
   const lastK = !key && sessionStorage.getItem("cx-last");
   const rowHtml = x => `<a class="row cxrow ${x.key === lastK ? "cx-hl" : ""}" data-skey="${esc(x.key)}" href="#/sessions/${encodeURIComponent(x.key)}" ${x.key === key ? 'style="background:var(--accent-soft)"' : ""}>
       <div class="avatar">${esc([...name(x)][0] || "猫")}</div>
-      <div class="grow"><div class="t"><span class="nm">${x.pinned ? "📌 " : ""}${esc(sessName(x))}</span></div><div class="rid mono">${esc(rawId(x))}</div><div class="d">${esc([x.channel, x.chatType === "group" ? "群聊" : x.chatType === "direct" ? "私聊" : x.chatType, x.model].filter(Boolean).join(" · "))}</div></div>
-      <div class="r">${fmtTime(x.updatedAt)}<br>${x.hasActiveRun ? pill("思考中", "ac", 1) : x.unread ? pill(x.unread, "ac") : ""}</div><button type="button" class="iconbtn cx-rowm" data-rowmenu="${esc(x.key)}" aria-label="会话操作：${esc(sessName(x))}">⋯</button></a>`;
+      <div class="grow"><div class="t"><span class="nm">${x.pinned ? `<span class="pin-ic">${ic("pin")}</span>`  : ""}${esc(sessName(x))}</span></div><div class="rid mono">${esc(rawId(x))}</div><div class="d">${esc([x.channel, x.chatType === "group" ? "群聊" : x.chatType === "direct" ? "私聊" : x.chatType, x.model].filter(Boolean).join(" · "))}</div></div>
+      <div class="r">${fmtTime(x.updatedAt)}<br>${x.hasActiveRun ? pill("思考中", "ac", 1) : x.unread ? pill(x.unread, "ac") : ""}</div><button type="button" class="iconbtn cx-rowm" data-rowmenu="${esc(x.key)}" aria-label="会话操作：${esc(sessName(x))}">${ic("more")}</button></a>`;
   const col = collapsed(), byG = new Map([[null, []], ...GROUPS.map(g => [g.id, []])]);
   for (const x of list) { const g = groupOf(x); (byG.has(g) ? byG.get(g) : byG.get(null)).push(x); }
   const secs = [...GROUPS.map(g => ({ g, items: byG.get(g.id) })), { g: null, items: byG.get(null) }].filter(o => o.g || o.items.length);
-  const listHtml = list.length || GROUPS.length ? `<div class="sesslist grouped">${secs.map(({ g, items }) => `<details class="grp" data-gid="${esc(g?.id || "")}" ${col.has(g?.id || "_") ? "" : "open"}><summary><span class="gname">${esc(g ? g.name : GROUPS.length ? "未分组" : "全部会话")}</span><span class="gcount">${items.length}</span>${g ? `<button type="button" class="gmenu iconbtn" data-gmenu="${esc(g.id)}" aria-label="分组操作">⋯</button>` : ""}</summary><div class="list">${items.length ? items.map(rowHtml).join("") : `<div class="gempty faint">还没有会话，去会话设置里把它移进来吧</div>`}</div></details>`).join("")}<button type="button" class="newgroup" data-newgroup>＋ 新建分组</button></div>` : `<div class="card empty"><b>🐾</b>还没有会话呢</div>`;
+  const listHtml = list.length || GROUPS.length ? `<div class="sesslist grouped">${secs.map(({ g, items }) => `<details class="grp" data-gid="${esc(g?.id || "")}" ${col.has(g?.id || "_") ? "" : "open"}><summary><span class="gname">${esc(g ? g.name : GROUPS.length ? "未分组" : "全部会话")}</span><span class="gcount">${items.length}</span>${g ? `<button type="button" class="gmenu iconbtn" data-gmenu="${esc(g.id)}" aria-label="分组操作">${ic("more")}</button>` : ""}</summary><div class="list">${items.length ? items.map(rowHtml).join("") : `<div class="gempty faint">还没有会话，去会话设置里把它移进来吧</div>`}</div></details>`).join("")}<button type="button" class="newgroup" data-newgroup>${ic("plus")} 新建分组</button></div>` : `<div class="card empty"><span class="empty-ic">${ic("paw")}</span>还没有会话呢</div>`;
   if (!key) {
-    const lr = paint(v, top("会话", `共 ${s.totalCount ?? list.length} 个`, `<button class="iconbtn" data-act="newsess" aria-label="新建会话">${ic("plus")}</button>`) + (wide ? `<div class="split">${listHtml}<div class="card empty" style="align-self:start"><b>💬</b>选一个会话，看看大家在聊什么</div></div>` : listHtml));
+    const lr = paint(v, top("会话", `共 ${s.totalCount ?? list.length} 个`, `<button class="iconbtn" data-act="newsess" aria-label="新建会话">${ic("plus")}</button>`) + (wide ? `<div class="split">${listHtml}<div class="card empty" style="align-self:start"><span class="empty-ic">${ic("chat")}</span>选一个会话，看看大家在聊什么</div></div>` : listHtml));
     cxListWire(lr, list, models, s);
     if (lastK) { const y = +sessionStorage.getItem("cx-listy") || 0; requestAnimationFrame(() => { scrollTo(0, y); const r = lr.querySelector(".cx-hl"); if (r && (r.getBoundingClientRect().top < 0 || r.getBoundingClientRect().bottom > innerHeight)) r.scrollIntoView({ block: "center" }); }); setTimeout(() => lr.querySelector(".cx-hl")?.classList.add("cx-fade"), 2400); sessionStorage.removeItem("cx-last"); }
     return;
@@ -411,14 +372,14 @@ VIEWS.sessions = async (v, key) => {
     <div class="chat">
       <div class="chathead">${wide ? "" : `<a class="iconbtn" href="${esc(cxFrom())}" data-cxback aria-label="返回">${ic("back")}</a>`}
         <div class="grow"><div class="cx-bc">会话${GROUPS.find(g => g.id === groupOf(sess)) ? " › " + esc(GROUPS.find(g => g.id === groupOf(sess)).name) : ""}</div><div class="t"><span class="nm">${esc(sessName(sess))}</span></div><div class="sub" title="${esc(rawId(sess))}">${esc([sess.chatType === "group" ? "群聊" : sess.chatType === "direct" ? "私聊" : "", sess.model, sess.thinkingLevel && "思考 " + sess.thinkingLevel].filter(Boolean).join(" · "))}</div></div>
-        <button class="iconbtn" data-x="menu" aria-label="会话菜单" aria-haspopup="dialog">⋯</button></div>
+        <button class="iconbtn" data-x="menu" aria-label="会话菜单" aria-haspopup="dialog">${ic("more")}</button></div>
       <div class="msgs" id="msgs"><div class="skel"></div></div>
       <form class="composer" id="comp">
         <div class="att-tray" id="tray" hidden></div><div class="att-drop" aria-hidden="true">松手就能添加附件</div>
         <textarea rows="1" placeholder="以凛的身份说点什么…" aria-label="消息"></textarea>
-        <div class="qqwarn" hidden>⚠️ 现在发出的内容会<b>以星野のねこ的身份</b>直接发到 ${qqDest(sess)}</div>
+        <div class="qqwarn" hidden>${ic("warn")} 现在发出的内容会<b>以星野のねこ的身份</b>直接发到 ${qqDest(sess)}</div>
         <div class="ctl"><button type="button" class="iconbtn optb" id="optb" aria-label="添加 / 发送方式" aria-haspopup="dialog">${ic("plus")}</button><div class="tgs" hidden><input type="checkbox" id="deliver" tabindex="-1" aria-hidden="true"><span class="tg-bot" hidden></span><input type="checkbox" id="asbot" tabindex="-1" aria-hidden="true"></div>
-          ${attBtns()}<button type="button" class="iconbtn cx-abort" id="abort" aria-label="中止" title="中止" ${sess.hasActiveRun ? "" : "hidden"}>■</button>
+          ${attBtns()}<button type="button" class="iconbtn cx-abort" id="abort" aria-label="中止" title="中止" ${sess.hasActiveRun ? "" : "hidden"}>${ic("stop")}</button>
           <button class="iconbtn primary cx-send" id="sendb" aria-label="发送">${ic("send")}</button></div>
         <div class="cx-dest" id="cxdest" aria-live="polite">只发在控制台</div>
       </form>
@@ -454,7 +415,7 @@ VIEWS.sessions = async (v, key) => {
       : more || hst.gatewayHasMore ? `<div class="oldnote">🌙 网关只保留最近一个窗口的记录，更早的聊天在这里翻不到了</div>` : ms.length ? `<div class="oldnote">这就是最早的消息啦</div>` : "")
       + (ms.length ? `<div class="histnote faint">共 ${hst.totalMessages ?? ms.length} 条消息${hst.windowCount ? `，网关窗口内 ${hst.windowCount} 条` : ""}，已显示 ${ms.length} 条${hst.sendLogFrom ? ` · 发送日志从 ${esc(hst.sendLogFrom)} 起才有，更早的「已发到 QQ」是推断的` : ""}</div>` : "");
     ctx.model = sess.model; ms.forEach((m, i) => { m._i = i; }); lastMs = ms;
-    msgs.innerHTML = ms.length ? head + renderList(ms, ctx) : `<div class="empty"><b>🌙</b>这里还很安静</div>`; wrapCode(msgs);
+    msgs.innerHTML = ms.length ? head + renderList(ms, ctx) : `<div class="empty"><span class="empty-ic">${ic("sleep")}</span>这里还很安静</div>`; wrapCode(msgs);
     if (!keep && (atBottom || !msgs.dataset.init)) msgs.scrollTop = msgs.scrollHeight; msgs.dataset.init = 1;
   };
   // 内部通知「查看原文」：先二次确认；原文只在内存里，确认后才渲染进页面；收起 / 切走 / 离开页面就清掉
@@ -528,7 +489,7 @@ function qqDest(sess, detail) {
   const dn = sess.displayName || sess.key;
   if (!to) return detail ? `<div class="dest-k">发送到</div><div class="dest-v">⚠️ 未能解析投递目标</div><div class="dest-s mono">${esc(sess.key)} · 会话没有 deliveryContext.to，后端会拒绝</div>` : `「<b>${esc(dn)}</b>」（投递目标未知）`;
   const t = qqTarget(to), kind = t ? (t.kind === "group" ? "QQ 群" : "QQ 私聊") : "目标";
-  return detail ? `<div class="dest-k">发送到</div><div class="dest-v">${t?.kind === "group" ? "👥" : "👤"} ${kind}「${esc(dn)}」</div><div class="dest-s mono">${esc(to)}</div><div class="dest-s mono">会话 ${esc(sess.key)}</div>` : `${kind}「<b>${esc(dn)}</b>」<span class="mono">${esc(to)}</span>`;
+  return detail ? `<div class="dest-k">发送到</div><div class="dest-v">${t?.kind === "group" ? ic("group") : ic("user")} ${kind}「${esc(dn)}」</div><div class="dest-s mono">${esc(to)}</div><div class="dest-s mono">会话 ${esc(sess.key)}</div>` : `${kind}「<b>${esc(dn)}</b>」<span class="mono">${esc(to)}</span>`;
 }
 function renderMedia(list, seen) {
   if (!list.length) return "";
@@ -540,7 +501,7 @@ function renderMedia(list, seen) {
 function lightbox(url, name) {
   const previousFocus = document.activeElement;
   const d = document.createElement("div"); d.className = "lightbox"; d.setAttribute("role", "dialog"); d.setAttribute("aria-label", name || "图片"); d.tabIndex = -1;
-  d.innerHTML = `<img src="${esc(url)}" alt="${esc(name || "")}"><a class="iconbtn lb-dl" href="${esc(url)}" download aria-label="下载">⤓</a>`;
+  d.innerHTML = `<img src="${esc(url)}" alt="${esc(name || "")}"><a class="iconbtn lb-dl" href="${esc(url)}" download aria-label="下载">${ic("download")}</a>`;
   const finish = () => { d.remove(); syncSheetInert(); const host = topSheet(); if (host) focusSheet(host, previousFocus); else if (previousFocus?.isConnected && !previousFocus.closest("[inert]")) previousFocus.focus(); };
   const close = force => { if (d._authSuspended && force !== true) return; d.classList.add("out"); if (force === true) finish(); else setTimeout(finish, 200); };
   d._v3close = close;
@@ -566,9 +527,9 @@ function blk(label, o, k, ctx) {
 function chainHtml(m, ctx, compact) {
   const ts = m.tools || []; if (!ts.length) return "";
   const k = "c" + (m.id || m.ts), total = ts.reduce((a, t) => a + (t.durationMs || 0), 0), errs = ts.filter(t => t.isError || t.status === "error").length, pend = ts.some(t => t.status === "pending");
-  const icon = t => t.status === "pending" ? `<span class="spin-dot"></span>` : t.isError || t.status === "error" ? `<span class="st err">✕</span>` : `<span class="st ok">✓</span>`;
+  const icon = t => t.status === "pending" ? `<span class="spin-dot"></span>` : t.isError || t.status === "error" ? `<span class="st err">${ic("close")}</span>` : `<span class="st ok">${ic("check")}</span>`;
   const short = n => String(n || "工具").replace(/^mcp__[^_]+__/, "");
-  return `<details class="chain ${compact ? "compact" : ""}" data-k="${esc(k)}" title="${esc(ts.map(t => short(t.name)).join("、") + (total ? " · 工具合计 " + tdur(total) : ""))}" ${ctx.openK.has(k) ? "open" : ""}><summary><span class="ch-ic">🔧</span><span class="ch-sum">调用了 ${ts.length} 个工具${errs ? `，<span class="ch-err">${errs} 个出错</span>` : ""}${pend ? "，还在进行" : ""}</span>${pend ? `<span class="spin-dot"></span>` : ""}</summary><ol>${ts.map((t, i) => [t, i]).sort((a, b) => (+!!(b[0].isError || b[0].status === "error")) - (+!!(a[0].isError || a[0].status === "error")) || a[1] - b[1]).map(([t]) => { const tk = "t" + (++TOOLSEQ); TOOLS.set(tk, t); if (TOOLS.size > 400) TOOLS.delete(TOOLS.keys().next().value); return `<li class="step ${t.status || ""} ${t.isError ? "error" : ""}"><div class="step-h">${icon(t)}<b class="mono" title="${esc(t.name)}">${esc(short(t.name))}</b><span class="faint">${t.status === "pending" ? "进行中…" : tdur(t.durationMs)}</span><button type="button" class="btn sm cx-tdet" data-tool="${tk}">详情</button></div>${t.result?.text ? `<div class="cx-tres ${t.isError ? "err" : ""}">${esc(String(t.result.text).slice(0, 160))}${String(t.result.text).length > 160 ? "…" : ""}</div>` : t.status === "pending" ? "" : `<div class="faint small">没有返回结果</div>`}</li>`; }).join("")}</ol></details>`;
+  return `<details class="chain ${compact ? "compact" : ""}" data-k="${esc(k)}" title="${esc(ts.map(t => short(t.name)).join("、") + (total ? " · 工具合计 " + tdur(total) : ""))}" ${ctx.openK.has(k) ? "open" : ""}><summary><span class="ch-ic">${ic("wrench")}</span><span class="ch-sum">调用了 ${ts.length} 个工具${errs ? `，<span class="ch-err">${errs} 个出错</span>` : ""}${pend ? "，还在进行" : ""}</span>${pend ? `<span class="spin-dot"></span>` : ""}</summary><ol>${ts.map((t, i) => [t, i]).sort((a, b) => (+!!(b[0].isError || b[0].status === "error")) - (+!!(a[0].isError || a[0].status === "error")) || a[1] - b[1]).map(([t]) => { const tk = "t" + (++TOOLSEQ); TOOLS.set(tk, t); if (TOOLS.size > 400) TOOLS.delete(TOOLS.keys().next().value); return `<li class="step ${t.status || ""} ${t.isError ? "error" : ""}"><div class="step-h">${icon(t)}<b class="mono" title="${esc(t.name)}">${esc(short(t.name))}</b><span class="faint">${t.status === "pending" ? "进行中…" : tdur(t.durationMs)}</span><button type="button" class="btn sm cx-tdet" data-tool="${tk}">详情</button></div>${t.result?.text ? `<div class="cx-tres ${t.isError ? "err" : ""}">${esc(String(t.result.text).slice(0, 160))}${String(t.result.text).length > 160 ? "…" : ""}</div>` : t.status === "pending" ? "" : `<div class="faint small">没有返回结果</div>`}</li>`; }).join("")}</ol></details>`;
 }
 const TOOLS = new Map(); let TOOLSEQ = 0;
 function toolSheet(tk) {
@@ -582,7 +543,7 @@ let LIMITS = null;
 const LIMITS0 = { maxBytes: 20 * MB, maxPerMessage: 10, chat: { maxBytes: 20 * MB, maxImageBytes: 6 * MB, maxPayload: 25 * MB }, cli: { maxBytes: 20 * MB } };
 const loadLimits = async () => { if (LIMITS) return LIMITS; try { const d = await api.uploadLimits(); LIMITS = { ...LIMITS0, ...d, chat: { ...LIMITS0.chat, ...d?.chat }, cli: { ...LIMITS0.cli, ...d?.cli } }; } catch { LIMITS = LIMITS0; } return LIMITS; };
 const isImgType = t => /^image\/(png|jpe?g|gif|webp)$/i.test(t || "");
-const fileIcon = (mime = "", name = "") => /pdf/.test(mime) || /\.pdf$/i.test(name) ? "📕" : /zip|gzip|compress|tar/.test(mime) || /\.(zip|gz|tgz|7z|rar)$/i.test(name) ? "🗜️" : /audio/.test(mime) ? "🎵" : /video/.test(mime) ? "🎬" : /word|document/.test(mime) || /\.docx?$/i.test(name) ? "📝" : /sheet|excel/.test(mime) || /\.xlsx?$/i.test(name) ? "📊" : /text|json/.test(mime) ? "📄" : "📎";
+// fileIcon 改由 icons.js 提供
 // 历史里的附件：图片 → <img>（同源，符合 img-src 'self'），点开大图；文件 → 卡片，下载走 ?download=1；过期 → 提示
 function attHtml(list, cap) {
   if (!Array.isArray(list) || !list.length) return "";
@@ -590,7 +551,7 @@ function attHtml(list, cap) {
     : a.kind === "image" ? (cap ? `<figure class="mfig">` : "") + `<button type="button" class="thumb att-img" data-full="${esc(a.url)}" aria-label="${esc(a.name || "图片")}"><img src="${esc(a.url)}" alt="${esc(a.name || "图片")}" loading="lazy" decoding="async"></button>` + (cap ? `${a.path || a.name ? `<figcaption class="mpath mcap">${esc(a.path || a.name)}</figcaption>` : ""}</figure>` : "")
     : `<a class="att-file" href="${esc(a.url)}?download=1" download="${esc(a.name || "")}"><span class="att-ic">${fileIcon(a.mime, a.name)}</span><span class="att-nm"><b>${esc(a.name || "文件")}</b><span class="faint">${esc([a.size != null ? bytes(a.size) : "", a.path || "", a.expiresAt ? "保留到 " + fmtTime(a.expiresAt) : ""].filter(Boolean).join(" · "))}</span></span><span class="att-dl" aria-hidden="true">⬇</span></a>`).join("")}</div>`;
 }
-const attBtns = () => `<span class="att-btns"><button type="button" class="iconbtn att-b" data-att="img" aria-label="从相册选图片" title="图片">🖼️</button><button type="button" class="iconbtn att-b" data-att="file" aria-label="选择文件" title="文件">📎</button><input type="file" hidden multiple accept="image/*" data-pick="img"><input type="file" hidden multiple data-pick="file"></span>`;
+const attBtns = () => `<span class="att-btns"><button type="button" class="iconbtn att-b" data-att="img" aria-label="从相册选图片" title="图片">${ic("image")}</button><button type="button" class="iconbtn att-b" data-att="file" aria-label="选择文件" title="文件">${ic("clip")}</button><input type="file" hidden multiple accept="image/*" data-pick="img"><input type="file" hidden multiple data-pick="file"></span>`;
 async function thumbOf(file) {
   try { const bm = await createImageBitmap(file); const k = Math.min(1, 160 / Math.max(bm.width, bm.height)); const c = document.createElement("canvas"); c.width = Math.max(1, Math.round(bm.width * k)); c.height = Math.max(1, Math.round(bm.height * k)); c.getContext("2d").drawImage(bm, 0, 0, c.width, c.height); bm.close?.(); return c.toDataURL("image/jpeg", .8); } catch { return null; }
 }
@@ -604,8 +565,8 @@ function attachTray({ scope, ensureSession, onChange }) {
     el.hidden = !items.length;
     el.innerHTML = items.map(it => `<div class="att-chip ${it.st}" data-k="${it.k}">${it.thumb ? `<img src="${it.thumb}" alt="">` : `<span class="att-ic">${fileIcon(it.res?.mime || it.file.type, it.file.name)}</span>`}
       <span class="att-nm"><b>${esc(it.file.name || "粘贴的图片")}</b><span class="faint">${it.st === "up" ? (it.pct >= 1 ? "处理中…" : `上传中 ${Math.round(it.pct * 100)}%`) : it.st === "err" ? esc(it.err) : bytes(it.file.size)}</span></span>
-      ${it.st === "up" ? `<i class="att-bar" style="--p:${Math.round(it.pct * 100)}%"></i>` : ""}${it.st === "ok" ? `<span class="att-ok" aria-label="已上传">✓</span>` : ""}
-      ${it.st === "err" && it.retry !== false ? `<button type="button" class="att-x" data-retry="${it.k}" aria-label="重试">↻</button>` : ""}<button type="button" class="att-x" data-rm="${it.k}" aria-label="移除 ${esc(it.file.name || "附件")}">✕</button></div>`).join("");
+      ${it.st === "up" ? `<i class="att-bar" style="--p:${Math.round(it.pct * 100)}%"></i>` : ""}${it.st === "ok" ? `<span class="att-ok" aria-label="已上传">${ic("check")}</span>` : ""}
+      ${it.st === "err" && it.retry !== false ? `<button type="button" class="att-x" data-retry="${it.k}" aria-label="重试">↻</button>` : ""}<button type="button" class="att-x" data-rm="${it.k}" aria-label="移除 ${esc(it.file.name || "附件")}">${ic("close")}</button></div>`).join("");
     (self.onChange || onChange)?.();
   };
   const up = async it => {
@@ -743,10 +704,10 @@ function foldHtml(m, ctx) {
   const k = (m._fold === "ann" ? "a" : "h") + (m.id || m.ts);
   if (m._fold === "ann") {
     const on = !!ctx.revealK?.has(k);
-    return `<div class="chainrow annrow"><details class="chain fold" data-k="${esc(k)}" ${on || ctx.openK.has(k) ? "open" : ""}><summary><span class="ch-ic">🔔</span><span class="ch-sum">一条内部通知</span></summary>${on ? `<div class="foldbody annraw"><div class="annnote">已把密码、密钥这类内容打码。只能在这里看，不能复制或引用。</div><div class="annbox" draggable="false">${esc(annText(m.src))}</div></div>` : `<div class="foldbody">内部内容已隐藏</div>`}</details>${on ? `<button type="button" class="btn rvl" data-unreveal="${esc(k)}">收起原文</button>` : `<button type="button" class="btn rvl" data-reveal="${esc(k)}">查看原文</button>`}<span class="meta">${esc(t)}</span></div>`;
+    return `<div class="chainrow annrow"><details class="chain fold" data-k="${esc(k)}" ${on || ctx.openK.has(k) ? "open" : ""}><summary><span class="ch-ic">${ic("bell")}</span><span class="ch-sum">一条内部通知</span></summary>${on ? `<div class="foldbody annraw"><div class="annnote">已把密码、密钥这类内容打码。只能在这里看，不能复制或引用。</div><div class="annbox" draggable="false">${esc(annText(m.src))}</div></div>` : `<div class="foldbody">内部内容已隐藏</div>`}</details>${on ? `<button type="button" class="btn rvl" data-unreveal="${esc(k)}">收起原文</button>` : `<button type="button" class="btn rvl" data-reveal="${esc(k)}">查看原文</button>`}<span class="meta">${esc(t)}</span></div>`;
   }
   const first = toMs(m.polls[0]);
-  return `<div class="chainrow"><details class="chain fold" data-k="${esc(k)}" ${ctx.openK.has(k) ? "open" : ""}><summary><span class="ch-ic">💤</span><span class="ch-sum">保活 ${m.polls.length} 次</span></summary><div class="foldbody tchips">${m.polls.map(p => { const x = toMs(p); return `<span class="tchip">${x ? esc((new Date(x).toDateString() === new Date(first).toDateString() ? "" : DAY(x) + " ") + HM(x)) : "—"}</span>`; }).join("")}</div></details><span class="meta">${esc(t)}</span></div>`;
+  return `<div class="chainrow"><details class="chain fold" data-k="${esc(k)}" ${ctx.openK.has(k) ? "open" : ""}><summary><span class="ch-ic">${ic("sleep")}</span><span class="ch-sum">保活 ${m.polls.length} 次</span></summary><div class="foldbody tchips">${m.polls.map(p => { const x = toMs(p); return `<span class="tchip">${x ? esc((new Date(x).toDateString() === new Date(first).toDateString() ? "" : DAY(x) + " ") + HM(x)) : "—"}</span>`; }).join("")}</div></details><span class="meta">${esc(t)}</span></div>`;
 }
 function renderList(ms, ctx) {
   let out = "", prev = null, open = false;
@@ -782,7 +743,7 @@ function renderMsg(m, ctx = { openK: new Set() }, pos = { first: true, last: tru
   const metaParts = role === "assistant" ? [m.model, cost] : role === "tool" ? [m.kind || m.role || "系统"] : [];
   const showMeta = role === "assistant" || pos.last, seen = new Set();
   const sid = senderId(m), spk = !pos.first ? "" : role === "user" && m.owner ? `<span class="speaker me">凛${src ? `<small>${src}</small>` : ""}</span>` : !ctx.group ? "" : role === "assistant" ? `<span class="speaker bot">星野のねこ</span>` : role === "user" ? `<button type="button" class="speaker" ${isOpenId(sid) ? `data-prof="${esc(sid)}"` : "disabled"} title="${esc(sid || "")}">${esc(senderLabel(m) || (m.owner ? "凛" : "未知发言人"))}</button>` : "";
-  const mact = m._i != null && role !== "tool" ? `<button type="button" class="cx-mact" data-mact aria-label="这条消息的操作">⋯</button>` : ""; const cxRc = m.id && CX_RECALLED.has(m.id) ? `<span class="cx-recalled">已在 QQ 撤回</span>` : "";
+  const mact = m._i != null && role !== "tool" ? `<button type="button" class="cx-mact" data-mact aria-label="这条消息的操作">${ic("more")}</button>` : ""; const cxRc = m.id && CX_RECALLED.has(m.id) ? `<span class="cx-recalled">已在 QQ 撤回</span>` : "";
   return spk + `<div ${m._i != null ? `data-mi="${m._i}"` : ""} class="msg ${role} ${pos.first ? "gf" : ""} ${pos.last ? "gl" : ""} ${role === "user" && !m.owner ? "other" : ""} ${m.isError ? "err" : ""} ${role === "tool" ? "" : "md"}">${hasTools ? chainHtml(m, ctx) : ""}${role === "tool" ? esc(t.slice(0, 2000)) : t.trim() ? grayPaths(md(t), seen) : ""}${renderMedia(media, seen)}${atts}${showMeta ? `<span class="meta">${metaParts.filter(Boolean).map(x => `<span>${esc(x)}</span>`).join("")}<span class="tm">${HM(toMs(m.ts))}</span>${deliveryBadge(m, ctx)}</span>` : ""}${cxRc}${mact}</div>`;
 }
 // ---------- chat-ux 2026-11-03：会话设置只剩 模型 + 思考；引擎自动配套 ----------
@@ -851,13 +812,13 @@ function chatMenu(sess, models, defaults) {
   const grp = sess.chatType === "group" || qqTarget(sess.key)?.kind === "group";
   const gname = GROUPS.find(g => g.id === groupOf(sess))?.name || "未分组";
   sheet(`<h2>${esc(sessName(sess))}</h2><div class="cx-menu">
-    ${cxItem("rename", "✎", "改名")}
-    ${cxItem("tune", "⚙", "模型和思考", [sess.model, sess.thinkingLevel && "思考 " + sess.thinkingLevel].filter(Boolean).join(" · "))}
+    ${cxItem("rename", ic("pencil"), "改名")}
+    ${cxItem("tune", ic("tune"), "模型和思考", [sess.model, sess.thinkingLevel && "思考 " + sess.thinkingLevel].filter(Boolean).join(" · "))}
     ${cxItem("group", "▤", "移到分组", "现在：" + gname)}
-    ${grp ? cxItem("inter", "👥", "互动统计") + cxItem("digest", "📰", "群报设置") : ""}
+    ${grp ? cxItem("inter", ic("group"), "互动统计") + cxItem("digest", ic("digest"), "群报设置") : ""}
     ${cxItem("compact", "⇲", "压缩上下文", "让对话轻装上阵，不会删记录")}
     ${cxItem("reset", "↺", "重置会话", "要再确认一次")}
-    ${cxItem("delete", "🗑", "删除会话", "要确认两次，删了不能恢复", "danger")}</div>`, (el, close) => {
+    ${cxItem("delete", ic("trash"), "删除会话", "要确认两次，删了不能恢复", "danger")}</div>`, (el, close) => {
     el.addEventListener("click", async e => {
       const b = e.target.closest("[data-m]"); if (!b) return; const k = b.dataset.m; await close(true);
       if (k === "rename") return cxRename(sess, () => route());
@@ -910,13 +871,13 @@ function msgMenu(m, { ta, isGroup, key, after }) {
   const mode = isA ? "self" : "admin";
   sheet(`<h2>消息操作</h2>${txt ? `<div class="cx-prev">${esc(txt.slice(0, 120))}${txt.length > 120 ? "…" : ""}</div>` : ""}<div class="cx-menu">
     ${cxItem("copy", "⧉", "复制全文", "", "", txt ? "" : "没有文字")}
-    ${cxItem("quote", "❝", "引用到输入框", "", "", txt ? "" : "没有文字")}
-    ${m.tools?.length ? cxItem("tools", "🔧", "看工具详情", `${m.tools.length} 个工具`) : ""}
-    ${isGroup && isU && isOpenId(sid) ? cxItem("prof", "👤", "看发言人资料", senderLabel(m)) : ""}
+    ${cxItem("quote", ic("quote"), "引用到输入框", "", "", txt ? "" : "没有文字")}
+    ${m.tools?.length ? cxItem("tools", ic("wrench"), "看工具详情", `${m.tools.length} 个工具`) : ""}
+    ${isGroup && isU && isOpenId(sid) ? cxItem("prof", ic("user"), "看发言人资料", senderLabel(m)) : ""}
     ${showRegen ? cxItem("regenerate", "⟳", "重新生成", "默认只在控制台，可选同时发到 QQ") : ""}
     ${showRecall ? `<div class="cx-rc" id="cxrc"><div class="cx-rcst faint" id="cxrcst">正在查能不能撤回…</div>
       ${cxItem("recall-self", "↩", "撤回", "星野自己的回复 · QQ 2 分钟内", "danger", "查询中")}
-      ${cxItem("recall-admin", "⛔", "管理员撤回", "群友的消息 · 需要星野是群管理员", "danger", "查询中")}</div>` : ""}</div>`, (el, close) => {
+      ${cxItem("recall-admin", ic("ban"), "管理员撤回", "群友的消息 · 需要星野是群管理员", "danger", "查询中")}</div>` : ""}</div>`, (el, close) => {
     // 打开即查询 /api/chat/recallable，显示自己撤回 / 管理员撤回 各自是否可用和剩余秒数（每秒倒计时，到 0 灰掉）
     let tick = null, st = null;
     const setBtn = (k, info, label) => { const b = el.querySelector(`[data-m=recall-${k}]`); if (!b) return; const left = Math.max(0, Math.floor(info?.left ?? 0)); const adm = k === "admin", on = adm ? cxAdminOk(info) : !!info?.available && left > 0; b.disabled = !on; b.toggleAttribute("aria-disabled", !on); const pill = b.querySelector(".pill") || b.appendChild(Object.assign(document.createElement("span"), { className: "pill" })); pill.textContent = on ? (adm ? "可撤回" : `剩 ${left} 秒`) : CX_ERR[info?.reason] || (info?.reason ? "不可用" : label || "不可用"); pill.className = "pill" + (on ? " ac" : ""); };
@@ -947,7 +908,7 @@ function msgMenu(m, { ta, isGroup, key, after }) {
 function composerSheet({ form, asbot, deliverC, qqOk, onChange }) {
   const mode = () => asbot.checked ? "bot" : deliverC.checked ? "qq" : "console";
   sheet(`<h2>添加 / 发送方式</h2>
-    <div class="section" style="margin:4px 0 8px">添加</div><div class="grid g2"><button type="button" class="btn" data-pk="img">🖼️ 图片</button><button type="button" class="btn" data-pk="file">📎 文件</button></div>
+    <div class="section" style="margin:4px 0 8px">添加</div><div class="grid g2"><button type="button" class="btn" data-pk="img">${ic("image")} 图片</button><button type="button" class="btn" data-pk="file">${ic("clip")} 文件</button></div>
     <div class="section" style="margin:18px 0 8px">发到哪里</div><div class="cx-menu" role="radiogroup">
       <button type="button" class="cx-mi" role="radio" data-mode="console" aria-checked="${mode() === "console"}"><span class="cx-mic">${mode() === "console" ? "◉" : "○"}</span><span class="grow"><b>只在控制台</b><small>默认</small></span></button>
       <button type="button" class="cx-mi" role="radio" data-mode="qq" aria-checked="${mode() === "qq"}"><span class="cx-mic">${mode() === "qq" ? "◉" : "○"}</span><span class="grow"><b>控制台 + 同时发到 QQ</b><small>星野のねこ的回复也会发到 QQ</small></span></button></div>
@@ -978,11 +939,11 @@ function cxListWire(lr, list, models, s) {
 function rowMenu(x, models, s) {
   const gname = GROUPS.find(g => g.id === groupOf(x))?.name || "未分组";
   sheet(`<h2>${esc(sessName(x))}</h2><div class="cx-menu">
-    ${cxItem("open", "💬", "打开会话")}
-    ${cxItem("rename", "✎", "改名")}
-    ${cxItem("pin", "📌", x.pinned ? "取消置顶" : "置顶")}
+    ${cxItem("open", ic("chat"), "打开会话")}
+    ${cxItem("rename", ic("pencil"), "改名")}
+    ${cxItem("pin", ic("pin"), x.pinned ? "取消置顶" : "置顶")}
     ${cxItem("group", "▤", "移到分组", "现在：" + gname)}
-    ${cxItem("tune", "⚙", "模型和思考")}</div>`, (el, close) => {
+    ${cxItem("tune", ic("tune"), "模型和思考")}</div>`, (el, close) => {
     el.addEventListener("click", async e => {
       const b = e.target.closest("[data-m]"); if (!b) return; const k = b.dataset.m; await close(true);
       const href = "#/sessions/" + encodeURIComponent(x.key);
@@ -1018,7 +979,7 @@ function linkCard(d) {
   const bakBad = baks.some(w => w.online === false);
   const overall = allDown ? ["连不上", "bad"] : xOn === false ? ["主线路停了", "bad"] : bakBad ? ["部分异常", "warn"] : d.error ? ["部分数据缺失", "warn"] : ["运行中", "ok"];
   const errBox = d.error ? `<div class="link-err">⚠️ ${allDown ? "暂时拿不到线路状态" : "有一部分信息没取到"}：${esc(scrub(d.error))}</div>` : "";
-  const head = sub => `<div class="link-h"><div class="avatar">🛡️</div><div class="grow"><b>线路状态</b><div class="faint" style="font-size:13px">${sub}</div></div>${pill(overall[0], overall[1], overall[1] === "ok")}</div>`;
+  const head = sub => `<div class="link-h"><div class="avatar">${ic("shield")}</div><div class="grow"><b>线路状态</b><div class="faint" style="font-size:13px">${sub}</div></div>${pill(overall[0], overall[1], overall[1] === "ok")}</div>`;
   if (allDown) return `<div class="card link">${head("先别担心，可能只是查询超时，过一会儿会自动再看")}${errBox}</div>`;
   const up = s => { if (!has(s)) return null; const dd = Math.floor(s / 86400), h = Math.floor(s % 86400 / 3600), m = Math.floor(s % 3600 / 60); return dd ? `${dd} 天 ${h} 小时` : h ? `${h} 小时 ${m} 分` : `${m} 分钟`; };
   const kv = (k, v, mono) => has(v) ? `<dt>${k}</dt><dd${mono ? ' class="mono"' : ""}>${v}</dd>` : "";
@@ -1580,9 +1541,9 @@ VIEWS.plugins = async v => {
     const f = x => !q || JSON.stringify([x.name, x.id, x.skillKey, x.description]).toLowerCase().includes(q);
     $("#pl", root).innerHTML = tab === "plugins"
       ? `<div class="list">${p.plugins.filter(f).map(x => `<div class="row cp-plrow" data-pid="${esc(x.id)}"><div class="grow"><div class="t">${esc(x.name || x.id)} <span class="faint mono">${esc(x.version || "")}</span></div><div class="d">${esc(x.description || x.origin || "")}</div></div><div class="r cp-pr">${x.enabled ? pill(cpPlErr(x) ? "出错" : "已启用", cpPlErr(x) ? "bad" : "ok") : pill("已停用")}${x.protected ? pill("受保护", "ac") : ""}</div>
-          ${x.protected ? `<div class="cp-perr"><span class="faint">🔒 受保护 · ${esc(protTxt(x.protectedReason))} · 不能开关</span></div>` : plugOn ? `<label class="switchrow cp-tg"><span class="switch"><input type="checkbox" data-ptoggle="${esc(x.id)}" ${x.enabled ? "checked" : ""} aria-label="${x.enabled ? "停用" : "启用"} ${esc(x.name || x.id)}"><i></i></span></label>` : ""}
+          ${x.protected ? `<div class="cp-perr"><span class="faint">${ic("lock")} 受保护 · ${esc(protTxt(x.protectedReason))} · 不能开关</span></div>` : plugOn ? `<label class="switchrow cp-tg"><span class="switch"><input type="checkbox" data-ptoggle="${esc(x.id)}" ${x.enabled ? "checked" : ""} aria-label="${x.enabled ? "停用" : "启用"} ${esc(x.name || x.id)}"><i></i></span></label>` : ""}
           ${cpPlErr(x) ? `<div class="cp-perr"><span class="faint">${esc(scrub(cpPlErrorText(x)))}</span>${x.missingSecret ? `<a class="btn" href="#/system#secrets" data-cpjump>缺密钥 · 去密钥页</a>` : ""}</div>` : ""}</div>`).join("") || `<div class="empty">没有找到</div>`}</div>`
-      : `<div class="list">${skills.filter(f).map(x => { const key = x.skillKey || x.name || x.id; const on = x.eligible !== false && !x.disabled; return `<div class="row cp-plrow" data-skill="${esc(key)}"><div class="grow"><div class="t">${x.pinned ? "📌 " : ""}${x.emoji ? esc(x.emoji) + " " : ""}${esc(x.name || x.id)}</div><div class="d">${esc(x.description || x.source || "")}</div></div><div class="r">${pill(x.disabled ? "已停用" : on ? "可用" : "缺依赖", x.disabled ? "" : on ? "ok" : "warn")}</div>
+      : `<div class="list">${skills.filter(f).map(x => { const key = x.skillKey || x.name || x.id; const on = x.eligible !== false && !x.disabled; return `<div class="row cp-plrow" data-skill="${esc(key)}"><div class="grow"><div class="t">${x.pinned ? `<span class="pin-ic">${ic("pin")}</span>`  : ""}${x.emoji ? esc(x.emoji) + " " : ""}${esc(x.name || x.id)}</div><div class="d">${esc(x.description || x.source || "")}</div></div><div class="r">${pill(x.disabled ? "已停用" : on ? "可用" : "缺依赖", x.disabled ? "" : on ? "ok" : "warn")}</div>
           ${skillOn ? `<label class="switchrow cp-tg"><span class="switch"><input type="checkbox" data-stoggle="${esc(key)}" ${x.disabled ? "" : "checked"} aria-label="${x.disabled ? "启用" : "停用"} ${esc(x.name || key)}"><i></i></span></label>` : ""}</div>`; }).join("") || `<div class="empty">没有找到</div>`}</div>`;
   };
   root.querySelectorAll("[data-tab]").forEach(b => b.onclick = () => { tab = b.dataset.tab; root.querySelectorAll("[data-tab]").forEach(x => x.setAttribute("aria-pressed", x === b)); draw(); });
@@ -1618,7 +1579,7 @@ VIEWS.cron = async v => {
   if (hb && hbJob) { hb.lastRunAt = hbJob.state?.lastRunAtMs ?? hbJob.lastRunAtMs; hb.nextRunAt = hbJob.state?.nextRunAtMs; }
   const sched = s => !s ? "" : typeof s === "string" ? s : s.kind === "cron" || s.expr ? `cron ${s.expr}${s.tz ? " (" + s.tz + ")" : ""}` : s.everyMs ? `每 ${dur(s.everyMs / 1000)}` : s.at || s.atMs ? `单次 · ${fmtTime(s.at || s.atMs)}` : JSON.stringify(s);
   const root = paint(v, top("定时任务", `${jobs.length} 个任务`, `<button class="iconbtn" data-x="newcron" aria-label="新建任务">${ic("plus")}</button>`) +
-    `<div class="section">心跳</div><div class="card">${hb ? `<div style="display:flex;align-items:center;gap:12px"><div class="avatar">💓</div><div style="flex:1"><b>定时心跳${hbs.agents.length > 1 ? " · " + esc(hb.agentId) : ""}</b><div class="faint" style="font-size:13px">${esc(hb.everyMs ? "每 " + dur(hb.everyMs / 1000) : hb.every ? "每 " + hb.every : "")}${hb.lastRunAt ? " · 上次 " + ago(hb.lastRunAt) : ""}${hb.nextRunAt ? " · 下次 " + until(hb.nextRunAt) : ""}</div></div>${pill(hb.enabled === false ? "已关闭" : "运行中", hb.enabled === false ? "" : "ok", hb.enabled !== false)}</div>` : `<div class="muted">没有拿到心跳信息</div>`}</div>
+    `<div class="section">心跳</div><div class="card">${hb ? `<div style="display:flex;align-items:center;gap:12px"><div class="avatar">${ic("heart")}</div><div style="flex:1"><b>定时心跳${hbs.agents.length > 1 ? " · " + esc(hb.agentId) : ""}</b><div class="faint" style="font-size:13px">${esc(hb.everyMs ? "每 " + dur(hb.everyMs / 1000) : hb.every ? "每 " + hb.every : "")}${hb.lastRunAt ? " · 上次 " + ago(hb.lastRunAt) : ""}${hb.nextRunAt ? " · 下次 " + until(hb.nextRunAt) : ""}</div></div>${pill(hb.enabled === false ? "已关闭" : "运行中", hb.enabled === false ? "" : "ok", hb.enabled !== false)}</div>` : `<div class="muted">没有拿到心跳信息</div>`}</div>
     <div class="section">任务</div>` + (jobs.length ? `<div class="list">${jobs.map(j => { const st = j.state || {}; const last = st.lastStatus || st.lastRunStatus || j.lastRunStatus; return `<button class="row" data-job="${esc(j.id)}"><div class="grow"><div class="t">${esc(j.displayName || j.name || j.id)}</div><div class="d mono">${esc(sched(j.schedule))}</div><div class="d">${st.nextRunAtMs ? "下次 " + until(st.nextRunAtMs) : ""}${st.lastRunAtMs ? " · 上次 " + ago(st.lastRunAtMs) : ""}</div></div><div class="r">${j.enabled === false ? pill("已停用") : last === "error" ? pill("上次失败", "bad") : pill("已启用", "ok")}</div></button>`; }).join("")}</div>` : `<div class="card empty"><b>⏰</b>还没有定时任务</div>`));
   root.addEventListener("click", e => { const b = e.target.closest("[data-job]"); if (b) cronSheet(jobs.find(j => String(j.id) === b.dataset.job), sched); if (e.target.closest("[data-x=newcron]")) cronEdit(null); });
 };
@@ -3799,13 +3760,13 @@ const V3T = [
     ["files", "人设文件", { v: "files", s: "" }, "人设、说话风格"], ["humanlike", "拟人化", { v: "humanlike", s: "" }, "追问、主见、口癖、护短…"], ["proactive", "主动搭话", { fn: v4Proactive }, "冷场后接一句 · 网关心跳"],
     ["followups", "待追问", { v: "humanlike", s: "followups" }, "过几天要问的事"], ["fun", "小脾气", { v: "fun", s: "" }, "记仇、群梗、吃醋"], ["grudges", "记仇本", { v: "fun", s: "grudges" }, ""], ["gags", "群梗", { v: "fun", s: "gags" }, ""],
     ["play", "玩梗（准备中）", { fn: v3Play }, "还没上线"], ["backup", "性格备份", { v: "fun", s: "trash" }, "小脾气和拟人化的备份"]]],
-  ["voice", "语音", "play", "发语音规则 · 合成 · 音色库", [
+  ["voice", "语音", "voice", "发语音规则 · 合成 · 音色库", [
     ["rules", "发语音规则", { fn: v3VoiceRules }, "概率、冷却、上限、静默、按群"], ["tts", "合成", { fn: b => voiceTtsView(b) }, "引擎、回退、情绪标记"], ["voices", "音色库", { fn: b => voicesView(b) }, "试听、添加、删除、维护"]]],
   ["stickers", "表情", "smile", "表情库 · 生成 · 参数 · 形象与分类", [
     ["list", "表情库", { v: "stickers", s: "" }, ""], ["gen", "生成", { v: "stickers", s: "gen" }, ""], ["params", "发表情参数", { v: "stickers", s: "params" }, "概率、冷却、按群"], ["manifest", "形象与分类", { v: "stickers", s: "manifest" }, ""], ["trash", "回收目录", { v: "stickers", s: "trash" }, ""]]],
   ["memory", "记忆", "brain", "按人看 · 语义搜索 · 记错的 · 文件 · 备份", [
     ["people", "按人看", { v: "memory", s: "" }, ""], ["search", "语义搜索", { fn: b => cpMemSearch(b) }, "用一句话找记忆 · 点了才查"], ["flags", "记错的", { v: "memory", s: "flags" }, ""], ["files", "记忆文件", { v: "memory", s: "files" }, "只能看"], ["backups", "删除备份", { v: "memory", s: "backups" }, ""]]],
-  ["groups", "群", "people", "群报 · 互动统计 · 各群一览", [
+  ["groups", "群", "group", "群报 · 互动统计 · 各群一览", [
     ["digest", "群报", { v: "digest", s: "" }, "每天到点自动生成"], ["stats", "互动统计", { v: "interactions", s: "" }, ""], ["overview", "各群一览", { fn: v4Overview }, "这个群开了什么（只看，点了去改）"]]],
   ["abilities", "能力与任务", "plug", "插件与技能 · 插件中心 · 工具 · 定时任务", [
     ["plugins", "插件与技能", { v: "plugins", s: "" }, ""], ["plugin-center", "插件中心", { fn: body => pluginCenter(body, { rawReq, sheet, confirmDialog, toast, md, cpOn, cpPluginToggle }) }, "原生插件 · 配置与变更预览"], ["tools", "工具与扩展", { v: "tools", s: "" }, ""], ["cron", "定时任务", { v: "cron", s: "" }, ""]]],
@@ -3865,7 +3826,7 @@ async function v3renderSec(T, s, body) {
   const owner = V3; body.dataset.v3sec = s.id; owner.rendered.add(s.id);
   const st = v3st(T.k);
   try { if (s.src.fn) await s.src.fn(body); else await OLDV[s.src.v](body, s.src.s); }
-  catch (e) { if (e.status === 401) throw e; body.innerHTML = `<div class="card empty"><b>😿</b>这一块没加载出来：${esc(scrub(e.message || ""))}<br><br><button class="btn" data-v3retry="${s.id}">再试一次</button></div>`; }
+  catch (e) { if (e.status === 401) throw e; body.innerHTML = `<div class="card empty"><span class="empty-ic">${ic("sad")}</span>这一块没加载出来：${esc(scrub(e.message || ""))}<br><br><button class="btn" data-v3retry="${s.id}">再试一次</button></div>`; }
   if (V3 !== owner || !body.isConnected) return;
   v3tidy(body, T.k, s.id);
   const q = st.q?.[s.id]; const inp = body.querySelector('input[type="search"]'); if (q && inp && !inp.value) { inp.value = q; inp.dispatchEvent(new Event("input", { bubbles: true })); }
@@ -3906,7 +3867,7 @@ async function v3topic(T, sec, opts = {}) {
   const chips = T.secs.map(s => `<a class="v3chip" href="#/${T.k}#${s.id}" data-v3chip="${s.id}">${esc(s.title)}</a>`).join("");
   const secs = T.secs.map((s, i) => `<details class="v3sec card" id="v3s-${s.id}" data-sec="${s.id}" ${open.has(s.id) ? "open" : ""}><summary><span class="v4n" aria-hidden="true">${String(i + 1).padStart(2, "0")}</span><b>${esc(s.title)}</b>${s.sum ? `<span class="v3sum">${esc(s.sum)}</span>` : ""}<span class="v3tg" aria-hidden="true"></span></summary><div class="v3body"></div></details>`).join("");
   v.innerHTML = `<div class="view v3page" data-t="${T.k}" style="--hue:${V4HUE[T.k] || 200}"><div class="v3head"><div class="v3bc" aria-label="当前位置"><a href="#/more" data-v3back>更多</a><i class="v4sep" aria-hidden="true">›</i><b>${esc(T.t)}</b><span id="v3bcs"></span></div>
-    <div class="v3row"><a class="v3back" href="#/more" data-v3back aria-label="返回更多">‹ 更多</a><span class="v4badge" aria-hidden="true">${ic(T.i)}</span><h1>${esc(T.t)}<small class="v4sub">${esc(T.d)}</small></h1><button class="iconbtn" data-act="search" aria-label="全局搜索">${ic("search")}</button><button class="iconbtn" data-act="theme" aria-label="切换深浅色">${ic(isDark() ? "sun" : "moon")}</button></div>
+    <div class="v3row"><a class="v3back" href="#/more" data-v3back aria-label="返回更多">${ic("back")} 更多</a><span class="v4badge" aria-hidden="true">${ic(T.i)}</span><h1>${esc(T.t)}<small class="v4sub">${esc(T.d)}</small></h1><button class="iconbtn" data-act="search" aria-label="全局搜索">${ic("search")}</button><button class="iconbtn" data-act="theme" aria-label="切换深浅色">${ic(isDark() ? "sun" : "moon")}</button></div>
     <nav class="v3chips" aria-label="分区">${chips}</nav></div>${secs}</div>`;
   { const f = sessionStorage.getItem("v4from"); if (f && T.k !== "groups") v.querySelector(".v3bc").insertAdjacentHTML("afterbegin", `<a class="v4from" href="#/groups#overview" data-v4from>‹ 回到 各群一览</a>`); else if (T.k === "groups") sessionStorage.removeItem("v4from"); }
   V3 = { k: T.k, el: v.firstChild, rendered: new Set(), curSec: "", lastSec: "" };
@@ -3969,7 +3930,7 @@ function v3detail(d) {
   sheet(`<div class="v3dh"><b>${esc(d.t || "详情")}</b><button type="button" class="btn sm" data-v3x>关闭</button></div><div class="v3dbody"><div class="skel"></div></div>`, async (el, close) => {
     el.classList.add("wide", "v3d"); el.querySelector("[data-v3x]").onclick = () => close();
     const body = el.querySelector(".v3dbody"); const mo = new MutationObserver(() => body.querySelectorAll("header.top").forEach(x => x.remove())); mo.observe(body, { childList: true, subtree: true });
-    try { await OLDV[d.v](body, d.s); } catch (x) { if (x.status === 401) throw x; body.innerHTML = `<div class="card empty"><b>😿</b>${esc(scrub(x.message || ""))}</div>`; }
+    try { await OLDV[d.v](body, d.s); } catch (x) { if (x.status === 401) throw x; body.innerHTML = `<div class="card empty"><span class="empty-ic">${ic("sad")}</span>${esc(scrub(x.message || ""))}</div>`; }
   }, "v3detail");
 }
 

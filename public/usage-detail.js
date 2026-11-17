@@ -1,3 +1,4 @@
+import { ic } from "./icons.js?v=2026.11.17.1-icons";
 const BUCKETS = [['input','输入'],['output','输出'],['cacheRead','缓存读取'],['cacheWrite','缓存写入']];
 const DIMENSIONS = [['model','模型'],['provider','服务商'],['date','日期']];
 const esc = s => String(s ?? '').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
@@ -26,7 +27,7 @@ export function renderUsageDetail(d, segment='model', status) {
  const t=d.totals||{},state=status||d.refresh?.status||'fresh';
  const label=state==='refreshing'?'正在读取真实统计':state==='stale'?'旧快照 · 刷新未成功':'已读取';
  const rows=(segment==='provider'?d.providers:segment==='date'?d.daily:d.models)||[];
- return `<div class="ud-page"><header class="top"><a class="iconbtn back ud-back" href="#/models" aria-label="返回模型与用量">‹</a><h1>消耗详情<span class="sub">API 等价估价 · 非实际账单</span></h1></header>
+ return `<div class="ud-page"><header class="top"><a class="iconbtn back ud-back" href="#/models" aria-label="返回模型与用量">${ic("back")}</a><h1>消耗详情<span class="sub">API 等价估价 · 非实际账单</span></h1></header>
  <div class="card uc ud-hero" data-refresh="${esc(state)}"><div class="uc-head"><b>全部已记录用量估价</b><span class="ud-chip ud-chip-${esc(state)}">${label}</span></div><div class="big tnum">${!t.pricedEntries&&gaps(t)?'无法计算':t.totalTokens?amount(t.totalCost,t.totalCostUpper,2):'—'}<small>USD</small></div><div>${count(t.totalTokens)} tokens · ${count(t.pricedEntries)} 条已估算记录</div>${buckets(t)}${notes(d)}<div class="uc-sub">快照 ${time(d.updatedAt)}${d.complete===false?' · 统计不完整':''}</div><button type="button" class="btn ud-refresh"${state==='refreshing'?' disabled':''}>${state==='refreshing'?'刷新中…':'刷新真实统计'}</button></div>
  <div class="seg ud-seg" role="tablist" aria-label="明细维度">${DIMENSIONS.map(([id,label])=>`<button type="button" role="tab" data-ud-segment="${id}" aria-selected="${id===segment}">${label}</button>`).join('')}</div>
  <div class="ud-list">${rows.filter(r=>r.totalTokens||gaps(r)).map(r=>`<div class="card ud-row"><div class="t">${esc(r.model||r.provider||r.date)}</div>${r.referencePriceEntries?'<div class="d">包含 Fast 变体参考价，非公共 API 同型号官方价</div>':''}${gaps(r)?`<div class="d">${gaps(r)} 条无法计算，未折为零；${count(r.totalTokens)} 已知 tokens</div>`:''}${buckets(r)}<b class="ud-amt tnum">${!r.pricedEntries&&gaps(r)?'无法计算':amount(r.totalCost,r.totalCostUpper)}</b></div>`).join('')||'<div class="card ud-empty">暂无已记录用量</div>'}</div></div>`;

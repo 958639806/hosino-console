@@ -1301,3 +1301,39 @@ details[open]>.mc-summary::before{transform:rotate(90deg)}
 .mc-meta .pill{max-width:100%;white-space:normal;overflow-wrap:anywhere}
 .cx-prov>.mc-summary{padding:4px 0}
 .mc-body{min-width:0;max-width:100%;padding-top:10px}
+
+
+/* ---------- 星野·线标（2026.11.17 草稿接入） ---------- */
+/* 星野·线标：预览与接入共用的最小样式。不改布局结构，只补图标表现。 */
+.hs-icon{display:block;flex:none;width:1em;height:1em}
+.hs-icon .hs-fill{fill:none;stroke:none}
+.tab[aria-current=page] .hs-icon .hs-fill{
+  fill:color-mix(in srgb,currentColor 22%,transparent);
+}
+.hs-icon--missing{opacity:.45}
+.st-icon{width:18px;height:18px;flex:none}
+.st-icon.is-ok{color:var(--ok)}
+.st-icon.is-bad{color:var(--bad)}
+.st-icon.is-warn{color:var(--warn)}
+.st-icon.is-wait{color:var(--warn)}
+.st-icon.is-off{color:var(--fg3)}
+.empty-ic{display:grid;place-items:center;width:52px;height:52px;margin:0 auto 10px;color:var(--accent);background:var(--accent-soft);border-radius:16px}
+.empty-ic .hs-icon{width:28px;height:28px}
+.iconbtn .hs-icon{width:20px;height:20px}
+.cx-mic .hs-icon,.mic .hs-icon{width:20px;height:20px}
+.file-ic{display:inline-grid;place-items:center;width:22px;height:22px;color:var(--fg2)}
+.file-ic .hs-icon{width:20px;height:20px}
+
+.pen .hs-icon{width:14px;height:14px;display:inline-block;vertical-align:middle}
+.pin-ic{display:inline-flex;vertical-align:middle;margin-right:4px;color:var(--accent)}
+.pin-ic .hs-icon{width:14px;height:14px}
+.hi-spark{display:inline-flex;vertical-align:middle;margin-left:4px;color:var(--accent)}
+.hi-spark .hs-icon{width:18px;height:18px}
+.ch-ic .hs-icon{width:16px;height:16px}
+.cx-mic .hs-icon{width:20px;height:20px}
+.avatar .hs-icon{width:22px;height:22px}
+.v3back .hs-icon{width:18px;height:18px;display:inline-block;vertical-align:middle}
+.st .hs-icon{width:14px;height:14px}
+.qqwarn .hs-icon{width:16px;height:16px;display:inline-block;vertical-align:-3px;margin-right:4px}
+.newgroup .hs-icon{width:16px;height:16px;display:inline-block;vertical-align:middle}
+.cp-perr .hs-icon{width:14px;height:14px;display:inline-block;vertical-align:middle}

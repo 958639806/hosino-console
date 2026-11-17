@@ -10,7 +10,7 @@
     "start": "node server.mjs",
     "test": "node --test tests/*.test.mjs",
     "test:backend": "node --test tests/usage-*.test.mjs tests/http.test.mjs tests/startup.test.mjs",
-    "test:frontend": "node --test tests/detail-dom.test.mjs tests/model-collapse.test.mjs"
+    "test:frontend": "node --test tests/detail-dom.test.mjs tests/model-collapse.test.mjs tests/icons.test.mjs"
   },
   "dependencies": {
     "bcryptjs": "3.0.3",

@@ -1,0 +1,280 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<svg xmlns="http://www.w3.org/2000/svg" width="962" height="1396" viewBox="0 0 962 1396">
+  <rect width="100%" height="100%" fill="#f3efe7"/>
+  <text x="48" y="52" font-family="Noto Serif CJK SC" font-size="32" font-weight="700" fill="#1d1813">星野·线标</text>
+  <text x="48" y="84" font-family="Noto Sans CJK SC" font-size="14" fill="#5b5247">浅色 · 24×24 · 线宽 1.8 · currentColor</text>
+  <text x="48" y="108" font-family="Noto Sans CJK SC" font-size="13" fill="#8f857a">导航 / 操作 / 状态 / 文件类型。状态同时用形状和颜色区分。</text>
+  <text x="48" y="140" font-family="Noto Sans CJK SC" font-size="18" font-weight="700" fill="#1d1813">导航</text>
+        <rect x="48" y="156" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(84 172) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path class="hs-fill" d="M5 10.8 12 4.6l7 6.2V19a1.6 1.6 0 0 1-1.6 1.6H6.6A1.6 1.6 0 0 1 5 19z"/><path d="M4.2 11.3 12 4.2l7.8 7.1"/><path d="M6.5 10.6V19a1.3 1.3 0 0 0 1.3 1.3h8.4A1.3 1.3 0 0 0 17.5 19v-8.4"/><path d="M10.4 20.3v-4.3h3.2v4.3"/></g>
+        <text x="96" y="218" text-anchor="middle" font-size="11" fill="#5b5247">概览</text>
+        <text x="96" y="232" text-anchor="middle" font-size="9" fill="#8f857a">home</text>
+        <rect x="158" y="156" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(194 172) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path class="hs-fill" d="M5.2 17.8 4 20.2a.8.8 0 0 1-1.2-.72V9.2A3.4 3.4 0 0 1 6.2 5.8h11.6A3.4 3.4 0 0 1 21.2 9.2v6.2a3.4 3.4 0 0 1-3.4 3.4H8.1z"/><path d="M19.8 11.6A7.8 7.8 0 0 1 9.2 18.7L4.2 20.1l1.2-4.5A7.8 7.8 0 1 1 19.8 11.6z"/></g>
+        <text x="206" y="218" text-anchor="middle" font-size="11" fill="#5b5247">会话</text>
+        <text x="206" y="232" text-anchor="middle" font-size="9" fill="#8f857a">chat</text>
+        <rect x="268" y="156" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(304 172) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path class="hs-fill" d="M3.5 4.5h17a2.3 2.3 0 0 1 2.3 2.3v10.4a2.3 2.3 0 0 1-2.3 2.3h-17A2.3 2.3 0 0 1 1.2 17.2V6.8A2.3 2.3 0 0 1 3.5 4.5z"/><rect x="3.5" y="4.5" width="17" height="15" rx="2.5"/><path d="m7.5 9.2 3.2 2.8-3.2 2.8M12.4 14.8h4.2"/></g>
+        <text x="316" y="218" text-anchor="middle" font-size="11" fill="#5b5247">原生 CLI</text>
+        <text x="316" y="232" text-anchor="middle" font-size="9" fill="#8f857a">term</text>
+        <rect x="378" y="156" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(414 172) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path class="hs-fill" d="M12 3.2 20 7.6v8.8L12 20.8 4 16.4V7.6z"/><path d="M12 3.2 20 7.6v8.8L12 20.8 4 16.4V7.6z"/><path d="M4 7.6 12 12l8-4.4M12 12v8.8"/></g>
+        <text x="426" y="218" text-anchor="middle" font-size="11" fill="#5b5247">模型与用量</text>
+        <text x="426" y="232" text-anchor="middle" font-size="9" fill="#8f857a">model</text>
+        <rect x="488" y="156" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(524 172) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8.4 6.5h11.2M8.4 12h11.2M8.4 17.5h7.6"/><circle cx="5.2" cy="6.5" r="1.05" fill="currentColor" stroke="none"/><circle cx="5.2" cy="12" r="1.05" fill="currentColor" stroke="none"/><circle cx="5.2" cy="17.5" r="1.05" fill="currentColor" stroke="none"/></g>
+        <text x="536" y="218" text-anchor="middle" font-size="11" fill="#5b5247">日志</text>
+        <text x="536" y="232" text-anchor="middle" font-size="9" fill="#8f857a">logs</text>
+        <rect x="598" y="156" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(634 172) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="6" cy="12" r="1.7" fill="currentColor" stroke="none"/><circle cx="12" cy="12" r="1.7" fill="currentColor" stroke="none"/><circle cx="18" cy="12" r="1.7" fill="currentColor" stroke="none"/></g>
+        <text x="646" y="218" text-anchor="middle" font-size="11" fill="#5b5247">更多</text>
+        <text x="646" y="232" text-anchor="middle" font-size="9" fill="#8f857a">more</text>
+        <rect x="708" y="156" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(744 172) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="9" cy="7.6" r="3.05"/><path d="M3.6 19.7a6.15 6.15 0 0 1 10.8 0"/><path d="M16.3 8.4a2.7 2.7 0 1 1 0 5.1"/><path d="M17.6 14.8a5.2 5.2 0 0 1 3.5 4.9"/></g>
+        <text x="756" y="218" text-anchor="middle" font-size="11" fill="#5b5247">性格</text>
+        <text x="756" y="232" text-anchor="middle" font-size="9" fill="#8f857a">people</text>
+        <rect x="818" y="156" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(854 172) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="9.15" y="3.7" width="5.7" height="9.3" rx="2.85"/><path d="M6.5 11.8a5.5 5.5 0 0 0 11 0"/><path d="M12 17.3v2.9M9.1 20.2h5.8"/></g>
+        <text x="866" y="218" text-anchor="middle" font-size="11" fill="#5b5247">语音</text>
+        <text x="866" y="232" text-anchor="middle" font-size="9" fill="#8f857a">voice</text>
+        <rect x="48" y="252" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(84 268) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path class="hs-fill" d="M12 3.8a8.2 8.2 0 1 1 0 16.4 8.2 8.2 0 0 1 0-16.4z"/><circle cx="12" cy="12" r="8.2"/><path d="M8.4 13.7a4.2 4.2 0 0 0 7.2 0"/><circle cx="9" cy="10" r="1.05" fill="currentColor" stroke="none"/><circle cx="15" cy="10" r="1.05" fill="currentColor" stroke="none"/></g>
+        <text x="96" y="314" text-anchor="middle" font-size="11" fill="#5b5247">表情</text>
+        <text x="96" y="328" text-anchor="middle" font-size="9" fill="#8f857a">smile</text>
+        <rect x="158" y="252" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(194 268) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9.4 4.6a3.15 3.15 0 0 0-3.5 3.5 3 3 0 0 0-1.6 3.1 3.15 3.15 0 0 0 2.2 3.4 3 3 0 0 0 2.9 2.5h.8V5.2A2.1 2.1 0 0 0 9.4 4.6z"/><path d="M14.6 4.6a3.15 3.15 0 0 1 3.5 3.5 3 3 0 0 1 1.6 3.1 3.15 3.15 0 0 1-2.2 3.4 3 3 0 0 1-2.9 2.5H14V5.2A2.1 2.1 0 0 1 14.6 4.6z"/><path d="M12 5.4v11.8"/></g>
+        <text x="206" y="314" text-anchor="middle" font-size="11" fill="#5b5247">记忆</text>
+        <text x="206" y="328" text-anchor="middle" font-size="9" fill="#8f857a">brain</text>
+        <rect x="268" y="252" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(304 268) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="8.3" cy="8" r="2.85"/><circle cx="15.6" cy="8.5" r="2.45"/><path d="M3.2 19.6a5.8 5.8 0 0 1 10.2 0"/><path d="M12.4 19.6a5.3 5.3 0 0 1 8.4 0"/></g>
+        <text x="316" y="314" text-anchor="middle" font-size="11" fill="#5b5247">群</text>
+        <text x="316" y="328" text-anchor="middle" font-size="9" fill="#8f857a">group</text>
+        <rect x="378" y="252" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(414 268) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3.4v4.2M15 3.4v4.2"/><path d="M7 7.6h10v3.5a5 5 0 0 1-10 0z"/><path d="M12 16.1v4.5"/></g>
+        <text x="426" y="314" text-anchor="middle" font-size="11" fill="#5b5247">能力与任务</text>
+        <text x="426" y="328" text-anchor="middle" font-size="9" fill="#8f857a">plug</text>
+        <rect x="488" y="252" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(524 268) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M10.66 6.00 L10.51 2.97 L13.49 2.97 L13.34 6.00 L16.53 7.84 L19.07 6.19 L20.56 8.78 L17.87 10.16 L17.87 13.84 L20.56 15.22 L19.07 17.81 L16.53 16.16 L13.34 18.00 L13.49 21.03 L10.51 21.03 L10.66 18.00 L7.47 16.16 L4.93 17.81 L3.44 15.22 L6.13 13.84 L6.13 10.16 L3.44 8.78 L4.93 6.19 L7.47 7.84 Z"/></g>
+        <text x="536" y="314" text-anchor="middle" font-size="11" fill="#5b5247">系统与权限</text>
+        <text x="536" y="328" text-anchor="middle" font-size="9" fill="#8f857a">gear</text>
+        <rect x="598" y="252" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(634 268) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.8 12.2a7.2 7.2 0 0 1 14.4 0"/><path d="M7.6 12.2a4.4 4.4 0 0 1 8.8 0"/><circle cx="12" cy="13.3" r="1.45"/><path d="M12 14.8v5.2"/></g>
+        <text x="646" y="314" text-anchor="middle" font-size="11" fill="#5b5247">渠道</text>
+        <text x="646" y="328" text-anchor="middle" font-size="9" fill="#8f857a">channel</text>
+        <rect x="708" y="252" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(744 268) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.2"/><path d="M12 7.2v5.1l3.4 2"/></g>
+        <text x="756" y="314" text-anchor="middle" font-size="11" fill="#5b5247">定时任务</text>
+        <text x="756" y="328" text-anchor="middle" font-size="9" fill="#8f857a">clock</text>
+        <rect x="818" y="252" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(854 268) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path class="hs-fill" d="M12 3.2 4.6 6.2v5.7c0 4.6 3.2 7.4 7.4 8.5 4.2-1.1 7.4-3.9 7.4-8.5V6.2z"/><path d="M12 3.2 4.6 6.2v5.7c0 4.6 3.2 7.4 7.4 8.5 4.2-1.1 7.4-3.9 7.4-8.5V6.2z"/><path d="m8.6 12.2 2.3 2.3 4.6-4.6"/></g>
+        <text x="866" y="314" text-anchor="middle" font-size="11" fill="#5b5247">审批与配对</text>
+        <text x="866" y="328" text-anchor="middle" font-size="9" fill="#8f857a">shield</text>
+        <rect x="48" y="348" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(84 364) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="16.5" cy="7.5" r="3.3"/><path d="M14.1 9.9 6.5 17.5"/><circle cx="5.8" cy="18.2" r="1.65"/></g>
+        <text x="96" y="410" text-anchor="middle" font-size="11" fill="#5b5247">工具与扩展</text>
+        <text x="96" y="424" text-anchor="middle" font-size="9" fill="#8f857a">wrench</text>
+        <rect x="158" y="348" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(194 364) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5.2h11.4A1.8 1.8 0 0 1 18.2 7v12.3H6.6A1.6 1.6 0 0 1 5 17.7z"/><path d="M5 5.2v12.5"/><path d="M8.3 8.5h6.5M8.3 11.7h6.5M8.3 14.9h4.2"/></g>
+        <text x="206" y="410" text-anchor="middle" font-size="11" fill="#5b5247">群报</text>
+        <text x="206" y="424" text-anchor="middle" font-size="9" fill="#8f857a">digest</text>
+        <rect x="268" y="348" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(304 364) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.4c1.1 3.2 4.8 5.3 4.8 9.2a4.8 4.8 0 0 1-9.6 0c0-2.3 1.3-3.8 2.3-4.8.4 1.5 1.1 2.5 2.1 2.9-.1-2.7 0-5.1.4-7.3z"/><path d="M12 16.8c-1.4 0-2.3-1-2.3-2.3"/></g>
+        <text x="316" y="410" text-anchor="middle" font-size="11" fill="#5b5247">小脾气</text>
+        <text x="316" y="424" text-anchor="middle" font-size="9" fill="#8f857a">flame</text>
+        <rect x="378" y="348" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(414 364) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12.7 3.2 5.5 13.3h6.2l-1.2 7.5 7.2-10.1h-6.2z"/></g>
+        <text x="426" y="410" text-anchor="middle" font-size="11" fill="#5b5247">主动行为</text>
+        <text x="426" y="424" text-anchor="middle" font-size="9" fill="#8f857a">bolt</text>
+        <rect x="488" y="348" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(524 364) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3.2 12.5h3.3l2.5-6.8 3.8 13.6 2.6-6.8h5.4"/></g>
+        <text x="536" y="410" text-anchor="middle" font-size="11" fill="#5b5247">审计与诊断</text>
+        <text x="536" y="424" text-anchor="middle" font-size="9" fill="#8f857a">pulse</text>
+        <rect x="598" y="348" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(634 364) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 5.2A2 2 0 0 1 7 3.4h11.5v15.5H7A2 2 0 0 0 5 20.7z"/><path d="M5 5.2v15.5M9 6.8h6.4"/></g>
+        <text x="646" y="410" text-anchor="middle" font-size="11" fill="#5b5247">手册</text>
+        <text x="646" y="424" text-anchor="middle" font-size="9" fill="#8f857a">book</text><text x="48" y="472" font-family="Noto Sans CJK SC" font-size="18" font-weight="700" fill="#1d1813">操作</text>
+        <rect x="48" y="488" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(84 504) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14.5 5.5 8 12l6.5 6.5"/></g>
+        <text x="96" y="550" text-anchor="middle" font-size="11" fill="#5b5247">返回</text>
+        <text x="96" y="564" text-anchor="middle" font-size="9" fill="#8f857a">back</text>
+        <rect x="158" y="488" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(194 504) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M9.5 5.5 16 12l-6.5 6.5"/></g>
+        <text x="206" y="550" text-anchor="middle" font-size="11" fill="#5b5247">进入</text>
+        <text x="206" y="564" text-anchor="middle" font-size="9" fill="#8f857a">chev</text>
+        <rect x="268" y="488" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(304 504) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m6 14.5 6-6 6 6"/></g>
+        <text x="316" y="550" text-anchor="middle" font-size="11" fill="#5b5247">向上</text>
+        <text x="316" y="564" text-anchor="middle" font-size="9" fill="#8f857a">up</text>
+        <rect x="378" y="488" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(414 504) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5.5v13M5.5 12h13"/></g>
+        <text x="426" y="550" text-anchor="middle" font-size="11" fill="#5b5247">添加</text>
+        <text x="426" y="564" text-anchor="middle" font-size="9" fill="#8f857a">plus</text>
+        <rect x="488" y="488" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(524 504) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="6.4"/><path d="m16.2 16.2 4.1 4.1"/></g>
+        <text x="536" y="550" text-anchor="middle" font-size="11" fill="#5b5247">搜索</text>
+        <text x="536" y="564" text-anchor="middle" font-size="9" fill="#8f857a">search</text>
+        <rect x="598" y="488" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(634 504) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.5"/><path d="M12 3.2v2.2M12 18.6v2.2M4.93 4.93l1.56 1.56M17.51 17.51l1.56 1.56M3.2 12h2.2M18.6 12h2.2M4.93 19.07l1.56-1.56M17.51 6.49l1.56-1.56"/></g>
+        <text x="646" y="550" text-anchor="middle" font-size="11" fill="#5b5247">浅色</text>
+        <text x="646" y="564" text-anchor="middle" font-size="9" fill="#8f857a">sun</text>
+        <rect x="708" y="488" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(744 504) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.2 13.1A8.2 8.2 0 1 1 10.9 3.8 6.4 6.4 0 0 0 20.2 13.1z"/></g>
+        <text x="756" y="550" text-anchor="middle" font-size="11" fill="#5b5247">深色</text>
+        <text x="756" y="564" text-anchor="middle" font-size="9" fill="#8f857a">moon</text>
+        <rect x="818" y="488" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(854 504) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 4.5h4.2A1.8 1.8 0 0 1 20 6.3v11.4a1.8 1.8 0 0 1-1.8 1.8H14"/><path d="m10 16.2 4.4-4.2L10 7.8"/><path d="M14.4 12H4"/></g>
+        <text x="866" y="550" text-anchor="middle" font-size="11" fill="#5b5247">退出登录</text>
+        <text x="866" y="564" text-anchor="middle" font-size="9" fill="#8f857a">out</text>
+        <rect x="48" y="584" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(84 600) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M5 7.2h14"/><path d="M9.6 11v5.4M14.4 11v5.4"/><path d="M7.1 7.2 7.9 18.2A1.6 1.6 0 0 0 9.5 19.7h5a1.6 1.6 0 0 0 1.6-1.5l.8-11"/><path d="M9.3 7.2V5.3a1 1 0 0 1 1-1h3.4a1 1 0 0 1 1 1v1.9"/></g>
+        <text x="96" y="646" text-anchor="middle" font-size="11" fill="#5b5247">删除</text>
+        <text x="96" y="660" text-anchor="middle" font-size="9" fill="#8f857a">trash</text>
+        <rect x="158" y="584" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(194 600) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.2 12a8.2 8.2 0 1 1-2.5-5.9"/><path d="M20.2 4.5v5.3h-5.3"/></g>
+        <text x="206" y="646" text-anchor="middle" font-size="11" fill="#5b5247">刷新</text>
+        <text x="206" y="660" text-anchor="middle" font-size="9" fill="#8f857a">refresh</text>
+        <rect x="268" y="584" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(304 600) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M4.2 7h8.4M16.8 7h3"/><circle cx="14.6" cy="7" r="1.85"/><path d="M4.2 12h3.2M11.6 12h8.2"/><circle cx="9.4" cy="12" r="1.85"/><path d="M4.2 17h10.4M18.8 17h1"/><circle cx="16.6" cy="17" r="1.85"/></g>
+        <text x="316" y="646" text-anchor="middle" font-size="11" fill="#5b5247">模型和思考</text>
+        <text x="316" y="660" text-anchor="middle" font-size="9" fill="#8f857a">tune</text>
+        <rect x="378" y="584" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(414 600) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M20.8 4.2 3.5 10.9l7.5 2 2 7.5z"/><path d="M10.9 12.9 20.8 4.2"/></g>
+        <text x="426" y="646" text-anchor="middle" font-size="11" fill="#5b5247">发送</text>
+        <text x="426" y="660" text-anchor="middle" font-size="9" fill="#8f857a">send</text>
+        <rect x="488" y="584" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(524 600) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path fill="currentColor" stroke="none" d="M8.1 5.7a1.2 1.2 0 0 1 1.84-1.02l9.3 5.76a1.2 1.2 0 0 1 0 2.12l-9.3 5.76A1.2 1.2 0 0 1 8.1 17.3z"/></g>
+        <text x="536" y="646" text-anchor="middle" font-size="11" fill="#5b5247">播放 / 开始</text>
+        <text x="536" y="660" text-anchor="middle" font-size="9" fill="#8f857a">play</text>
+        <rect x="598" y="584" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(634 600) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="6.2" y="6.2" width="11.6" height="11.6" rx="2.4" fill="currentColor" stroke="none"/></g>
+        <text x="646" y="646" text-anchor="middle" font-size="11" fill="#5b5247">中止</text>
+        <text x="646" y="660" text-anchor="middle" font-size="9" fill="#8f857a">stop</text>
+        <rect x="708" y="584" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(744 600) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m13.5 5.1 5.4 5.4L8.6 20.8H3.2v-5.4z"/><path d="M12.1 6.5 17.4 11.8"/></g>
+        <text x="756" y="646" text-anchor="middle" font-size="11" fill="#5b5247">改名</text>
+        <text x="756" y="660" text-anchor="middle" font-size="9" fill="#8f857a">pencil</text>
+        <rect x="818" y="584" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(854 600) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.2v11.2M7.6 11.2 12 15.6l4.4-4.4"/><path d="M5 19.8h14"/></g>
+        <text x="866" y="646" text-anchor="middle" font-size="11" fill="#5b5247">下载</text>
+        <text x="866" y="660" text-anchor="middle" font-size="9" fill="#8f857a">download</text>
+        <rect x="48" y="680" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(84 696) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8.6 11.1v6.1a3.5 3.5 0 0 0 7 0V8.3a2.4 2.4 0 1 0-4.8 0v8.6a1.2 1.2 0 1 0 2.4 0V9.6"/></g>
+        <text x="96" y="742" text-anchor="middle" font-size="11" fill="#5b5247">附件</text>
+        <text x="96" y="756" text-anchor="middle" font-size="9" fill="#8f857a">clip</text>
+        <rect x="158" y="680" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(194 696) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="3.6" y="5.2" width="16.8" height="13.6" rx="2.2"/><circle cx="9" cy="10.1" r="1.45"/><path d="m4 16.8 4.3-4.1 3.1 2.9 3.4-3.5 5 4.7"/></g>
+        <text x="206" y="742" text-anchor="middle" font-size="11" fill="#5b5247">图片</text>
+        <text x="206" y="756" text-anchor="middle" font-size="9" fill="#8f857a">image</text>
+        <rect x="268" y="680" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(304 696) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path fill="currentColor" stroke="none" d="M5.6 8.6h4.4v4.3c0 2.3-1.5 3.8-4.4 4.6v-2.1c1.5-.5 2.2-1.3 2.2-2.5H5.6z"/><path fill="currentColor" stroke="none" d="M14 8.6h4.4v4.3c0 2.3-1.5 3.8-4.4 4.6v-2.1c1.5-.5 2.2-1.3 2.2-2.5H14z"/></g>
+        <text x="316" y="742" text-anchor="middle" font-size="11" fill="#5b5247">引用</text>
+        <text x="316" y="756" text-anchor="middle" font-size="9" fill="#8f857a">quote</text>
+        <rect x="378" y="680" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(414 696) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 14.6v6.6"/><path d="M8.2 3.8h7.6v1.6L14.4 9a3.2 3.2 0 1 1-4.8 0L8.2 5.4z"/></g>
+        <text x="426" y="742" text-anchor="middle" font-size="11" fill="#5b5247">置顶</text>
+        <text x="426" y="756" text-anchor="middle" font-size="9" fill="#8f857a">pin</text><text x="48" y="804" font-family="Noto Sans CJK SC" font-size="18" font-weight="700" fill="#1d1813">状态</text>
+        <rect x="48" y="820" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(84 836) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="m5.2 12.2 4.6 4.6 9-9.4"/></g>
+        <text x="96" y="882" text-anchor="middle" font-size="11" fill="#5b5247">完成</text>
+        <text x="96" y="896" text-anchor="middle" font-size="9" fill="#8f857a">check</text>
+        <rect x="158" y="820" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(194 836) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M6.2 6.2 17.8 17.8M17.8 6.2 6.2 17.8"/></g>
+        <text x="206" y="882" text-anchor="middle" font-size="11" fill="#5b5247">关闭 / 失败</text>
+        <text x="206" y="896" text-anchor="middle" font-size="9" fill="#8f857a">close</text>
+        <rect x="268" y="820" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(304 836) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.2"/><path d="m8 12.2 2.7 2.7 5.4-5.6"/></g>
+        <text x="316" y="882" text-anchor="middle" font-size="11" fill="#5b5247">成功</text>
+        <text x="316" y="896" text-anchor="middle" font-size="9" fill="#8f857a">checkCircle</text>
+        <rect x="378" y="820" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(414 836) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.2"/><path d="M9.1 9.1 14.9 14.9M14.9 9.1 9.1 14.9"/></g>
+        <text x="426" y="882" text-anchor="middle" font-size="11" fill="#5b5247">失败</text>
+        <text x="426" y="896" text-anchor="middle" font-size="9" fill="#8f857a">closeCircle</text>
+        <rect x="488" y="820" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(524 836) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4.8 20.4 19.4H3.6z"/><path d="M12 10v4.2"/><circle cx="12" cy="16.85" r=".9" fill="currentColor" stroke="none"/></g>
+        <text x="536" y="882" text-anchor="middle" font-size="11" fill="#5b5247">警告</text>
+        <text x="536" y="896" text-anchor="middle" font-size="9" fill="#8f857a">warn</text>
+        <rect x="598" y="820" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(634 836) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><rect x="5.4" y="10.8" width="13.2" height="9.2" rx="2.1"/><path d="M8.3 10.8V7.6a3.7 3.7 0 0 1 7.4 0v3.2"/></g>
+        <text x="646" y="882" text-anchor="middle" font-size="11" fill="#5b5247">受保护</text>
+        <text x="646" y="896" text-anchor="middle" font-size="9" fill="#8f857a">lock</text>
+        <rect x="708" y="820" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(744 836) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.2"/><path d="M6.4 17.6 17.6 6.4"/></g>
+        <text x="756" y="882" text-anchor="middle" font-size="11" fill="#5b5247">禁止</text>
+        <text x="756" y="896" text-anchor="middle" font-size="9" fill="#8f857a">ban</text>
+        <rect x="818" y="820" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(854 836) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M7.2 10.4a4.8 4.8 0 0 1 9.6 0c0 4 1.1 5.2 1.1 5.2H6.1S7.2 14.4 7.2 10.4z"/><path d="M10.3 17.8a1.7 1.7 0 0 0 3.4 0"/></g>
+        <text x="866" y="882" text-anchor="middle" font-size="11" fill="#5b5247">通知</text>
+        <text x="866" y="896" text-anchor="middle" font-size="9" fill="#8f857a">bell</text>
+        <rect x="48" y="916" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(84 932) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M8.2 9.2h5.2L8.2 14.6h5.2"/><path d="M14.8 5.4h3.6l-3.6 3.6h3.6"/></g>
+        <text x="96" y="978" text-anchor="middle" font-size="11" fill="#5b5247">保活 / 安静</text>
+        <text x="96" y="992" text-anchor="middle" font-size="9" fill="#8f857a">sleep</text>
+        <rect x="158" y="916" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(194 932) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><ellipse cx="12" cy="15.4" rx="4.3" ry="3.5" fill="currentColor" stroke="none"/><circle cx="6.35" cy="9.15" r="1.85" fill="currentColor" stroke="none"/><circle cx="9.95" cy="6.45" r="1.85" fill="currentColor" stroke="none"/><circle cx="14.05" cy="6.45" r="1.85" fill="currentColor" stroke="none"/><circle cx="17.65" cy="9.15" r="1.85" fill="currentColor" stroke="none"/></g>
+        <text x="206" y="978" text-anchor="middle" font-size="11" fill="#5b5247">还没有内容</text>
+        <text x="206" y="992" text-anchor="middle" font-size="9" fill="#8f857a">paw</text>
+        <rect x="268" y="916" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(304 932) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3.2 13.6 9.2 19.8 10.4 13.6 11.6 12 17.6 10.4 11.6 4.2 10.4 10.4 9.2z"/><path d="M18.4 15.2v3.8M16.5 17.1h3.8"/></g>
+        <text x="316" y="978" text-anchor="middle" font-size="11" fill="#5b5247">问候点缀</text>
+        <text x="316" y="992" text-anchor="middle" font-size="9" fill="#8f857a">sparkle</text>
+        <rect x="378" y="916" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(414 932) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.2"/><path d="M8.6 16.2a4.2 4.2 0 0 1 6.8 0"/><circle cx="9" cy="10" r="1.05" fill="currentColor" stroke="none"/><circle cx="15" cy="10" r="1.05" fill="currentColor" stroke="none"/></g>
+        <text x="426" y="978" text-anchor="middle" font-size="11" fill="#5b5247">出错空状态</text>
+        <text x="426" y="992" text-anchor="middle" font-size="9" fill="#8f857a">sad</text>
+        <rect x="488" y="916" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(524 932) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 18.8S5.5 14.5 4.2 10.3A3.9 3.9 0 0 1 12 8.3a3.9 3.9 0 0 1 7.8 2C18.5 14.5 12 18.8 12 18.8z"/></g>
+        <text x="536" y="978" text-anchor="middle" font-size="11" fill="#5b5247">定时心跳</text>
+        <text x="536" y="992" text-anchor="middle" font-size="9" fill="#8f857a">heart</text>
+        <rect x="598" y="916" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(634 932) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="8" r="3.15"/><path d="M5.2 19.5a6.8 6.8 0 0 1 13.6 0"/></g>
+        <text x="646" y="978" text-anchor="middle" font-size="11" fill="#5b5247">发言人</text>
+        <text x="646" y="992" text-anchor="middle" font-size="9" fill="#8f857a">user</text>
+        <rect x="708" y="916" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(744 932) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.2"/><path d="m8 12.2 2.7 2.7 5.4-5.6"/></g>
+        <text x="756" y="978" text-anchor="middle" font-size="11" fill="#5b5247">已生效</text>
+        <text x="756" y="992" text-anchor="middle" font-size="9" fill="#8f857a">statusOn</text>
+        <rect x="818" y="916" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(854 932) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.2"/><path d="M8 12h8"/></g>
+        <text x="866" y="978" text-anchor="middle" font-size="11" fill="#5b5247">没生效</text>
+        <text x="866" y="992" text-anchor="middle" font-size="9" fill="#8f857a">statusOff</text>
+        <rect x="48" y="1012" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(84 1028) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.2"/><path d="M12 8v4.3l3 1.8"/></g>
+        <text x="96" y="1074" text-anchor="middle" font-size="11" fill="#5b5247">攒记录中</text>
+        <text x="96" y="1088" text-anchor="middle" font-size="9" fill="#8f857a">statusWait</text><text x="48" y="1136" font-family="Noto Sans CJK SC" font-size="18" font-weight="700" fill="#1d1813">文件类型</text>
+        <rect x="48" y="1152" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(84 1168) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 3.5H7A1.6 1.6 0 0 0 5.4 5.1v13.8A1.6 1.6 0 0 0 7 20.5h10a1.6 1.6 0 0 0 1.6-1.6V8.4z"/><path d="M13.5 3.5V8.4h4.9"/><path d="M8.4 13h7.2M8.4 16.2h4.8"/></g>
+        <text x="96" y="1214" text-anchor="middle" font-size="11" fill="#5b5247">人设文件</text>
+        <text x="96" y="1228" text-anchor="middle" font-size="9" fill="#8f857a">file</text>
+        <rect x="158" y="1152" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(194 1168) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 3.5H7A1.6 1.6 0 0 0 5.4 5.1v13.8A1.6 1.6 0 0 0 7 20.5h10a1.6 1.6 0 0 0 1.6-1.6V8.4z"/><path d="M13.5 3.5V8.4h4.9"/><path d="M8.3 16.8v-4.4h2.2a1.4 1.4 0 0 1 0 2.8H8.3"/></g>
+        <text x="206" y="1214" text-anchor="middle" font-size="11" fill="#5b5247">PDF</text>
+        <text x="206" y="1228" text-anchor="middle" font-size="9" fill="#8f857a">filePdf</text>
+        <rect x="268" y="1152" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(304 1168) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 3.5H7A1.6 1.6 0 0 0 5.4 5.1v13.8A1.6 1.6 0 0 0 7 20.5h10a1.6 1.6 0 0 0 1.6-1.6V8.4z"/><path d="M13.5 3.5V8.4h4.9"/><path d="M12 8.8v8.2"/><path d="M10.6 10.4h2.8M10.6 12.4h2.8M10.6 14.4h2.8M10.6 16.4h2.8"/></g>
+        <text x="316" y="1214" text-anchor="middle" font-size="11" fill="#5b5247">压缩包</text>
+        <text x="316" y="1228" text-anchor="middle" font-size="9" fill="#8f857a">fileZip</text>
+        <rect x="378" y="1152" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(414 1168) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 3.5H7A1.6 1.6 0 0 0 5.4 5.1v13.8A1.6 1.6 0 0 0 7 20.5h10a1.6 1.6 0 0 0 1.6-1.6V8.4z"/><path d="M13.5 3.5V8.4h4.9"/><path d="M10.2 16.8V12l5-1v3.2"/><circle cx="9.3" cy="16.8" r="1.4"/><circle cx="13.8" cy="14.2" r="1.4"/></g>
+        <text x="426" y="1214" text-anchor="middle" font-size="11" fill="#5b5247">音频</text>
+        <text x="426" y="1228" text-anchor="middle" font-size="9" fill="#8f857a">fileAudio</text>
+        <rect x="488" y="1152" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(524 1168) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 3.5H7A1.6 1.6 0 0 0 5.4 5.1v13.8A1.6 1.6 0 0 0 7 20.5h10a1.6 1.6 0 0 0 1.6-1.6V8.4z"/><path d="M13.5 3.5V8.4h4.9"/><rect x="8.2" y="12.2" width="5.2" height="4.4" rx="0.8"/><path d="m13.4 13.4 2.6-1v4.2l-2.6-1z"/></g>
+        <text x="536" y="1214" text-anchor="middle" font-size="11" fill="#5b5247">视频</text>
+        <text x="536" y="1228" text-anchor="middle" font-size="9" fill="#8f857a">fileVideo</text>
+        <rect x="598" y="1152" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(634 1168) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 3.5H7A1.6 1.6 0 0 0 5.4 5.1v13.8A1.6 1.6 0 0 0 7 20.5h10a1.6 1.6 0 0 0 1.6-1.6V8.4z"/><path d="M13.5 3.5V8.4h4.9"/><path d="M8.4 12.6h7.2M8.4 15h7.2M8.4 17.4h4.6"/></g>
+        <text x="646" y="1214" text-anchor="middle" font-size="11" fill="#5b5247">文档</text>
+        <text x="646" y="1228" text-anchor="middle" font-size="9" fill="#8f857a">fileDoc</text>
+        <rect x="708" y="1152" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(744 1168) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 3.5H7A1.6 1.6 0 0 0 5.4 5.1v13.8A1.6 1.6 0 0 0 7 20.5h10a1.6 1.6 0 0 0 1.6-1.6V8.4z"/><path d="M13.5 3.5V8.4h4.9"/><path d="M8.2 12.2h7.6v6.2H8.2z"/><path d="M8.2 14.4h7.6M8.2 16.4h7.6M11 12.2v6.2"/></g>
+        <text x="756" y="1214" text-anchor="middle" font-size="11" fill="#5b5247">表格</text>
+        <text x="756" y="1228" text-anchor="middle" font-size="9" fill="#8f857a">fileSheet</text>
+        <rect x="818" y="1152" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(854 1168) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 3.5H7A1.6 1.6 0 0 0 5.4 5.1v13.8A1.6 1.6 0 0 0 7 20.5h10a1.6 1.6 0 0 0 1.6-1.6V8.4z"/><path d="M13.5 3.5V8.4h4.9"/><path d="M8.4 12.6h7.2M8.4 15h7.2M8.4 17.4h4.6"/></g>
+        <text x="866" y="1214" text-anchor="middle" font-size="11" fill="#5b5247">文本</text>
+        <text x="866" y="1228" text-anchor="middle" font-size="9" fill="#8f857a">fileText</text>
+        <rect x="48" y="1248" width="96" height="84" rx="16" fill="#fffdf8" stroke="#e4ddd2"/>
+        <g transform="translate(84 1264) scale(1.1666666666666667)" fill="none" stroke="#1d1813" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M13.5 3.5H7A1.6 1.6 0 0 0 5.4 5.1v13.8A1.6 1.6 0 0 0 7 20.5h10a1.6 1.6 0 0 0 1.6-1.6V8.4z"/><path d="M13.5 3.5V8.4h4.9"/><circle cx="9.4" cy="13.2" r="1.1"/><path d="m8 18.8 2.4-2.4 1.7 1.5 2.2-2.2 2.5 3.1"/></g>
+        <text x="96" y="1310" text-anchor="middle" font-size="11" fill="#5b5247">图片文件</text>
+        <text x="96" y="1324" text-anchor="middle" font-size="9" fill="#8f857a">fileImage</text>
+</svg>

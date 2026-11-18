@@ -2,23 +2,25 @@
 
 ## 环境
 
-- Node.js **24.21.0 或更高版本**、npm；用量归档读取使用内置 SQLite/zstd。
+- Node.js **推荐 24.21.0 或更高版本**、npm；用量归档读取使用内置 SQLite/zstd。
+- **Node.js 22.23.2 已补测通过安装、启动、登录和费用统计**，不代表整个 Node 22 系列均已验证；该版本内置 SQLite 仍为实验特性。
+- 安装包的 `package.json` 仍声明 `node >=24.21.0`。Node 22.23.2 默认安装会提示版本不符，启用 `engine-strict` 则拒绝安装。严格检查环境请使用推荐的 Node 版本。
 - 具备所需功能的 OpenClaw 网关与自己的配置。控制台进程可以独立启动；网关、QQ、Qdrant、语音等外部功能仍需由安装者提供对应依赖。
 - Python 3 / systemd / voice CLI / ffmpeg 等是特定管理功能的可选宿主依赖；缺失时不会变成虚假成功。
 - 本包不安装、修改或重启网关/xray，不包含网关证书或设备配对实验。
 
 ## 完整安装包
 
-下载正式 release 的 `hosino-console-v2026.11.15.1.tar.gz`（或 zip）和 `SHA256SUMS`，先校验：
+下载正式 release 的 `hosino-console-v2026.11.18.1.tar.gz`（或 zip）和 `SHA256SUMS`，先校验：
 
 ```sh
 sha256sum --check --ignore-missing SHA256SUMS
-tar -xzf hosino-console-v2026.11.15.1.tar.gz
-cd hosino-console-v2026.11.15.1
+tar -xzf hosino-console-v2026.11.18.1.tar.gz
+cd hosino-console-v2026.11.18.1
 npm ci --omit=dev
 ```
 
-目录中的 18 个根运行模块、20 个 public 资源、package.json 与 package-lock.json 均必需，不要只覆盖 server.mjs 或 public。配套 `patches/openclaw/` 保留在包内，但不会自动应用。
+目录中的 18 个根运行模块、22 个 public 资源、package.json 与 package-lock.json 均必需，不要只覆盖 server.mjs 或 public。配套 `patches/openclaw/` 保留在包内，但不会自动应用。
 
 ## 配置与启动
 

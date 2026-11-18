@@ -10,3 +10,6 @@ toolfp/ export-ignore
 docs/* export-ignore
 docs/API-EQUIVALENT-ESTIMATE.md -export-ignore
 docs/USAGE-DETAIL-CONTRACT.md -export-ignore
+# Shipped chrome-icon documentation and preview figures belong in source exports.
+docs/ICONS.md -export-ignore
+docs/icons/ -export-ignore

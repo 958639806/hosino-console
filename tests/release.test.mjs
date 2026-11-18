@@ -16,7 +16,7 @@ test('package supports locked independent install and Node sqlite/zstd runtime',
  const pkg=JSON.parse(fs.readFileSync(path.join(root,'package.json')));
  assert.equal(pkg.scripts.start,'node server.mjs');assert.match(pkg.engines.node,/24\.21/);
  assert.ok(pkg.dependencies.bcryptjs&&pkg.dependencies.ws);assert.ok(fs.existsSync(path.join(root,'package-lock.json')));
- assert.equal(fs.readFileSync(path.join(root,'VERSION'),'utf8').trim(),'2026.11.15.1');
+ assert.equal(fs.readFileSync(path.join(root,'VERSION'),'utf8').trim(),'2026.11.18.1');
 });
 test('runtime defaults contain no production-specific home or installation paths',()=>{
  const src=fs.readFileSync(path.join(root,'server.mjs'),'utf8');
@@ -24,7 +24,7 @@ test('runtime defaults contain no production-specific home or installation paths
  assert.match(src,/process\.env\.HOSINO_CLI_HOME/);assert.match(src,/homedir\(\)/);
 });
 test('production resource graph includes detail/folding but excludes demo fixture',()=>{
- for(const file of ['public/index.html','public/app.js','public/api.js','public/sw.js','public/usage-detail.js','public/usage-detail.css','public/model-collapse.js'])assert.ok(fs.existsSync(path.join(root,file)),file);
+ for(const file of ['public/index.html','public/app.js','public/api.js','public/sw.js','public/usage-detail.js','public/usage-detail.css','public/model-collapse.js','public/icons.js','public/icons.css'])assert.ok(fs.existsSync(path.join(root,file)),file);
  for(const file of ['public/demo.html','public/usage-detail-example.js','public/demo-guard.js'])assert.equal(fs.existsSync(path.join(root,file)),false,file);
 });
 test('recursive runtime imports and production static references all resolve locally',async()=>{

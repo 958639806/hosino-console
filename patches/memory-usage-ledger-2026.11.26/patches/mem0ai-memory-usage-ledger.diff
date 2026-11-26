@@ -1,0 +1,29 @@
+--- orig/mem0ai-oss-index.mjs	2026-11-26 17:51:41.343101778 +0800
++++ patched/mem0ai-oss-index.mjs	2026-11-26 17:52:08.300579681 +0800
+@@ -644,6 +644,9 @@
+       response_format: responseFormat,
+       ...tools && { tools, tool_choice: "auto" }
+     });
++    // HOSINO-MEMORY-USAGE-LEDGER v1: keep last usage for addToVectorStore; do not change returned content.
++    this.lastUsage = completion.usage ?? null;
++    this.lastModel = completion.model || this.model;
+     const response = completion.choices[0].message;
+     if (response.tool_calls) {
+       return {
+@@ -6920,6 +6923,16 @@
+       console.error("LLM extraction failed:", e);
+       return [];
+     }
++    // HOSINO-MEMORY-USAGE-LEDGER v1: API succeeded; record even if JSON parsing later fails. Missing usage stays null, never zero.
++    try {
++      const { recordMemoryUsage } = await import('/usr/local/lib/hosino-usage/append-usage.mjs');
++      recordMemoryUsage({
++        purpose: 'add-extract',
++        provider: this.config?.llm?.provider,
++        model: this.llm?.lastModel || this.llm?.model,
++        usage: this.llm?.lastUsage ?? null,
++      });
++    } catch {}
+     let extractedMemories = [];
+     try {
+       const cleanResponse = extractJson(response);

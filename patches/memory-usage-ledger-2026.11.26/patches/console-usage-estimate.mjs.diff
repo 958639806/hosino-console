@@ -1,0 +1,33 @@
+--- usage-estimate.mjs
++++ usage-estimate.mjs
+@@ -1,6 +1,7 @@
+ import fs from 'node:fs/promises';
+ import { summarizeRecords } from './usage-pricing.mjs';
+ import { readUsageTranscripts } from './usage-transcripts.mjs';
++import { readMemoryUsageLedger } from './usage-memory-ledger.mjs';
+ const DAY = 864e5, OFFSET = 8 * 3600e3;
+ function dateStart(s) {
+   if (!/^\d{4}-\d{2}-\d{2}$/.test(s ?? '')) throw new Error('invalid usage date');
+@@ -18,15 +19,17 @@
+   if (endMs <= startMs || endMs - startMs > 366 * DAY) throw new Error('invalid usage date range');
+   return { startMs, endMs };
+ }
+-export async function loadUsageEstimate({ stateDir, days = 30, startDate, endDate, now = Date.now(), overrides = {}, priceFile } = {}) {
++export async function loadUsageEstimate({ stateDir, days = 30, startDate, endDate, now = Date.now(), overrides = {}, priceFile, ledgerDir } = {}) {
+   if (priceFile) {
+     try { overrides = JSON.parse(await fs.readFile(priceFile,'utf8')); if (!overrides || typeof overrides !== 'object' || Array.isArray(overrides)) throw new Error(); }
+     catch { throw new Error('usage custom price file unavailable or invalid'); }
+   }
+   const range = usageDateRange({ days, startDate, endDate, now });
+   const source = await readUsageTranscripts({ stateDir });
+-  const result = summarizeRecords(source.records,{ ...range, overrides });
+-  return { ...result, days: (range.endMs-range.startMs)/DAY, range, agents: source.agents, sourceErrors: source.sourceErrors,
+-    complete: !source.sourceErrors.length && !result.totals.missingCostEntries && !result.totals.missingUsageEntries && !result.totals.invalidUsageEntries && !result.untimestampedEntries,
+-    provenance: 'Read-only retained OpenClaw transcript usage across all agent directories; native CLI records without a proven run mapping are not added twice.' };
++  const ledger = await readMemoryUsageLedger({ ledgerDir });
++  const result = summarizeRecords([...source.records, ...ledger.records],{ ...range, overrides });
++  const sourceErrors = [...source.sourceErrors, ...ledger.sourceErrors];
++  return { ...result, days: (range.endMs-range.startMs)/DAY, range, agents: source.agents, sourceErrors,
++    complete: !sourceErrors.length && !result.totals.missingCostEntries && !result.totals.missingUsageEntries && !result.totals.invalidUsageEntries && !result.untimestampedEntries,
++    provenance: 'Read-only retained OpenClaw transcript usage across all agent directories, plus post-collection memory-extract ledger records; native CLI records without a proven run mapping are not added twice. Memory extraction before the collector started has no token records and is not backfilled.' };
+ }

@@ -1,0 +1,9 @@
+--- public/index.html
++++ public/index.html
+@@ -22,5 +22,5 @@
+ <div id="app"></div>
+ <div id="toast" role="status" aria-live="polite"></div>
+-<script type="module" src="app.js?v=2026.11.21.1-server-status"></script>
++<script type="module" src="app.js?v=2026.11.26.1-mem-usage"></script>
+ </body>
+ </html>

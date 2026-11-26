@@ -1,0 +1,11 @@
+--- usage-transcripts.mjs
++++ usage-transcripts.mjs
+@@ -24,7 +24,7 @@
+     if (seen.has(dedupeKey)) return;
+     seen.add(dedupeKey);
+     const timestamp = typeof m.timestamp === 'number' && Number.isFinite(m.timestamp) ? m.timestamp : typeof event.timestamp === 'string' ? Date.parse(event.timestamp) : fallbackTime;
+-    records.push({ agent, dedupeKey, timestamp, provider: m.provider ?? event.provider, model: m.model ?? event.model, usage: normalizeUsage(raw) });
++    records.push({ agent, source: 'session', dedupeKey, timestamp, provider: m.provider ?? event.provider, model: m.model ?? event.model, usage: normalizeUsage(raw) });
+   };
+   const lines = (text, agent, session, source) => {
+     let i = 0, invalid = 0;

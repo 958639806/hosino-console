@@ -1,0 +1,29 @@
+--- usage-pricing.mjs
++++ usage-pricing.mjs
+@@ -91,7 +91,7 @@
+   return { input: 0, output: 0, cacheRead: 0, cacheWrite: 0, totalTokens: 0, pricedTokens: 0, totalCost: 0, totalCostUpper: 0, inputCost: 0, outputCost: 0, cacheReadCost: 0, cacheWriteCost: 0, missingCostEntries: 0, missingTokenBreakdownEntries: 0, missingUsageEntries: 0, invalidUsageEntries: 0, zeroTokenEntries: 0, pricedEntries: 0, unknownTtlEntries: 0, customPriceEntries: 0, customTokens: 0, referencePriceEntries: 0, referenceTokens: 0, referenceCost: 0, referenceCostUpper: 0, inputCostUpper: 0, outputCostUpper: 0, cacheReadCostUpper: 0, cacheWriteCostUpper: 0 };
+ }
+ export function summarizeRecords(records, { startMs = -Infinity, endMs = Infinity, overrides = {} } = {}) {
+-  const totals = emptyTotals(), daily = new Map(), models = new Map(), providers = new Map(), seen = new Set(), assumptions = new Set(), priceSources = new Map(), agents = new Set();
++  const totals = emptyTotals(), daily = new Map(), models = new Map(), providers = new Map(), sources = new Map(), seen = new Set(), assumptions = new Set(), priceSources = new Map(), agents = new Set();
+   let duplicateEntries = 0, untimestampedEntries = 0;
+   const add = (target, e) => {
+     if (e.tokens && !e.tokens.invalid) for (const k of ['input','output','cacheRead','cacheWrite','totalTokens']) target[k] += e.tokens[k];
+@@ -117,13 +117,15 @@
+     if (!models.has(key)) models.set(key, { model: key, ...emptyTotals(), reasons: {} });
+     const provider = r.provider ?? 'unknown'; if (!providers.has(provider)) providers.set(provider, { provider, ...emptyTotals() });
+     const m = models.get(key); if (e.reason) m.reasons[e.reason] = (m.reasons[e.reason] ?? 0) + 1;
+-    add(totals,e); add(daily.get(day),e); add(m,e); add(providers.get(provider),e); if (r.agent) agents.add(r.agent);
++    const source = r.source === 'memory-extract' ? 'memory-extract' : 'session';
++    if (!sources.has(source)) sources.set(source, { source, ...emptyTotals() });
++    add(totals,e); add(daily.get(day),e); add(m,e); add(providers.get(provider),e); add(sources.get(source),e); if (r.agent) agents.add(r.agent);
+     for (const a of e.assumptions ?? []) assumptions.add(a);
+     if (e.priceSource) priceSources.set(`${key}:${e.priceKind}`, { model: key, kind: e.priceKind, url: e.priceSource, verifiedAt: PRICE_DATE, reference: e.reference });
+   }
+   totals.tokenCoverage = totals.totalTokens ? totals.pricedTokens / totals.totalTokens : null;
+   totals.officialTokenCoverage = totals.totalTokens ? (totals.pricedTokens - totals.referenceTokens - totals.customTokens) / totals.totalTokens : null;
+   return { updatedAt: Date.now(), billingMode: 'api-equivalent', currency: 'USD', timezone: 'Asia/Singapore', priceDate: PRICE_DATE, scope: 'all-agents-recorded-openclaw-usage', totals,
+-    daily: [...daily.values()].sort((a,b) => a.date.localeCompare(b.date)), models: [...models.values()], providers: [...providers.values()], assumptions: [...assumptions], priceSources: [...priceSources.values()], agents: [...agents].sort(), duplicateEntries, untimestampedEntries,
++    daily: [...daily.values()].sort((a,b) => a.date.localeCompare(b.date)), models: [...models.values()], providers: [...providers.values()], sources: [...sources.values()], assumptions: [...assumptions], priceSources: [...priceSources.values()], agents: [...agents].sort(), duplicateEntries, untimestampedEntries,
+     notice: 'API等价估价，非实际账单，不含订阅费；按当前公开单价重算已记录token，不含工具/音视频等单独计费。' };
+ }

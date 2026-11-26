@@ -1,0 +1,5 @@
+--- server.mjs
++++ server.mjs
+@@
+-const usageEstimateService = createUsageService({ load: p => loadUsageEstimate({ ...p, stateDir: process.env.HOSINO_USAGE_STATE_DIR || path.dirname(CFG), priceFile: process.env.HOSINO_USAGE_PRICE_FILE }) });
++const usageEstimateService = createUsageService({ load: p => loadUsageEstimate({ ...p, stateDir: process.env.HOSINO_USAGE_STATE_DIR || path.dirname(CFG), priceFile: process.env.HOSINO_USAGE_PRICE_FILE, ledgerDir: process.env.HOSINO_USAGE_LEDGER_DIR || "/var/lib/hosino-usage" }) });

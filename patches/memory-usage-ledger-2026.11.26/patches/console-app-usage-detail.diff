@@ -1,0 +1,17 @@
+--- public/app.js
++++ public/app.js
+@@ -1,5 +1,5 @@
+ import { modelCollapse, modelSummary, modelBodyId } from "./model-collapse.js?v=2026.11.15.1-model-collapse";
+-import { openUsageDetailPage } from "./usage-detail.js?v=2026.11.17.1-icons";
++import { openUsageDetailPage } from "./usage-detail.js?v=2026.11.26.1-mem-usage";
+ import { renderServerStatusCard } from "./server-status-card.js?v=2026.11.21.1-server-status";
+ 
+ import { api, setUnauthedHandler, notReady, mediaOf, rawReq } from "./api.js?v=2026.11.21.1-server-status";
+@@ -2750,6 +2750,7 @@
+     const coverage = Number.isFinite(t.tokenCoverage) ? (t.tokenCoverage * 100).toFixed(1) + "%" : "无 token 数据";
+     return `<div class="grid g2"><div class="card uc"><div class="uc-head"><b>${equivalent ? "API 等价估价" : "旧版统计"}</b>${pill(num(t.totalTokens) + " tokens")}</div><div class="big tnum"><span class="uc-sym">$</span>${amount}<small>USD</small></div>
+       <div class="uc-sub" style="min-height:0">${equivalent ? "非实际账单，不含订阅费；全部 " + (d.agents || []).length + " 个 agent · 新加坡时间" : "旧版后端尚未统一按官方 API 价格估算，请先更新后端。"}</div>
++      ${equivalent ? `<div class="uc-sub" style="min-height:0">合计已包含上线后采集到的记忆抽取。采集上线前的抽取没有 token 记录，无法补计，未计入。</div>` : ""}
+       <div class="spark" aria-label="每日 API 等价估价">${daily.map(x => `<i style="height:${Math.max(3, (+x.totalCost || 0) / max * 100)}%" title="${esc(x.date)} $${(+x.totalCost || 0).toFixed(2)}"></i>`).join("")}</div>
+       <div class="uc-sub" style="min-height:0;display:flex;justify-content:space-between"><span>${esc(daily[0]?.date || "")}</span><span>${esc(daily.at(-1)?.date || "")}</span></div></div>
+       <div class="card uc"><div class="uc-head"><b>Token 估价明细${high - low > .000001 ? "（区间下界）" : ""}</b></div>${parts.map(([k,v]) => `<div class="uc-mini" style="grid-template-columns:5em 1fr auto;border:0;padding-top:0"><span>${k}</span><div class="bar thin"><i style="width:${v / (low || 1) * 100}%"></i></div><b class="tnum">$${v.toFixed(2)}</b></div>`).join("") || `<div class="faint">暂无已记录用量</div>`}

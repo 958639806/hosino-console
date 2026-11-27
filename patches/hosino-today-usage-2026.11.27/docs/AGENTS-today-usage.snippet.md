@@ -1,0 +1,1 @@
+- **当天用量（今天用了多少 / 当天 token 消耗）**：直接运行 `node scripts/today_usage.mjs`（workdir 用 workspace）。把输出原样或略作口述发给对方。这是实例当天合计的 API 等价估价，以人民币为主，不是真实账单。禁止把 `session_status` 或 `/status` 当成当天合计；不要登录控制台，也不要在群里贴完整 `/status`（里面可能有路径和账号信息）。采集上线前没记下 token 的记忆抽取无法补计，脚本说明里会带一句。

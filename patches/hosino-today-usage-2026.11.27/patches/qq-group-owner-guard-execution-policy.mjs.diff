@@ -1,0 +1,37 @@
+--- a/plugins/qq-group-owner-guard/execution-policy.mjs
++++ b/plugins/qq-group-owner-guard/execution-policy.mjs
+@@ -132,6 +132,14 @@
+   if (script === 'fun_grudge.py') return args.length >= 4 && args[0] === 'add' && FUN_ID.test(args[1]) && FUN_ID.test(args[2]) && !args.slice(3).some(a => a.startsWith('-')) && [...args.slice(3).join(' ')].length <= 200;
+   return false;
+ }
++const TODAY_USAGE_NODE = new Set(['node', 'nodejs', '/usr/bin/node', '/usr/bin/nodejs']);
++export function isTodayUsageNode(bin) { return TODAY_USAGE_NODE.has(String(bin || '')); }
++/* HOSINO-TODAY-USAGE v1：只放行无参数或 --help/-h，不接受改路径、改日期或注入环境的参数。 */
++export function todayUsageArgsAllowed(args) {
++  if (!Array.isArray(args)) return false;
++  if (args.some(a => typeof a !== 'string' || !a || a.includes('\0') || a.length > 16 || a.includes('/'))) return false;
++  return args.length === 0 || (args.length === 1 && ['--help', '-h'].includes(args[0]));
++}
+ export function commandAllowed(params, io = fs, workspace = WORKSPACE) {
+   const tokens = commandTokens(params); if (!tokens) return false;
+   const root = realPath(workspace, io); if (!root) return false;
+@@ -142,6 +150,7 @@
+   const cwd = realPath(cwdRaw, io); if (!cwd || !contained(root, cwd)) return false;
+   let offset = 0;
+   if (['python3', 'python', '/usr/bin/python3'].includes(tokens[0])) offset = 1;
++  else if (isTodayUsageNode(tokens[0])) offset = 1; /* HOSINO-TODAY-USAGE v1: node 只给 today_usage.mjs 用，不是通用解释器 */
+   let prog = tokens[offset]; if (!prog) return false;
+   if (offset && /^~\/\.openclaw\/workspace\/scripts\/fun_(?:followup|mbti|grudge)\.py$/.test(prog)) prog = WORKSPACE + prog.slice('~/.openclaw/workspace'.length); /* HOSINO-FUN-SCRIPTS v1: 只给三个 fun 脚本认 ~ 前缀（bash 展开后是同一个文件） */
+   const args = tokens.slice(offset + 1);
+@@ -156,6 +165,11 @@
+   const intended = path.posix.join(root, relative); if (target !== intended) return false;
+   const script = relative.replace(/^scripts\//, '');
+   if (relative !== 'scripts/' + script || script.includes('/')) return false;
++  /* HOSINO-TODAY-USAGE v1 (2026-11-27)：只读查询当天实例用量。node 不是通用解释器，其它 scripts 仍不能用 node 跑。 */
++  if (isTodayUsageNode(tokens[0])) {
++    if (script !== 'today_usage.mjs') return false;
++    return todayUsageArgsAllowed(args);
++  }
+   if (schemas[script]) {
+     if (!offset) return false;
+     if (args.length === 1 && ['--help', '-h'].includes(args[0])) return true;

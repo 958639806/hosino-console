@@ -1,0 +1,13 @@
+# release asset
+67f7dca48cc4c73ab63cb51240f81435812707cb5590562b77ae505e7460567a  hosino-today-usage-2026.11.27.tar.gz
+
+# package files
+1eb0266e427749fc28eb2a96d4b7cefbedfffced4f9f56dface989dbd949fe20  CHANGELOG.md
+f6f33e64e529ba2f270221e95e1abd53ce51b5eab531589c619f3de806b6bf80  README.md
+1eb0266e427749fc28eb2a96d4b7cefbedfffced4f9f56dface989dbd949fe20  RELEASE_NOTES.md
+6544428c821c6dcf71d92394651499a5150b6292091036a40a9e7301f636caef  docs/AGENTS-today-usage.snippet.md
+e0527edc882a77982908694223dd45025900eb245d415985c984fc5bca8adc03  docs/qqbot-shared-today-usage.snippet.md
+a5e8958f18c71d8d4b4b135ae2edc0966f8699dc0868c4b4452debeed416a18f  scripts/today_usage.mjs
+ac1ab6fee8f30ef23ff95f146351c7a1c0eb79b50b1f28478c5d8a3b6e89018a  tests/test-today_usage.mjs
+5782d239b595b4ead98274a6bfe7c09aac1b6310531e95288db355f4731c03e7  tests/test-command-allowed-today-usage.mjs
+4bcb916c110364694c88485ca115837d653868711f90915eb93e8a894a4b6b4a  patches/qq-group-owner-guard-execution-policy.mjs.diff

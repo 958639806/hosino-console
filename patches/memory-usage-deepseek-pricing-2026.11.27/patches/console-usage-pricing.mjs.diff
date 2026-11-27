@@ -1,0 +1,51 @@
+--- a/console/usage-pricing.mjs	2026-11-27 19:22:25.841607359 +0800
++++ b/console/usage-pricing.mjs	2026-11-27 19:22:25.845607382 +0800
+@@ -9,6 +9,14 @@
+ const own = (v, k) => Object.prototype.hasOwnProperty.call(v, k);
+ const first = (...xs) => xs.find(v => v !== undefined && v !== null);
+ const count = v => typeof v === 'number' && Number.isSafeInteger(v) && v >= 0;
++// Treat missing / placeholder / openai-wrapped providers as unset so official DeepSeek model IDs can match. Do not fuzzy-match nearby model names.
++export function resolveOfficialProvider(provider, model) {
++  const p = typeof provider === 'string' ? provider.trim() : '';
++  const m = typeof model === 'string' ? model.trim() : '';
++  if (p && p !== 'openai' && p !== 'unknown') return p;
++  if (m.startsWith('deepseek')) return 'deepseek';
++  return p || 'unknown';
++}
+ export function normalizeUsage(raw) {
+   if (!raw || typeof raw !== 'object') return null;
+   const direct = raw.input !== undefined;
+@@ -72,13 +80,15 @@
+   if (tokens.invalid) return gap('invalid_usage');
+   if (!tokens.hasBreakdown || tokens.unallocatedTokens) return gap('missing_token_breakdown');
+   if (!tokens.totalTokens) return { status: 'zero_tokens', tokens, pricedTokens: 0, cost: zeroCost(), costUpper: zeroCost(), assumptions: [] };
+-  const key = `${record.provider}/${record.model}`;
++  const provider = resolveOfficialProvider(record.provider, record.model);
++  const model = typeof record.model === 'string' && record.model.trim() ? record.model.trim() : record.model;
++  const key = `${provider}/${model}`;
+   let price, kind = 'official';
+   if (own(overrides, key)) {
+     const custom = overrides[key];
+     if (!custom || !['input','output','cacheRead','cacheWrite'].every(k => typeof custom[k] === 'number' && Number.isFinite(custom[k]) && custom[k] >= 0) || !['cacheWrite1h','cacheWrite12h'].every(k => custom[k] === undefined || typeof custom[k] === 'number' && Number.isFinite(custom[k]) && custom[k] >= 0)) throw new Error('invalid custom price');
+     price = { source: 'user-custom', ttl: own(custom, 'cacheWrite12h') ? '12h' : '1h', lower: { ...custom, cacheWriteLong: custom.cacheWrite12h ?? custom.cacheWrite1h ?? custom.cacheWrite } }; kind = 'custom';
+-  } else price = officialPrice(record.provider, record.model, tokens.input + tokens.cacheRead + tokens.cacheWrite);
++  } else price = officialPrice(provider, model, tokens.input + tokens.cacheRead + tokens.cacheWrite);
+   if (!price) return gap('unknown_model');
+   if (price.kind) kind = price.kind;
+   const assumptions = [...(price.assumptions ?? [])];
+@@ -111,11 +121,13 @@
+     if (!Number.isFinite(t)) { untimestampedEntries++; continue; }
+     if (t < startMs || t >= endMs) continue;
+     if (r.dedupeKey) { if (seen.has(r.dedupeKey)) { duplicateEntries++; continue; } seen.add(r.dedupeKey); }
+-    const e = estimateRecord(r, overrides), key = `${r.provider ?? 'unknown'}/${r.model ?? 'unknown'}`;
++    const provider = resolveOfficialProvider(r.provider, r.model);
++    const model = typeof r.model === 'string' && r.model.trim() ? r.model.trim() : (r.model ?? 'unknown');
++    const e = estimateRecord({ ...r, provider, model }, overrides), key = `${provider}/${model}`;
+     const day = new Date(t + 8 * 3600e3).toISOString().slice(0,10);
+     if (!daily.has(day)) daily.set(day, { date: day, ...emptyTotals() });
+     if (!models.has(key)) models.set(key, { model: key, ...emptyTotals(), reasons: {} });
+-    const provider = r.provider ?? 'unknown'; if (!providers.has(provider)) providers.set(provider, { provider, ...emptyTotals() });
++    if (!providers.has(provider)) providers.set(provider, { provider, ...emptyTotals() });
+     const m = models.get(key); if (e.reason) m.reasons[e.reason] = (m.reasons[e.reason] ?? 0) + 1;
+     const source = r.source === 'memory-extract' ? 'memory-extract' : 'session';
+     if (!sources.has(source)) sources.set(source, { source, ...emptyTotals() });

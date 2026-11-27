@@ -1,0 +1,29 @@
+--- a/console/usage-memory-ledger.mjs	2026-11-27 19:22:25.841607359 +0800
++++ b/console/usage-memory-ledger.mjs	2026-11-27 19:22:25.845607382 +0800
+@@ -1,16 +1,8 @@
+ import fs from 'node:fs/promises';
+ import path from 'node:path';
+-import { normalizeUsage } from './usage-pricing.mjs';
++import { normalizeUsage, resolveOfficialProvider } from './usage-pricing.mjs';
+ import { ledgerDir } from './append-usage.mjs';
+ 
+-function inferProvider(record) {
+-  const provider = typeof record.provider === 'string' ? record.provider.trim() : '';
+-  const model = typeof record.model === 'string' ? record.model.trim() : '';
+-  if (provider && provider !== 'openai') return provider;
+-  if (model.startsWith('deepseek')) return 'deepseek';
+-  return provider || 'unknown';
+-}
+-
+ export async function readMemoryUsageLedger({ ledgerDir: dir, env = process.env } = {}) {
+   const records = [], sourceErrors = [];
+   const root = dir || ledgerDir(env);
+@@ -43,7 +35,7 @@
+       records.push({
+         source: 'memory-extract',
+         purpose: raw.purpose === 'add-extract' ? 'add-extract' : 'bounded-extract',
+-        provider: inferProvider(raw),
++        provider: resolveOfficialProvider(raw.provider, raw.model),
+         model: typeof raw.model === 'string' && raw.model.trim() ? raw.model.trim() : 'unknown',
+         timestamp,
+         usage,

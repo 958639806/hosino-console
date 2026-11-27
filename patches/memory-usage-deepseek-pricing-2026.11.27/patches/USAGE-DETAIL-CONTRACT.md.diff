@@ -1,0 +1,10 @@
+--- a/docs/USAGE-DETAIL-CONTRACT.md	2026-11-27 19:22:25.841607359 +0800
++++ b/docs/USAGE-DETAIL-CONTRACT.md	2026-11-27 19:22:25.845607382 +0800
+@@ -26,6 +26,7 @@
+ 未知模型、缺usage、无效或不完整分量分别保留计数；真实零桶与未知分开显示。
+ 无可计算记录时不显示伪造$0；部分可计算时显示可估金额并列异常，已知token仍保留。
+ TTL未知的Claude/OpenAI写入与DeepSeek峰谷按公开上下界计价，未跳过相关token。
++账本或会话里 provider 为 unknown 或 openai，但模型 ID 已是价目中的 deepseek-flash / deepseek-v4-pro 时，识别为 DeepSeek 并按该型号公开峰谷价计价，不套近型号。
+ 
+ ## 刷新
+ 
